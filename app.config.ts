@@ -17,6 +17,19 @@ const displayName =
   variant === 'production' ? 'TATO' : variant === 'staging' ? 'TATO (Staging)' : 'TATO (Dev)';
 const scheme = isProduction ? 'tato' : `tato-${variant}`;
 const bundleId = isProduction ? 'com.tato.app' : `com.tato.app.${variant}`;
+const publicEnv = {
+  APP_VARIANT: variant,
+  EXPO_PUBLIC_APP_ENV: process.env.EXPO_PUBLIC_APP_ENV ?? variant,
+  EXPO_PUBLIC_EAS_PROJECT_ID: process.env.EXPO_PUBLIC_EAS_PROJECT_ID ?? null,
+  EXPO_PUBLIC_SUPABASE_URL: process.env.EXPO_PUBLIC_SUPABASE_URL ?? null,
+  EXPO_PUBLIC_SUPABASE_ANON_KEY: process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY ?? null,
+  EXPO_PUBLIC_POSTHOG_API_KEY: process.env.EXPO_PUBLIC_POSTHOG_API_KEY ?? null,
+  EXPO_PUBLIC_POSTHOG_HOST: process.env.EXPO_PUBLIC_POSTHOG_HOST ?? 'https://us.i.posthog.com',
+  EXPO_PUBLIC_SENTRY_DSN: process.env.EXPO_PUBLIC_SENTRY_DSN ?? null,
+  EXPO_PUBLIC_DEV_BYPASS_EMAIL: process.env.EXPO_PUBLIC_DEV_BYPASS_EMAIL ?? null,
+  EXPO_PUBLIC_DEV_BYPASS_PASSWORD: process.env.EXPO_PUBLIC_DEV_BYPASS_PASSWORD ?? null,
+  EXPO_PUBLIC_LIVE_AGENT_SERVICE_URL: process.env.EXPO_PUBLIC_LIVE_AGENT_SERVICE_URL ?? null,
+};
 
 const config: ExpoConfig = {
   name: displayName,
@@ -71,13 +84,11 @@ const config: ExpoConfig = {
     typedRoutes: true,
   },
   extra: {
-    appEnv: process.env.EXPO_PUBLIC_APP_ENV ?? variant,
-    appVariant: variant,
-    easProjectId: process.env.EXPO_PUBLIC_EAS_PROJECT_ID ?? null,
-    posthogHost: process.env.EXPO_PUBLIC_POSTHOG_HOST ?? 'https://us.i.posthog.com',
-    EXPO_PUBLIC_DEV_BYPASS_EMAIL: process.env.EXPO_PUBLIC_DEV_BYPASS_EMAIL ?? null,
-    EXPO_PUBLIC_DEV_BYPASS_PASSWORD: process.env.EXPO_PUBLIC_DEV_BYPASS_PASSWORD ?? null,
-    EXPO_PUBLIC_LIVE_AGENT_SERVICE_URL: process.env.EXPO_PUBLIC_LIVE_AGENT_SERVICE_URL ?? null,
+    ...publicEnv,
+    appEnv: publicEnv.EXPO_PUBLIC_APP_ENV,
+    appVariant: publicEnv.APP_VARIANT,
+    easProjectId: publicEnv.EXPO_PUBLIC_EAS_PROJECT_ID,
+    posthogHost: publicEnv.EXPO_PUBLIC_POSTHOG_HOST,
   },
 };
 
