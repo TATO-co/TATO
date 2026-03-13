@@ -7,6 +7,7 @@
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web",
+    "build": "npm run export:web",
     "typecheck": "tsc --noEmit",
     "check:functions": "deno check --no-config supabase/functions/create-claim/index.ts && deno check --no-config supabase/functions/start-ingestion/index.ts && deno check --no-config supabase/functions/create-sale-payment/index.ts && deno check --no-config supabase/functions/complete-claim-payment/index.ts && deno check --no-config supabase/functions/approve-user/index.ts && deno check --no-config supabase/functions/suspend-user/index.ts && deno check --no-config supabase/functions/create-connect-onboarding-link/index.ts && deno check --no-config supabase/functions/refresh-connect-status/index.ts && deno check --no-config supabase/functions/gemini-ingest-item/index.ts && deno check --no-config supabase/functions/stripe-webhook/index.ts",
     "test": "vitest run",
