@@ -1,35 +1,40 @@
-import { StatusBar } from 'expo-status-bar';
-import { Platform, StyleSheet } from 'react-native';
+import { useRouter } from 'expo-router';
+import { Pressable, SafeAreaView, Text, View } from 'react-native';
 
-import EditScreenInfo from '@/components/EditScreenInfo';
-import { Text, View } from '@/components/Themed';
+const actions = [
+  'Launch AI Auto-Scan',
+  'Open buyer QR checkout',
+  'Regenerate broker listing copy',
+  'Review expiring claims',
+];
 
 export default function ModalScreen() {
-  return (
-    <View style={styles.container}>
-      <Text style={styles.title}>Modal</Text>
-      <View style={styles.separator} lightColor="#eee" darkColor="rgba(255,255,255,0.1)" />
-      <EditScreenInfo path="app/modal.tsx" />
+  const router = useRouter();
 
-      {/* Use a light status bar on iOS to account for the black space above the modal */}
-      <StatusBar style={Platform.OS === 'ios' ? 'light' : 'auto'} />
-    </View>
+  return (
+    <SafeAreaView className="flex-1 justify-end bg-black/60">
+      <View className="rounded-t-[28px] border border-tato-line bg-tato-panel p-5">
+        <Text className="text-sm uppercase tracking-[2px] text-tato-muted" style={{ fontFamily: 'SpaceMono' }}>
+          Quick Actions
+        </Text>
+        <Text className="mt-1 text-3xl font-bold text-tato-text">TATO Workflow Shortcuts</Text>
+
+        <View className="mt-4 gap-2">
+          {actions.map((action) => (
+            <View className="rounded-2xl border border-tato-line bg-tato-panelSoft p-4" key={action}>
+              <Text className="text-sm text-tato-text">{action}</Text>
+            </View>
+          ))}
+        </View>
+
+        <Pressable
+          className="mt-5 rounded-full bg-tato-accent py-4 hover:bg-tato-accentStrong focus:bg-tato-accentStrong"
+          onPress={() => router.back()}>
+          <Text className="text-center text-sm font-semibold uppercase tracking-[1px] text-white" style={{ fontFamily: 'SpaceMono' }}>
+            Close
+          </Text>
+        </Pressable>
+      </View>
+    </SafeAreaView>
   );
 }
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  title: {
-    fontSize: 20,
-    fontWeight: 'bold',
-  },
-  separator: {
-    marginVertical: 30,
-    height: 1,
-    width: '80%',
-  },
-});

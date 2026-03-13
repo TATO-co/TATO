@@ -30,7 +30,20 @@
       "favicon": "./assets/images/favicon.png"
     },
     "plugins": [
-      "expo-router"
+      "expo-router",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Allow TATO to use your camera for supplier inventory ingestion."
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow TATO to access photos for supplier inventory ingestion."
+        }
+      ],
+      "expo-font"
     ],
     "experiments": {
       "typedRoutes": true

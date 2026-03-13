@@ -1,40 +1,19 @@
 import { Link, Stack } from 'expo-router';
-import { StyleSheet } from 'react-native';
-
-import { Text, View } from '@/components/Themed';
+import { SafeAreaView, Text, View } from 'react-native';
 
 export default function NotFoundScreen() {
   return (
-    <>
-      <Stack.Screen options={{ title: 'Oops!' }} />
-      <View style={styles.container}>
-        <Text style={styles.title}>This screen doesn't exist.</Text>
-
-        <Link href="/" style={styles.link}>
-          <Text style={styles.linkText}>Go to home screen!</Text>
+    <SafeAreaView className="flex-1 bg-tato-base">
+      <Stack.Screen options={{ title: 'Not Found' }} />
+      <View className="flex-1 items-center justify-center px-6">
+        <Text className="text-4xl font-bold text-tato-text">Screen not found</Text>
+        <Text className="mt-2 text-center text-base text-tato-muted">
+          This route does not exist in the current TATO navigation tree.
+        </Text>
+        <Link className="mt-5 text-sm font-semibold uppercase tracking-[1px] text-tato-accent" href="/(app)/(broker)/workspace">
+          Return to explore
         </Link>
       </View>
-    </>
+    </SafeAreaView>
   );
 }
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 20,
-  },
-  title: {
-    fontSize: 20,
-    fontWeight: 'bold',
-  },
-  link: {
-    marginTop: 15,
-    paddingVertical: 15,
-  },
-  linkText: {
-    fontSize: 14,
-    color: '#2e78b7',
-  },
-});

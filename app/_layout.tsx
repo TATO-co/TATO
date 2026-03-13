@@ -1,34 +1,86 @@
-import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
+import 'react-native-gesture-handler';
+import 'react-native-reanimated';
+import 'react-native-url-polyfill/auto';
+import '../global.css';
+
 import { useFonts } from 'expo-font';
-import { Stack } from 'expo-router';
+import { Stack, useRouter, useSegments } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { useEffect } from 'react';
-import 'react-native-reanimated';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
-import { useColorScheme } from '@/components/useColorScheme';
+import { AuthProvider, useAuth } from '@/components/providers/AuthProvider';
+import { initializeTelemetry } from '@/lib/analytics';
 
-export {
-  // Catch any errors thrown by the Layout component.
-  ErrorBoundary,
-} from 'expo-router';
+export { ErrorBoundary } from 'expo-router';
 
 export const unstable_settings = {
-  // Ensure that reloading on `/modal` keeps a back button present.
-  initialRouteName: '(tabs)',
+  initialRouteName: '(app)',
 };
 
-// Prevent the splash screen from auto-hiding before asset loading is complete.
 SplashScreen.preventAutoHideAsync();
+
+function RootNavigator() {
+  const router = useRouter();
+  const segments = useSegments();
+  const { configured, loading, isAuthenticated, preferredRoute } = useAuth();
+
+  useEffect(() => {
+    if (loading) {
+      return;
+    }
+
+    const inAuthGroup = segments[0] === '(auth)';
+    const authScreen = String(segments[1] ?? '');
+
+    if (!configured) {
+      if (!inAuthGroup || authScreen !== 'configuration-required') {
+        router.replace('/(auth)/configuration-required' as never);
+      }
+      return;
+    }
+
+    if (!isAuthenticated && !inAuthGroup) {
+      router.replace('/(auth)/sign-in');
+      return;
+    }
+
+    if (isAuthenticated && (inAuthGroup || preferredRoute.startsWith('/(auth)'))) {
+      router.replace(preferredRoute as never);
+    }
+  }, [configured, isAuthenticated, loading, preferredRoute, router, segments]);
+
+  if (configured && loading) {
+    return null;
+  }
+
+  return (
+    <Stack screenOptions={{ headerShown: false }}>
+      <Stack.Screen name="(app)" />
+      <Stack.Screen name="(auth)" />
+      <Stack.Screen name="modal" options={{ presentation: 'transparentModal', animation: 'fade' }} />
+    </Stack>
+  );
+}
 
 export default function RootLayout() {
   const [loaded, error] = useFonts({
     SpaceMono: require('../assets/fonts/SpaceMono-Regular.ttf'),
+    Inter_400Regular: require('@expo-google-fonts/inter/400Regular/Inter_400Regular.ttf'),
+    Inter_500Medium: require('@expo-google-fonts/inter/500Medium/Inter_500Medium.ttf'),
+    Inter_600SemiBold: require('@expo-google-fonts/inter/600SemiBold/Inter_600SemiBold.ttf'),
+    Inter_700Bold: require('@expo-google-fonts/inter/700Bold/Inter_700Bold.ttf'),
   });
 
-  // Expo Router uses Error Boundaries to catch errors in the navigation tree.
   useEffect(() => {
-    if (error) throw error;
+    if (error) {
+      throw error;
+    }
   }, [error]);
+
+  useEffect(() => {
+    initializeTelemetry();
+  }, []);
 
   useEffect(() => {
     if (loaded) {
@@ -40,18 +92,11 @@ export default function RootLayout() {
     return null;
   }
 
-  return <RootLayoutNav />;
-}
-
-function RootLayoutNav() {
-  const colorScheme = useColorScheme();
-
   return (
-    <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-      <Stack>
-        <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-        <Stack.Screen name="modal" options={{ presentation: 'modal' }} />
-      </Stack>
-    </ThemeProvider>
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <AuthProvider>
+        <RootNavigator />
+      </AuthProvider>
+    </GestureHandlerRootView>
   );
 }

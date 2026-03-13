@@ -1,0 +1,15 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --tato-bg-start: #040a17;
+  --tato-bg-mid: #08172f;
+  --tato-bg-end: #050d1b;
+}
+
+@keyframes shimmer {
+  0% { opacity: 0.45; }
+  50% { opacity: 0.75; }
+  100% { opacity: 0.45; }
+}

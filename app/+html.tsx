@@ -11,6 +11,12 @@ export default function Root({ children }: { children: React.ReactNode }) {
         <meta charSet="utf-8" />
         <meta httpEquiv="X-UA-Compatible" content="IE=edge" />
         <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no" />
+        <title>TATO</title>
+        <meta
+          name="description"
+          content="TATO is the supplier and broker workspace for ingestion, claims, payments, and controlled pilot operations."
+        />
+        <meta name="theme-color" content="#09172d" />
 
         {/* 
           Disable body scrolling on web. This makes ScrollView components work closer to how they do on native. 
@@ -29,10 +35,5 @@ export default function Root({ children }: { children: React.ReactNode }) {
 
 const responsiveBackground = `
 body {
-  background-color: #fff;
-}
-@media (prefers-color-scheme: dark) {
-  body {
-    background-color: #000;
-  }
+  background: radial-gradient(circle at top, #0b1f3e 0%, #050d1b 55%, #030a16 100%);
 }`;
