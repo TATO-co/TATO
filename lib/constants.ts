@@ -1,45 +1,63 @@
 import { useWindowDimensions } from 'react-native';
 
-export type ViewportTier = 'mobile' | 'tablet' | 'desktop' | 'wideDesktop';
+import {
+  DESKTOP_BREAKPOINT,
+  getNavigationMode,
+  getPageGutter,
+  getPageMaxWidth,
+  getViewportColumns,
+  getViewportTier,
+  NavigationMode,
+  TABLET_BREAKPOINT,
+  ViewportTier,
+  WIDE_DESKTOP_BREAKPOINT,
+} from '@/lib/responsive';
 
-/**
- * Breakpoint at which the UI switches from mobile (tab bar)
- * to desktop (sidebar / pill-bar) navigation.
- */
-export const DESKTOP_BREAKPOINT = 1100;
-export const TABLET_BREAKPOINT = 768;
-export const WIDE_DESKTOP_BREAKPOINT = 1440;
+export {
+  DESKTOP_BREAKPOINT,
+  getNavigationMode,
+  getPageGutter,
+  getPageMaxWidth,
+  getViewportColumns,
+  getViewportTier,
+  NavigationMode,
+  TABLET_BREAKPOINT,
+  ViewportTier,
+  WIDE_DESKTOP_BREAKPOINT,
+};
 
 export function useViewportInfo() {
-    const { width } = useWindowDimensions();
-    const isDesktop = width >= DESKTOP_BREAKPOINT;
-    const isWideDesktop = width >= WIDE_DESKTOP_BREAKPOINT;
-    const isTablet = width >= TABLET_BREAKPOINT && width < DESKTOP_BREAKPOINT;
+  const { width, height } = useWindowDimensions();
+  const tier = getViewportTier(width);
+  const navigationMode = getNavigationMode(width);
+  const isPhone = tier === 'phone';
+  const isTablet = tier === 'tablet';
+  const isDesktop = tier === 'desktop' || tier === 'wideDesktop';
+  const isWideDesktop = tier === 'wideDesktop';
 
-    let tier: ViewportTier = 'mobile';
-    if (isWideDesktop) {
-        tier = 'wideDesktop';
-    } else if (isDesktop) {
-        tier = 'desktop';
-    } else if (isTablet) {
-        tier = 'tablet';
-    }
-
-    return {
-        width,
-        tier,
-        isTablet,
-        isDesktop,
-        isWideDesktop,
-        isCompactDesktop: isDesktop && !isWideDesktop,
-    };
+  return {
+    width,
+    height,
+    tier,
+    navigationMode,
+    isPhone,
+    isTablet,
+    isDesktop,
+    isWideDesktop,
+    isCompactDesktop: tier === 'desktop',
+    pageMaxWidth: getPageMaxWidth(width),
+    pageGutter: getPageGutter(width),
+  };
 }
 
-/**
- * Convenience hook that returns `true` when the viewport is at or
- * beyond the desktop breakpoint — avoids repeating the raw number
- * across dozens of components.
- */
+export function useIsPhone() {
+  return useViewportInfo().isPhone;
+}
+
+export function useIsTablet() {
+  return useViewportInfo().isTablet;
+}
+
 export function useIsDesktop() {
-    return useViewportInfo().isDesktop;
+  return useViewportInfo().isDesktop;
 }

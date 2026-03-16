@@ -7,6 +7,7 @@ import { useFonts } from 'expo-font';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { useEffect } from 'react';
+import { ActivityIndicator, Text, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
 import { AuthProvider, useAuth } from '@/components/providers/AuthProvider';
@@ -19,6 +20,18 @@ export const unstable_settings = {
 };
 
 SplashScreen.preventAutoHideAsync();
+
+function BootScreen({ label }: { label: string }) {
+  return (
+    <View className="flex-1 items-center justify-center bg-tato-base px-8">
+      <View className="items-center gap-4 rounded-[24px] border border-tato-line bg-tato-panel px-6 py-7">
+        <ActivityIndicator color="#1e6dff" />
+        <Text className="font-mono text-[11px] uppercase tracking-[2px] text-tato-accent">TATO Boot</Text>
+        <Text className="text-center text-sm leading-6 text-tato-muted">{label}</Text>
+      </View>
+    </View>
+  );
+}
 
 function RootNavigator() {
   const router = useRouter();
@@ -51,7 +64,7 @@ function RootNavigator() {
   }, [configured, isAuthenticated, loading, preferredRoute, router, segments]);
 
   if (configured && loading) {
-    return null;
+    return <BootScreen label="Initializing session and workspace routes." />;
   }
 
   return (
@@ -89,7 +102,7 @@ export default function RootLayout() {
   }, [loaded]);
 
   if (!loaded) {
-    return null;
+    return <BootScreen label="Loading fonts and application shell." />;
   }
 
   return (

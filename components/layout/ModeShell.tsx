@@ -3,7 +3,7 @@ import { SymbolView } from 'expo-symbols';
 import { PropsWithChildren } from 'react';
 import { Image, Pressable, SafeAreaView, Text, View } from 'react-native';
 
-import { type DesktopSectionNavItem } from '@/components/ui/DesktopSectionNav';
+import { DesktopSectionNav, type DesktopSectionNavItem } from '@/components/ui/DesktopSectionNav';
 import { useViewportInfo } from '@/lib/constants';
 import { RHYTHM } from '@/lib/ui';
 
@@ -37,20 +37,24 @@ export function ModeShell({
   actions = [],
   children,
 }: ModeShellProps) {
-  const { isDesktop, isWideDesktop } = useViewportInfo();
-  const desktopShellWidth = isWideDesktop ? 1680 : 1520;
+  const { isPhone, isTablet, isDesktop, isWideDesktop, pageGutter, pageMaxWidth } = useViewportInfo();
+  const desktopShellWidth = pageMaxWidth ?? (isWideDesktop ? 1680 : 1520);
   const desktopSidebarWidthClass = isWideDesktop ? 'w-[276px]' : 'w-[244px]';
   const desktopMainPaddingClass = isWideDesktop ? 'px-10 pb-10 pt-8' : 'px-7 pb-8 pt-7';
   const desktopTitleClass = isWideDesktop ? 'text-[34px]' : 'text-[30px]';
+  const shellTitleClass = isPhone ? 'text-[20px] leading-[22px]' : 'text-[30px]';
+  const actionButtonClassName = isPhone
+    ? 'h-11 w-11 items-center justify-center rounded-[22px] border border-[#17355f] bg-[#102443]/92'
+    : 'h-11 w-11 items-center justify-center rounded-full bg-tato-panelSoft hover:bg-tato-hover focus:bg-tato-hover';
 
   const avatar = avatarUrl ? (
     <Image
-      className="h-12 w-12 rounded-full border-2 border-tato-accent"
+      className={`${isPhone ? 'h-[58px] w-[58px]' : 'h-12 w-12'} rounded-full border-2 border-tato-accent`}
       source={{ uri: avatarUrl }}
     />
   ) : (
-    <View className="h-12 w-12 items-center justify-center rounded-full border border-[#2f5ca8] bg-[#f1c39e]">
-      <Text className="text-lg" accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
+    <View className={`${isPhone ? 'h-[58px] w-[58px]' : 'h-12 w-12'} items-center justify-center rounded-full border-2 border-[#2f5ca8] bg-[#f1c39e]`}>
+      <Text className={isPhone ? 'text-[24px]' : 'text-lg'} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
         {avatarEmoji}
       </Text>
     </View>
@@ -67,7 +71,7 @@ export function ModeShell({
               {avatar}
               <View className="flex-1">
                 <Text className="font-sans-bold text-lg text-tato-text" numberOfLines={1}>{title}</Text>
-                <Text className="font-mono text-[10px] uppercase tracking-[1px] text-tato-muted">
+                <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-muted">
                   {modeLabel}
                 </Text>
               </View>
@@ -96,7 +100,7 @@ export function ModeShell({
 
             {/* Version info at bottom of sidebar */}
             <View className="mt-auto pt-6 px-2">
-              <Text className="font-mono text-[10px] uppercase tracking-[1px] text-tato-dim">
+              <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-dim">
                 Terminal v1.0.4
               </Text>
             </View>
@@ -117,7 +121,7 @@ export function ModeShell({
                     <Pressable
                       accessibilityLabel={action.accessibilityLabel}
                       accessibilityRole="button"
-                      className="h-10 w-10 items-center justify-center rounded-full bg-tato-panelSoft hover:bg-tato-hover focus:bg-tato-hover"
+                      className={actionButtonClassName}
                       key={action.key}
                       onPress={action.onPress}>
                       <SymbolView name={action.icon as never} size={18} tintColor="#edf4ff" />
@@ -144,46 +148,103 @@ export function ModeShell({
     );
   }
 
-  // Mobile layout (unchanged structure, upgraded tokens)
+  if (isTablet && desktopNavItems && desktopNavActiveKey) {
+    return (
+      <SafeAreaView className="flex-1 bg-tato-base">
+        <View className="mx-auto flex-1 w-full" style={{ maxWidth: desktopShellWidth, paddingHorizontal: pageGutter }}>
+          <View className="flex-1 py-5" style={{ rowGap: RHYTHM.md }}>
+            <View className="flex-row items-start justify-between gap-4">
+              <View className="flex-row items-center gap-3">
+                {avatar}
+                <View>
+                  <Text className={`font-sans-bold text-tato-text ${shellTitleClass}`}>
+                    {title}
+                  </Text>
+                  <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-muted">
+                    {modeLabel}
+                  </Text>
+                </View>
+              </View>
+
+              <View className="flex-row items-center gap-2">
+                {actions.map((action) => {
+                  const button = (
+                    <Pressable
+                      accessibilityLabel={action.accessibilityLabel}
+                      accessibilityRole="button"
+                      className={actionButtonClassName}
+                      key={action.key}
+                      onPress={action.onPress}>
+                      <SymbolView name={action.icon as never} size={18} tintColor="#edf4ff" />
+                    </Pressable>
+                  );
+
+                  if (action.href) {
+                    return (
+                      <Link asChild href={action.href as never} key={action.key}>
+                        {button}
+                      </Link>
+                    );
+                  }
+
+                  return button;
+                })}
+              </View>
+            </View>
+
+            <DesktopSectionNav activeKey={desktopNavActiveKey} compact items={desktopNavItems} />
+            <View className="flex-1">{children}</View>
+          </View>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
   return (
     <SafeAreaView className="flex-1 bg-tato-base">
-      <View
-        className="flex-1 px-4 pt-3"
-        style={{ rowGap: RHYTHM.sm }}>
-        <View className="flex-row items-center justify-between">
-          <View className="flex-row items-center gap-3">
-            {avatar}
-            <View>
-              <Text className="font-sans-bold text-3xl text-tato-text">{title}</Text>
-              <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-muted">
-                {modeLabel}
-              </Text>
+      <View className="flex-1 pt-3" style={{ paddingHorizontal: pageGutter, rowGap: RHYTHM.md }}>
+        <View className="rounded-[28px] border border-[#112746] bg-[#061325]/88 px-4 py-3">
+          <View className="flex-row items-start justify-between gap-4">
+            <View className="flex-1 flex-row items-center gap-3">
+              {avatar}
+              <View className="flex-1 pr-1">
+                <Text
+                  adjustsFontSizeToFit={isPhone}
+                  className={`font-sans-bold text-tato-text ${shellTitleClass}`}
+                  minimumFontScale={0.85}
+                  numberOfLines={isPhone ? 2 : 1}>
+                  {title}
+                </Text>
+                <Text className="mt-1.5 font-mono text-[12px] uppercase tracking-[2px] text-[#9cb7e1]">
+                  {modeLabel}
+                </Text>
+              </View>
             </View>
-          </View>
 
-          <View className="flex-row items-center gap-2">
-            {actions.map((action) => {
-              const button = (
-                <Pressable
-                  accessibilityLabel={action.accessibilityLabel}
-                  accessibilityRole="button"
-                  className="h-10 w-10 items-center justify-center rounded-full bg-tato-panelSoft hover:bg-tato-hover focus:bg-tato-hover"
-                  key={action.key}
-                  onPress={action.onPress}>
-                  <SymbolView name={action.icon as never} size={18} tintColor="#edf4ff" />
-                </Pressable>
-              );
-
-              if (action.href) {
-                return (
-                  <Link asChild href={action.href as never} key={action.key}>
-                    {button}
-                  </Link>
+            <View className="flex-row items-center gap-2">
+              {actions.map((action) => {
+                const button = (
+                  <Pressable
+                    accessibilityLabel={action.accessibilityLabel}
+                    accessibilityRole="button"
+                    className={actionButtonClassName}
+                    key={action.key}
+                    onPress={action.onPress}>
+                    <SymbolView name={action.icon as never} size={isPhone ? 20 : 18} tintColor="#edf4ff" />
+                  </Pressable>
                 );
-              }
 
-              return button;
-            })}
+                if (action.href) {
+                  return (
+                    <Link asChild href={action.href as never} key={action.key}>
+                      {button}
+                    </Link>
+                  );
+                }
+
+                return button;
+              })}
+            </View>
           </View>
         </View>
 

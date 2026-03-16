@@ -7,6 +7,7 @@ import { ModeShell } from '@/components/layout/ModeShell';
 import { useAuth } from '@/components/providers/AuthProvider';
 import { brokerDesktopNav } from '@/lib/navigation';
 import { TIMING } from '@/lib/ui';
+import { useViewportInfo } from '@/lib/constants';
 
 async function pause(ms: number) {
   await new Promise((resolve) => setTimeout(resolve, ms));
@@ -14,6 +15,7 @@ async function pause(ms: number) {
 
 export default function ProfileScreen() {
   const router = useRouter();
+  const { isPhone } = useViewportInfo();
   const { isAdmin, payoutReadiness, profile, user, signOut, switchMode } = useAuth();
   const canSupply = profile?.can_supply ?? false;
   const canBroker = profile?.can_broker ?? false;
@@ -64,9 +66,9 @@ export default function ProfileScreen() {
           </View>
         </View>
 
-        <View className="mt-5 gap-3 lg:flex-row">
-          <View className="rounded-2xl border border-tato-line bg-tato-panelSoft p-4 lg:flex-1">
-            <Text className="text-[10px] uppercase tracking-[1px] text-tato-dim" style={{ fontFamily: 'SpaceMono' }}>
+        <View className={`mt-5 gap-3 ${!isPhone ? 'flex-row' : ''}`}>
+          <View className={`rounded-2xl border border-tato-line bg-tato-panelSoft p-4 ${!isPhone ? 'flex-1' : ''}`}>
+            <Text className="text-[11px] uppercase tracking-[1px] text-tato-dim" style={{ fontFamily: 'SpaceMono' }}>
               Identity
             </Text>
             <Text className="mt-2 text-sm text-tato-text">
@@ -74,8 +76,8 @@ export default function ProfileScreen() {
             </Text>
           </View>
 
-          <View className="rounded-2xl border border-tato-line bg-tato-panelSoft p-4 lg:flex-1">
-            <Text className="text-[10px] uppercase tracking-[1px] text-tato-dim" style={{ fontFamily: 'SpaceMono' }}>
+          <View className={`rounded-2xl border border-tato-line bg-tato-panelSoft p-4 ${!isPhone ? 'flex-1' : ''}`}>
+            <Text className="text-[11px] uppercase tracking-[1px] text-tato-dim" style={{ fontFamily: 'SpaceMono' }}>
               Payout Readiness
             </Text>
             <Text className="mt-2 text-sm text-tato-text">

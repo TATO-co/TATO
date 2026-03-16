@@ -1,4 +1,3 @@
-import { useIsDesktop } from '@/lib/constants';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as ImagePicker from 'expo-image-picker';
 import { useLocalSearchParams, useRouter } from 'expo-router';
@@ -16,8 +15,10 @@ import {
 } from 'react-native';
 import Animated, { FadeInUp } from 'react-native-reanimated';
 
+import { ResponsiveSplitPane } from '@/components/layout/ResponsivePrimitives';
 import { useAuth } from '@/components/providers/AuthProvider';
 import { trackEvent } from '@/lib/analytics';
+import { useViewportInfo } from '@/lib/constants';
 import {
   runIngestionPipeline,
   type IngestionAnalysis,
@@ -173,7 +174,7 @@ function AnalysisPanel({
 export default function IngestionScreen() {
   const router = useRouter();
   const { entry } = useLocalSearchParams<{ entry?: string }>();
-  const isDesktop = useIsDesktop();
+  const { isDesktop, isPhone, pageGutter, pageMaxWidth, tier } = useViewportInfo();
   const { user } = useAuth();
   const entryMode: IngestionEntryMode = entry === 'upload' ? 'upload' : 'camera';
 
@@ -368,27 +369,30 @@ export default function IngestionScreen() {
     </View>
   );
 
-  if (isDesktop) {
+  if (!isPhone) {
     return (
       <SafeAreaView className="flex-1 bg-tato-base">
-        <View className="mx-auto flex-1 w-full max-w-[1340px] px-8 py-6">
-          <View className="flex-1 flex-row gap-6">
-            <View className="flex-[1.3]">{previewPanel}</View>
-
-            <Animated.View className="w-[430px]" entering={FadeInUp.duration(TIMING.base)}>
-              <AnalysisPanel
-                compact
-                running={running}
-                error={error}
-                analysis={analysis}
-                itemId={itemId}
-                entryMode={entryMode}
-                onConfirm={runPipeline}
-                onGallery={pickFromGallery}
-                onLiveIntake={() => router.push('/(app)/live-intake' as never)}
-              />
-            </Animated.View>
-          </View>
+        <View className="mx-auto flex-1 w-full py-6" style={{ maxWidth: pageMaxWidth ?? 1520, paddingHorizontal: pageGutter }}>
+          <ResponsiveSplitPane
+            primary={<View className="min-h-[420px] flex-1">{previewPanel}</View>}
+            secondary={
+              <Animated.View entering={FadeInUp.duration(TIMING.base)}>
+                <AnalysisPanel
+                  compact
+                  running={running}
+                  error={error}
+                  analysis={analysis}
+                  itemId={itemId}
+                  entryMode={entryMode}
+                  onConfirm={runPipeline}
+                  onGallery={pickFromGallery}
+                  onLiveIntake={() => router.push('/(app)/live-intake' as never)}
+                />
+              </Animated.View>
+            }
+            secondaryWidth={{ tablet: 360, desktop: 400, wideDesktop: 430 }}
+            tier={tier}
+          />
         </View>
       </SafeAreaView>
     );

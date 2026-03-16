@@ -82,7 +82,7 @@ function SwipeClaimCardInner({
 
       <GestureDetector gesture={pan}>
         <Animated.View style={animatedStyle}>
-          <View className={`${isDesktop ? 'h-[360px]' : 'h-[500px]'}`}>
+          <View className={`${isDesktop ? 'h-[360px]' : 'h-[460px]'}`}>
             <Image
               className="absolute inset-0 h-full w-full"
               resizeMode="cover"
@@ -100,7 +100,7 @@ function SwipeClaimCardInner({
                   </View>
 
                   <View className="rounded-full border border-white/35 bg-white/15 px-3 py-2">
-                    <Text className="font-mono text-[10px] font-semibold uppercase tracking-[1px] text-white">
+                    <Text className="font-mono text-[11px] font-semibold uppercase tracking-[1px] text-white">
                       {item.gradeLabel}
                     </Text>
                   </View>
@@ -128,7 +128,7 @@ function SwipeClaimCardInner({
                       <View
                         className="-mr-2 h-8 w-8 items-center justify-center rounded-full border border-tato-base bg-[#10274e]"
                         key={badge}>
-                        <Text className="font-mono text-[10px] font-bold text-white">
+                        <Text className="font-mono text-[11px] font-bold text-white">
                           {badge}
                         </Text>
                       </View>

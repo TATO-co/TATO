@@ -12,12 +12,14 @@ import {
 } from 'react-native';
 
 import { FeedState } from '@/components/ui/FeedState';
+import { useViewportInfo } from '@/lib/constants';
 import { useItemDetail } from '@/lib/hooks/useItemDetail';
 import { formatMoney } from '@/lib/models';
 
 export default function ItemDetailsScreen() {
   const { itemId } = useLocalSearchParams<{ itemId?: string }>();
   const router = useRouter();
+  const { isPhone, pageGutter, pageMaxWidth } = useViewportInfo();
   const { detail, error, loading, refresh } = useItemDetail(itemId ?? null);
 
   const handleShare = async () => {
@@ -35,16 +37,16 @@ export default function ItemDetailsScreen() {
 
   return (
     <SafeAreaView className="flex-1 bg-tato-base">
-      <View className="mx-auto flex-1 w-full max-w-[1180px] px-4 pt-4">
+      <View className="mx-auto flex-1 w-full pt-4" style={{ maxWidth: pageMaxWidth ?? 1180, paddingHorizontal: pageGutter }}>
         <View className="mb-4 flex-row items-center justify-between">
           <Pressable
-            className="h-10 w-10 items-center justify-center rounded-full bg-[#132342]"
+            className="h-11 w-11 items-center justify-center rounded-full bg-[#132342]"
             onPress={() => router.back()}>
             <SymbolView name={{ ios: 'chevron.left', android: 'arrow_back', web: 'arrow_back' }} size={18} tintColor="#edf4ff" />
           </Pressable>
           <Text className="text-2xl font-bold text-tato-text">Item Detail</Text>
           <Pressable
-            className="h-10 w-10 items-center justify-center rounded-full bg-[#132342]"
+            className="h-11 w-11 items-center justify-center rounded-full bg-[#132342]"
             onPress={handleShare}>
             <SymbolView name={{ ios: 'square.and.arrow.up', android: 'share', web: 'share' }} size={18} tintColor="#edf4ff" />
           </Pressable>
@@ -65,12 +67,12 @@ export default function ItemDetailsScreen() {
               <View className="p-5">
                 <View className="flex-row flex-wrap gap-2">
                   <View className="rounded-full border border-tato-line bg-tato-panelSoft px-3 py-1.5">
-                    <Text className="font-mono text-[10px] uppercase tracking-[1px] text-tato-accent">
+                    <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-accent">
                       {detail.lifecycleStage}
                     </Text>
                   </View>
                   <View className="rounded-full border border-tato-line bg-tato-panelSoft px-3 py-1.5">
-                    <Text className="font-mono text-[10px] uppercase tracking-[1px] text-tato-muted">
+                    <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-muted">
                       {detail.sku}
                     </Text>
                   </View>
@@ -81,7 +83,7 @@ export default function ItemDetailsScreen() {
               </View>
             </View>
 
-            <View className="gap-4 lg:flex-row">
+            <View className={`gap-4 ${!isPhone ? 'flex-row' : ''}`}>
               <View className="flex-1 rounded-[24px] border border-tato-line bg-tato-panel p-5">
                 <Text className="text-xs uppercase tracking-[1px] text-tato-dim">Estimated Profit</Text>
                 <Text className="mt-2 text-3xl font-bold text-tato-profit">
@@ -101,7 +103,7 @@ export default function ItemDetailsScreen() {
             </View>
 
             <View className="rounded-[24px] border border-tato-line bg-tato-panel p-5">
-              <Text className="font-mono text-[10px] uppercase tracking-[1px] text-tato-dim">
+              <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-dim">
                 Workflow Note
               </Text>
               <Text className="mt-3 text-sm leading-7 text-tato-muted">

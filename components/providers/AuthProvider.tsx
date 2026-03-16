@@ -103,6 +103,26 @@ function resolveRoleLabel(profile: ProfileRecord | null) {
 }
 
 const developmentApprovalBypassEnabled = runtimeConfig.appEnv === 'development';
+const AUTH_BOOT_TIMEOUT_MS = 4000;
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(`${label} timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
+}
 
 async function ensureDevelopmentHub(profile: ProfileRecord) {
   if (!supabase || !developmentApprovalBypassEnabled) {
@@ -305,9 +325,21 @@ export function AuthProvider({ children }: PropsWithChildren) {
         return;
       }
 
-      const { data, error } = await supabase.auth.getSession();
-      if (error) {
-        captureException(error, { flow: 'auth.initialize' });
+      let data: { session: Session | null } = { session: null };
+
+      try {
+        const sessionResult = await withTimeout(
+          supabase.auth.getSession(),
+          AUTH_BOOT_TIMEOUT_MS,
+          'supabase.auth.getSession',
+        );
+        data = sessionResult.data;
+
+        if (sessionResult.error) {
+          captureException(sessionResult.error, { flow: 'auth.initialize' });
+        }
+      } catch (error) {
+        captureException(error, { flow: 'auth.initialize.timeout' });
       }
 
       if (!mounted) {
@@ -316,7 +348,18 @@ export function AuthProvider({ children }: PropsWithChildren) {
 
       setSession(data.session);
       setUser(data.session?.user ?? null);
-      await loadProfile(data.session?.user ?? null);
+
+      try {
+        await withTimeout(
+          loadProfile(data.session?.user ?? null),
+          AUTH_BOOT_TIMEOUT_MS,
+          'auth.loadProfile',
+        );
+      } catch (error) {
+        captureException(error, { flow: 'auth.loadProfile.timeout' });
+        setProfile(null);
+        setTelemetryUser(null);
+      }
 
       if (mounted) {
         setLoading(false);
@@ -336,7 +379,19 @@ export function AuthProvider({ children }: PropsWithChildren) {
     } = supabase.auth.onAuthStateChange(async (_event, changedSession) => {
       setSession(changedSession);
       setUser(changedSession?.user ?? null);
-      await loadProfile(changedSession?.user ?? null);
+
+      try {
+        await withTimeout(
+          loadProfile(changedSession?.user ?? null),
+          AUTH_BOOT_TIMEOUT_MS,
+          'auth.onAuthStateChange.loadProfile',
+        );
+      } catch (error) {
+        captureException(error, { flow: 'auth.onAuthStateChange.timeout' });
+        setProfile(null);
+        setTelemetryUser(null);
+      }
+
       setLoading(false);
     });
 

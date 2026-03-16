@@ -76,6 +76,8 @@ function coerceAnalysis(raw: GeminiStructuredResult): {
   };
 }
 
+const INGESTION_MODEL = Deno.env.get('GEMINI_INGESTION_MODEL') ?? 'gemini-2.0-flash';
+
 async function runGemini(args: {
   apiKey: string;
   imageBase64: string;
@@ -103,7 +105,7 @@ async function runGemini(args: {
   ].join('\n');
 
   const response = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${args.apiKey}`,
+    `https://generativelanguage.googleapis.com/v1beta/models/${INGESTION_MODEL}:generateContent?key=${args.apiKey}`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -251,7 +253,7 @@ serve(async (req) => {
         floor_price_cents: analysis.floorPriceCents,
         suggested_list_price_cents: analysis.suggestedListPriceCents,
         ingestion_ai_status: 'completed',
-        ingestion_ai_model: 'gemini-2.0-flash',
+        ingestion_ai_model: INGESTION_MODEL,
         ingestion_ai_summary: `AI ingestion completed at ${new Date().toISOString()}`,
         ingestion_ai_confidence: analysis.confidence,
         ingestion_ai_attributes: analysis.attributes,

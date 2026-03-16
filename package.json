@@ -9,19 +9,23 @@
     "web": "expo start --web",
     "build": "npm run export:web",
     "typecheck": "tsc --noEmit",
-    "check:functions": "deno check --no-config supabase/functions/create-claim/index.ts && deno check --no-config supabase/functions/start-ingestion/index.ts && deno check --no-config supabase/functions/create-sale-payment/index.ts && deno check --no-config supabase/functions/complete-claim-payment/index.ts && deno check --no-config supabase/functions/approve-user/index.ts && deno check --no-config supabase/functions/suspend-user/index.ts && deno check --no-config supabase/functions/create-connect-onboarding-link/index.ts && deno check --no-config supabase/functions/refresh-connect-status/index.ts && deno check --no-config supabase/functions/gemini-ingest-item/index.ts && deno check --no-config supabase/functions/stripe-webhook/index.ts",
+    "check:functions": "deno check --no-config supabase/functions/create-claim/index.ts && deno check --no-config supabase/functions/start-ingestion/index.ts && deno check --no-config supabase/functions/start-live-intake-draft/index.ts && deno check --no-config supabase/functions/complete-live-intake-draft/index.ts && deno check --no-config supabase/functions/create-sale-payment/index.ts && deno check --no-config supabase/functions/complete-claim-payment/index.ts && deno check --no-config supabase/functions/approve-user/index.ts && deno check --no-config supabase/functions/suspend-user/index.ts && deno check --no-config supabase/functions/create-connect-onboarding-link/index.ts && deno check --no-config supabase/functions/refresh-connect-status/index.ts && deno check --no-config supabase/functions/gemini-ingest-item/index.ts && deno check --no-config supabase/functions/stripe-webhook/index.ts && deno check --no-config supabase/functions/generate-broker-listing/index.ts",
+    "check:live-agent": "npm --prefix services/live-agent run typecheck",
     "test": "vitest run",
+    "test:web-smoke": "playwright test --config playwright.config.ts",
     "test:watch": "vitest",
     "export:web": "expo export --platform web",
-    "check": "npm run typecheck && npm run test && npm run check:functions"
+    "check": "npm run typecheck && npm run test && npm run check:functions && npm run check:live-agent"
   },
   "dependencies": {
     "@expo-google-fonts/inter": "^0.4.2",
+    "@google/genai": "^1.45.0",
     "@react-native-async-storage/async-storage": "^3.0.1",
     "@react-navigation/native": "^7.1.28",
     "@sentry/react-native": "^8.4.0",
     "@supabase/supabase-js": "^2.98.0",
     "expo": "~55.0.4",
+    "expo-av": "^16.0.8",
     "expo-camera": "~55.0.9",
     "expo-constants": "~55.0.7",
     "expo-font": "~55.0.4",
@@ -48,8 +52,11 @@
     "tailwindcss": "^3.4.19"
   },
   "devDependencies": {
+    "@playwright/test": "^1.58.2",
     "@types/node": "^25.5.0",
+    "@types/pngjs": "^6.0.5",
     "@types/react": "~19.2.2",
+    "pngjs": "^7.0.0",
     "typescript": "~5.9.2",
     "vitest": "^4.1.0"
   },

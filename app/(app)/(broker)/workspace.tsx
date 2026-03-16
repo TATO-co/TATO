@@ -3,11 +3,11 @@ import { useState } from 'react';
 import { BrokerFeedPanel } from '@/components/workspace/BrokerFeedPanel';
 import type { BrokerDesktopControlEntry } from '@/components/workspace/BrokerDesktopControlsDrawer';
 import { ModeShell } from '@/components/layout/ModeShell';
-import { useIsDesktop } from '@/lib/constants';
+import { useViewportInfo } from '@/lib/constants';
 import { brokerDesktopNav } from '@/lib/navigation';
 
 export default function WorkspaceScreen() {
-  const isDesktop = useIsDesktop();
+  const { isPhone } = useViewportInfo();
   const [desktopControlsOpen, setDesktopControlsOpen] = useState(false);
   const [desktopControlsEntry, setDesktopControlsEntry] = useState<BrokerDesktopControlEntry>('filters');
 
@@ -19,7 +19,7 @@ export default function WorkspaceScreen() {
   return (
     <ModeShell
       actions={
-        isDesktop
+        !isPhone
           ? [
             {
               key: 'search',

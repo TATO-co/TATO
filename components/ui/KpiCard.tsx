@@ -51,14 +51,14 @@ export function KpiCard({ label, value, delta, tone = 'neutral', sparklineData }
 
     return (
         <View className="flex-1 rounded-[20px] border border-tato-line bg-tato-panel p-4">
-            <Text className="font-mono text-[10px] uppercase tracking-[1px] text-tato-dim">
+            <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-dim">
                 {label}
             </Text>
             <Text className={`mt-2 text-3xl font-bold ${colors.text}`}>
                 {value}
             </Text>
-            <View className="mt-2 flex-row items-center justify-between">
-                <Text className="text-xs text-tato-muted">{delta}</Text>
+            <View className="mt-2 flex-row items-center justify-between gap-3">
+                <Text className="flex-1 text-sm text-tato-muted">{delta}</Text>
                 {sparklineData ? <Sparkline color={colors.spark} data={sparklineData} /> : null}
             </View>
         </View>

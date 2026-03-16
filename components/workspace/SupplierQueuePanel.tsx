@@ -3,13 +3,15 @@ import { useCallback, useMemo, useState } from 'react';
 import { FlatList, Image, ScrollView, Text, View } from 'react-native';
 import Animated, { FadeInUp } from 'react-native-reanimated';
 
+import { ResponsiveKpiGrid, ResponsiveSplitPane } from '@/components/layout/ResponsivePrimitives';
 import { FeedState } from '@/components/ui/FeedState';
 import { InventoryTable } from '@/components/ui/InventoryTable';
 import { KpiCard } from '@/components/ui/KpiCard';
+import { PhoneActionButton, PhoneEyebrow, PhoneMetricChip, PhonePanel } from '@/components/ui/PhoneChrome';
 import { PressableScale } from '@/components/ui/PressableScale';
 import { SkeletonCard, SkeletonRow } from '@/components/ui/SkeletonCard';
 import { StatusFilterBar, type StatusFilter } from '@/components/ui/StatusFilterBar';
-import { useIsDesktop } from '@/lib/constants';
+import { useViewportInfo } from '@/lib/constants';
 import { useReducedMotionPreference } from '@/lib/hooks/useReducedMotionPreference';
 import { formatMoney, type SupplierItem as SupplierItemRow, type SupplierItemStatus } from '@/lib/models';
 import { useSupplierDashboard } from '@/lib/hooks/useSupplierDashboard';
@@ -28,7 +30,7 @@ function StatusPill({ status }: { status: SupplierItemStatus }) {
   const s = map[status];
   return (
     <Text
-      className="rounded-full border px-2.5 py-1 text-[10px] font-semibold"
+      className="rounded-full border px-2.5 py-1 text-[11px] font-semibold"
       style={{ color: s.color, borderColor: s.border, backgroundColor: s.bg }}>
       {s.text}
     </Text>
@@ -44,8 +46,10 @@ function filterMatches(filter: StatusFilter, status: SupplierItemStatus): boolea
 }
 
 export function SupplierQueuePanel({ isDesktop }: SupplierQueuePanelProps) {
-  const isDesktopHook = useIsDesktop();
-  const resolvedDesktop = isDesktop ?? isDesktopHook;
+  const viewport = useViewportInfo();
+  const resolvedDesktop = isDesktop ?? viewport.isDesktop;
+  const useTabletLayout = !resolvedDesktop && viewport.isTablet;
+  const tier = resolvedDesktop ? viewport.tier : useTabletLayout ? 'tablet' : 'phone';
   const router = useRouter();
   const [activeFilter, setActiveFilter] = useState<StatusFilter>('all');
   const { items, metrics, loading, error, refresh } = useSupplierDashboard();
@@ -59,6 +63,12 @@ export function SupplierQueuePanel({ isDesktop }: SupplierQueuePanelProps) {
   const metric0 = metrics[0];
   const metric1 = metrics[1];
   const metric2 = metrics[2];
+  const availableCount = items.filter((item) => item.status === 'available').length;
+  const pendingCount = items.filter((item) => item.status === 'pending_pickup').length;
+  const claimedCount = items.filter((item) => item.status === 'claimed').length;
+  const highActivityCount = items.filter(
+    (item) => item.brokerActivity === 'High' || item.brokerActivity === 'Very High',
+  ).length;
   const actionQueueStats = useMemo(
     () => [
       { label: 'Items awaiting claim', value: items.filter((item) => item.status === 'available').length },
@@ -72,42 +82,85 @@ export function SupplierQueuePanel({ isDesktop }: SupplierQueuePanelProps) {
   const renderMobileItem = useCallback(
     ({ item }: { item: SupplierItemRow }) => (
       <Animated.View
-        className="flex-row items-center gap-3 border-b border-tato-line px-4 py-3"
+        className="px-1"
         entering={reducedMotion ? undefined : FadeInUp.duration(TIMING.quick)}>
-        <Image className="h-12 w-12 rounded-xl" source={{ uri: item.thumbUrl }} />
-        <View className="flex-1">
-          <Text className="text-base font-semibold text-tato-text">{item.title}</Text>
-          <View className="mt-1 flex-row items-center gap-2">
-            <StatusPill status={item.status} />
-            <Text className="font-mono text-[10px] text-tato-dim">
-              {item.sku}
-            </Text>
+        <PressableScale
+          activeScale={0.985}
+          className="overflow-hidden rounded-[28px] border border-[#16355f] bg-[#07172d]"
+          onPress={() => router.push(`/(app)/item/${item.id}` as never)}>
+          <View className="absolute -right-10 -top-10 h-28 w-28 rounded-full bg-tato-accent/10" />
+          <View className="p-4">
+            <View className="flex-row gap-3">
+              <Image className="h-[84px] w-[84px] rounded-[22px]" source={{ uri: item.thumbUrl }} />
+              <View className="min-w-0 flex-1">
+                <View className="flex-row items-start justify-between gap-3">
+                  <View className="min-w-0 flex-1">
+                    <Text className="text-[18px] font-sans-bold leading-6 text-tato-text" numberOfLines={2}>
+                      {item.title}
+                    </Text>
+                    <Text className="mt-1 text-sm leading-6 text-tato-muted" numberOfLines={2}>
+                      {item.subtitle}
+                    </Text>
+                  </View>
+                  <Text className="font-mono text-[15px] font-semibold text-tato-accent">
+                    {formatMoney(item.askPriceCents, item.currencyCode, 2)}
+                  </Text>
+                </View>
+
+                <View className="mt-3 flex-row flex-wrap gap-2">
+                  <StatusPill status={item.status} />
+                  <View className="rounded-full border border-[#1c3d6e] bg-[#0d223f] px-2.5 py-1">
+                    <Text className="font-mono text-[11px] uppercase tracking-[1px] text-[#9cb7e1]">
+                      {item.brokerActivity} activity
+                    </Text>
+                  </View>
+                  <View className="rounded-full border border-[#17355f] bg-[#091a31] px-2.5 py-1">
+                    <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-muted">
+                      Qty {item.quantity}
+                    </Text>
+                  </View>
+                </View>
+              </View>
+            </View>
+
+            <View className="mt-4 flex-row items-center justify-between border-t border-[#16355f] pt-3">
+              <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-dim">
+                SKU {item.sku}
+              </Text>
+              <Text className="font-mono text-[11px] uppercase tracking-[1px] text-[#9cb7e1]">
+                Open Item
+              </Text>
+            </View>
           </View>
-        </View>
-        <Text className="font-mono text-base font-semibold text-tato-text">
-          {formatMoney(item.askPriceCents, item.currencyCode, 2)}
-        </Text>
+        </PressableScale>
       </Animated.View>
     ),
-    [reducedMotion],
+    [reducedMotion, router],
   );
 
   const keyExtractor = useCallback((item: SupplierItemRow) => item.id, []);
 
   // Loading skeleton
   if (loading) {
-    if (resolvedDesktop) {
+    if (resolvedDesktop || useTabletLayout) {
       return (
         <View className="gap-4 pb-10">
-          <View className="flex-row gap-4">
-            <View className="flex-1"><SkeletonCard height={120} borderRadius={20} /></View>
-            <View className="flex-1"><SkeletonCard height={120} borderRadius={20} /></View>
-            <View className="flex-1"><SkeletonCard height={120} borderRadius={20} /></View>
-          </View>
-          <View className="flex-row gap-5">
-            <View className="flex-[2]"><SkeletonCard height={300} borderRadius={20} /></View>
-            <View className="flex-1"><SkeletonCard height={300} borderRadius={20} /></View>
-          </View>
+          <ResponsiveKpiGrid tier={tier}>
+            <SkeletonCard height={120} borderRadius={20} />
+            <SkeletonCard height={120} borderRadius={20} />
+            <SkeletonCard height={120} borderRadius={20} />
+          </ResponsiveKpiGrid>
+          {resolvedDesktop ? (
+            <View className="flex-row gap-5">
+              <View className="flex-[2]"><SkeletonCard height={300} borderRadius={20} /></View>
+              <View className="flex-1"><SkeletonCard height={300} borderRadius={20} /></View>
+            </View>
+          ) : (
+            <View className="gap-4">
+              <SkeletonCard height={280} borderRadius={20} />
+              <SkeletonCard height={240} borderRadius={20} />
+            </View>
+          )}
         </View>
       );
     }
@@ -125,12 +178,10 @@ export function SupplierQueuePanel({ isDesktop }: SupplierQueuePanelProps) {
   const hasError = Boolean(error);
   const isEmpty = !error && !filteredItems.length;
 
-  // --- Desktop layout ---
   if (resolvedDesktop) {
     return (
       <ScrollView className="flex-1" contentContainerClassName="gap-5 pb-10">
-        {/* KPI Row */}
-        <View style={{ flexDirection: 'row', gap: 16 }}>
+        <ResponsiveKpiGrid tier={tier}>
           {metric0 ? (
             <KpiCard
               label={metric0.label}
@@ -155,121 +206,261 @@ export function SupplierQueuePanel({ isDesktop }: SupplierQueuePanelProps) {
               tone={metric2.tone}
             />
           ) : null}
-        </View>
+        </ResponsiveKpiGrid>
 
-        {/* Main content row */}
-        <View className="flex-row gap-5">
-          {/* Left: Live Inventory */}
-          <View className="flex-[2]">
-            <View className="flex-row items-center justify-between mb-3">
-              <Text className="font-sans-bold text-xl text-tato-text">Live Inventory</Text>
-              <StatusFilterBar activeFilter={activeFilter} onFilterChange={setActiveFilter} />
-            </View>
-            {hasError || isEmpty ? (
-              <FeedState
-                error={error}
-                empty={isEmpty}
-                emptyLabel="No items match this filter."
-                onRetry={refresh}
-              />
-            ) : (
-              <InventoryTable items={filteredItems} />
-            )}
-          </View>
-
-          {/* Right: System Pulse */}
-          <View className="flex-1 gap-4">
-            <Text className="font-sans-bold text-xl text-tato-text">System Pulse</Text>
-
-            {/* Batch Ingestion Card */}
-            <View className="rounded-[20px] border border-tato-line bg-tato-panel p-4">
-              <Text className="font-sans-bold text-base text-tato-text">
-                Launch Batch Ingestion
-              </Text>
-              <Text className="text-xs text-tato-muted mt-1">AI scan</Text>
-              <Text className="font-sans-bold text-2xl text-tato-text mt-2">82%</Text>
-              {/* Progress bar */}
-              <View className="mt-2 h-2 rounded-full bg-tato-surface overflow-hidden">
-                <View className="h-full w-[82%] rounded-full bg-tato-accent" />
+        <ResponsiveSplitPane
+          primary={
+            <View className="flex-[2]">
+              <View className="mb-3 flex-row items-center justify-between gap-4">
+                <Text className="font-sans-bold text-xl text-tato-text">Live Inventory</Text>
+                <StatusFilterBar activeFilter={activeFilter} onFilterChange={setActiveFilter} />
               </View>
-              <Text className="text-xs text-tato-muted mt-2">
-                Camera ingestion is processing supplier batch.
-              </Text>
-              <PressableScale
-                className="mt-3 rounded-full bg-tato-accent py-2.5"
-                onPress={() => router.push('/(app)/live-intake' as never)}>
-                <Text className="text-center font-mono text-xs font-semibold uppercase tracking-[1px] text-white">
-                  Run Auto-Scan
+              {hasError || isEmpty ? (
+                <FeedState
+                  error={error}
+                  empty={isEmpty}
+                  emptyLabel="No items match this filter."
+                  onRetry={refresh}
+                />
+              ) : (
+                <InventoryTable items={filteredItems} variant="desktop" />
+              )}
+            </View>
+          }
+          secondary={
+            <View className="gap-4">
+              <Text className="font-sans-bold text-xl text-tato-text">System Pulse</Text>
+
+              <View className="rounded-[20px] border border-tato-line bg-tato-panel p-4">
+                <Text className="font-sans-bold text-base text-tato-text">
+                  Launch Batch Ingestion
                 </Text>
-              </PressableScale>
-            </View>
+                <Text className="mt-1 text-sm text-tato-muted">AI scan</Text>
+                <Text className="mt-2 font-sans-bold text-2xl text-tato-text">82%</Text>
+                <View className="mt-2 h-2 overflow-hidden rounded-full bg-tato-surface">
+                  <View className="h-full w-[82%] rounded-full bg-tato-accent" />
+                </View>
+                <Text className="mt-2 text-sm text-tato-muted">
+                  Camera ingestion is processing supplier batch.
+                </Text>
+                <PressableScale
+                  className="mt-3 rounded-full bg-tato-accent py-3"
+                  onPress={() => router.push('/(app)/live-intake' as never)}>
+                  <Text className="text-center font-mono text-[11px] font-semibold uppercase tracking-[1px] text-white">
+                    Run Auto-Scan
+                  </Text>
+                </PressableScale>
+              </View>
 
-            {/* Action Queue */}
-            <View className="rounded-[20px] border border-tato-line bg-tato-panel p-4">
-              <Text className="font-sans-bold text-base text-tato-text mb-3">
-                Action Queue
-              </Text>
-              <View className="gap-2.5">
-                {actionQueueStats.map((stat) => (
-                  <View className="flex-row items-center justify-between" key={stat.label}>
-                    <Text className="text-sm text-tato-muted">{stat.label}:</Text>
-                    <Text className="font-mono text-sm font-semibold text-tato-text">
-                      {stat.value}
-                    </Text>
-                  </View>
-                ))}
+              <View className="rounded-[20px] border border-tato-line bg-tato-panel p-4">
+                <Text className="mb-3 font-sans-bold text-base text-tato-text">
+                  Action Queue
+                </Text>
+                <View className="gap-2.5">
+                  {actionQueueStats.map((stat) => (
+                    <View className="flex-row items-center justify-between" key={stat.label}>
+                      <Text className="text-sm text-tato-muted">{stat.label}:</Text>
+                      <Text className="font-mono text-sm font-semibold text-tato-text">
+                        {stat.value}
+                      </Text>
+                    </View>
+                  ))}
+                </View>
               </View>
             </View>
+          }
+          secondaryWidth={{ desktop: 320, wideDesktop: 340 }}
+          tier={tier}
+        />
+      </ScrollView>
+    );
+  }
+
+  if (useTabletLayout) {
+    return (
+      <ScrollView className="flex-1" contentContainerClassName="gap-5 pb-10">
+        <ResponsiveKpiGrid tier={tier}>
+          {metric0 ? (
+            <KpiCard
+              label={metric0.label}
+              value={metric0.value}
+              delta={metric0.delta}
+              tone={metric0.tone}
+            />
+          ) : null}
+          {metric1 ? (
+            <KpiCard
+              label={metric1.label}
+              value={metric1.value}
+              delta={metric1.delta}
+              tone={metric1.tone}
+            />
+          ) : null}
+          {metric2 ? (
+            <KpiCard
+              label={metric2.label}
+              value={metric2.value}
+              delta={metric2.delta}
+              tone={metric2.tone}
+            />
+          ) : null}
+        </ResponsiveKpiGrid>
+
+        <View className="gap-3">
+          <View className="gap-3">
+            <Text className="font-sans-bold text-xl text-tato-text">Live Inventory</Text>
+            <StatusFilterBar activeFilter={activeFilter} onFilterChange={setActiveFilter} />
           </View>
+          {hasError || isEmpty ? (
+            <FeedState
+              error={error}
+              empty={isEmpty}
+              emptyLabel="No items match this filter."
+              onRetry={refresh}
+            />
+          ) : (
+            <InventoryTable items={filteredItems} variant="tablet" />
+          )}
         </View>
+
+        <ResponsiveKpiGrid tier={tier}>
+          <View className="rounded-[20px] border border-tato-line bg-tato-panel p-4">
+            <Text className="font-sans-bold text-base text-tato-text">
+              Launch Batch Ingestion
+            </Text>
+            <Text className="mt-1 text-sm text-tato-muted">AI scan</Text>
+            <Text className="mt-2 font-sans-bold text-2xl text-tato-text">82%</Text>
+            <View className="mt-2 h-2 overflow-hidden rounded-full bg-tato-surface">
+              <View className="h-full w-[82%] rounded-full bg-tato-accent" />
+            </View>
+            <Text className="mt-2 text-sm text-tato-muted">
+              Camera ingestion is processing supplier batch.
+            </Text>
+            <PressableScale
+              className="mt-3 rounded-full bg-tato-accent py-3"
+              onPress={() => router.push('/(app)/live-intake' as never)}>
+              <Text className="text-center font-mono text-[11px] font-semibold uppercase tracking-[1px] text-white">
+                Run Auto-Scan
+              </Text>
+            </PressableScale>
+          </View>
+
+          <View className="rounded-[20px] border border-tato-line bg-tato-panel p-4">
+            <Text className="mb-3 font-sans-bold text-base text-tato-text">
+              Action Queue
+            </Text>
+            <View className="gap-2.5">
+              {actionQueueStats.map((stat) => (
+                <View className="flex-row items-center justify-between" key={stat.label}>
+                  <Text className="text-sm text-tato-muted">{stat.label}:</Text>
+                  <Text className="font-mono text-sm font-semibold text-tato-text">
+                    {stat.value}
+                  </Text>
+                </View>
+              ))}
+            </View>
+          </View>
+        </ResponsiveKpiGrid>
       </ScrollView>
     );
   }
 
   // --- Mobile layout ---
   return (
-    <View className="flex-1">
-      {hasError || isEmpty ? (
-        <FeedState
-          error={error}
-          empty={isEmpty}
-          emptyLabel="No items match this filter."
-          onRetry={refresh}
-        />
-      ) : (
-        <FlatList
-          data={filteredItems}
-          keyExtractor={keyExtractor}
-          renderItem={renderMobileItem}
-          contentContainerClassName="gap-0 pb-32"
-          showsVerticalScrollIndicator={false}
-          ListHeaderComponent={
-            <View className="mb-3 gap-3 px-1">
-              {/* Mobile metrics row */}
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerClassName="gap-3">
-                {metrics.map((m) => (
-                  <View className="rounded-2xl border border-tato-line bg-tato-panel px-4 py-3 min-w-[140px]" key={m.label}>
-                    <Text className="font-mono text-[10px] uppercase tracking-[1px] text-tato-dim">
-                      {m.label}
-                    </Text>
-                    <Text className="mt-1 text-xl font-bold text-tato-text">{m.value}</Text>
-                    <Text className="text-xs text-tato-muted">{m.delta}</Text>
-                  </View>
-                ))}
-              </ScrollView>
+    <FlatList
+      data={hasError ? [] : filteredItems}
+      keyExtractor={keyExtractor}
+      renderItem={renderMobileItem}
+      contentContainerClassName="gap-4 pb-36"
+      showsVerticalScrollIndicator={false}
+      ListEmptyComponent={
+        <PhonePanel className="mx-1" padded="lg">
+          <FeedState
+            error={error}
+            empty={!hasError && isEmpty}
+            emptyLabel="No items match this filter."
+            onRetry={refresh}
+          />
+        </PhonePanel>
+      }
+      ListHeaderComponent={
+        <View className="gap-4 px-1 pb-1">
+          <PhonePanel gradientTone="accent" padded="lg">
+            <PhoneEyebrow>Queue Snapshot</PhoneEyebrow>
+            <Text className="mt-3 text-[30px] font-sans-bold leading-[34px] text-tato-text">
+              {availableCount} claim-ready items on deck.
+            </Text>
+            <Text className="mt-3 text-[15px] leading-7 text-[#c3d3ec]">
+              Keep intake moving, surface the hottest SKUs first, and give brokers a cleaner queue to claim from.
+            </Text>
 
-              {/* Auto-Scan CTA */}
-              <PressableScale
-                className="rounded-full bg-tato-accent py-3"
-                onPress={() => router.push('/(app)/live-intake' as never)}>
-                <Text className="text-center font-mono text-xs font-semibold uppercase tracking-[1px] text-white">
-                  AI Auto-Scan
-                </Text>
-              </PressableScale>
+            <View className="mt-5 flex-row gap-3">
+              <PhoneMetricChip
+                className="flex-1"
+                helper={highActivityCount ? `${highActivityCount} with elevated broker demand` : 'No high-pressure SKUs yet'}
+                label="Broker pressure"
+                tone={highActivityCount ? 'accent' : 'neutral'}
+                value={`${highActivityCount}`}
+              />
+              <PhoneMetricChip
+                className="flex-1"
+                helper={pendingCount ? 'Awaiting pickup release' : 'No pickup backlog'}
+                label="Pending pickup"
+                tone={pendingCount ? 'warning' : 'profit'}
+                value={`${pendingCount}`}
+              />
             </View>
-          }
-        />
-      )}
-    </View>
+
+            <View className="mt-5 flex-row gap-3">
+              <PhoneActionButton
+                className="flex-1"
+                label="Live Intake"
+                onPress={() => router.push('/(app)/live-intake' as never)}
+              />
+              <PhoneActionButton
+                className="flex-1"
+                label="Open Inventory"
+                onPress={() => router.push('/(app)/(supplier)/inventory' as never)}
+                variant="secondary"
+              />
+            </View>
+          </PhonePanel>
+
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerClassName="gap-3 pr-1">
+            {metrics.map((metric) => (
+              <View
+                className="min-w-[154px] rounded-[24px] border border-[#17355f] bg-[#091a31] px-4 py-3"
+                key={metric.label}>
+                <PhoneEyebrow>{metric.label}</PhoneEyebrow>
+                <Text className="mt-2 text-[24px] font-sans-bold text-tato-text">{metric.value}</Text>
+                <Text className="mt-1 text-sm leading-6 text-tato-muted">{metric.delta}</Text>
+              </View>
+            ))}
+            <View className="min-w-[154px] rounded-[24px] border border-[#17355f] bg-[#091a31] px-4 py-3">
+              <PhoneEyebrow>Claimed flow</PhoneEyebrow>
+              <Text className="mt-2 text-[24px] font-sans-bold text-tato-text">{claimedCount}</Text>
+              <Text className="mt-1 text-sm leading-6 text-tato-muted">
+                Items already spoken for by brokers.
+              </Text>
+            </View>
+          </ScrollView>
+
+          <View className="gap-3">
+            <View className="flex-row items-end justify-between gap-3">
+              <View className="flex-1">
+                <PhoneEyebrow>Live Inventory</PhoneEyebrow>
+                <Text className="mt-2 text-[22px] font-sans-bold text-tato-text">
+                  Prioritize the next best handoff.
+                </Text>
+              </View>
+              <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-dim">
+                {filteredItems.length} visible
+              </Text>
+            </View>
+            <StatusFilterBar activeFilter={activeFilter} compact onFilterChange={setActiveFilter} scrollable />
+          </View>
+        </View>
+      }
+    />
   );
 }
