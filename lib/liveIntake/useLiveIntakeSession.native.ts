@@ -41,6 +41,15 @@ const BURST_FRAME_RATE = 5;
 const BURST_DURATION_MS = 2000;
 const MAX_RECONNECT_ATTEMPTS = 2;
 
+function createSessionResumptionConfig(handle?: string | null) {
+  // Use a null-prototype object so inherited keys cannot trip SDK guards.
+  const config = Object.create(null) as { handle?: string };
+  if (handle) {
+    config.handle = handle;
+  }
+  return config;
+}
+
 function createTranscriptId(prefix: string) {
   return `${prefix}_${Math.random().toString(36).slice(2, 10)}_${Date.now()}`;
 }
@@ -391,9 +400,7 @@ export function useLiveIntakeSession(args: UseLiveIntakeSessionArgs) {
           enableAffectiveDialog: true,
           inputAudioTranscription: {},
           outputAudioTranscription: {},
-          sessionResumption: {
-            handle: resumptionHandle ?? undefined,
-          },
+          sessionResumption: createSessionResumptionConfig(resumptionHandle),
           contextWindowCompression: {
             triggerTokens: '24000',
             slidingWindow: {

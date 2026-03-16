@@ -19,6 +19,11 @@ type BootstrapBody = {
   mode?: string;
 };
 
+function createSessionResumptionConstraints() {
+  // Use a null-prototype object so inherited keys cannot trip SDK guards.
+  return Object.create(null) as Record<string, never>;
+}
+
 function requireEnv(name: string) {
   const value = process.env[name];
   if (!value) {
@@ -154,7 +159,7 @@ app.post<{ Body: BootstrapBody }>('/sessions/live-intake', async (request, reply
             enableAffectiveDialog: true,
             inputAudioTranscription: {},
             outputAudioTranscription: {},
-            sessionResumption: {},
+            sessionResumption: createSessionResumptionConstraints(),
             contextWindowCompression: {
               triggerTokens: '24000',
               slidingWindow: {
