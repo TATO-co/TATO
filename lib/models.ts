@@ -2,7 +2,7 @@ export const supportedCurrencyCodes = ['USD', 'CAD', 'GBP', 'EUR'] as const;
 
 export type CurrencyCode = (typeof supportedCurrencyCodes)[number];
 export type AppMode = 'supplier' | 'broker';
-export type ProfileStatus = 'pending_review' | 'active' | 'suspended';
+export type ProfileStatus = 'active' | 'suspended';
 export type PayoutReadiness = 'not_ready' | 'pending' | 'enabled';
 export type BrokerCategory = 'Nearby' | 'High Profit' | 'Newest' | 'Electronics';
 export type SupplierItemStatus = 'available' | 'claimed' | 'pending_pickup';
@@ -63,18 +63,43 @@ export type ClaimSnapshot = {
   currencyCode: CurrencyCode;
 };
 
+export type ItemDetailInsight = {
+  label: string;
+  value: string;
+};
+
+export type ItemDetailCandidate = {
+  title: string;
+  subtitle: string;
+  confidence: number;
+};
+
 export type ItemDetail = {
   id: string;
+  supplierId: string;
   sku: string;
   title: string;
+  editableTitle: string;
   description: string;
+  editableDescription: string;
   gradeLabel: string;
+  editableConditionSummary: string;
   imageUrl: string;
   lifecycleStage: ItemLifecycleStage;
   estimatedProfitCents: number;
   marketVelocityLabel: string;
   claimFeeCents: number;
+  floorPriceCents: number;
+  suggestedListPriceCents: number;
+  digitalStatus: string;
+  ingestionConfidence: number;
+  nextBestAction: string | null;
+  conditionSignals: string[];
+  missingViews: string[];
+  observedDetails: ItemDetailInsight[];
+  candidateItems: ItemDetailCandidate[];
   currencyCode: CurrencyCode;
+  updatedAt: string;
 };
 
 export type RecentFlip = {

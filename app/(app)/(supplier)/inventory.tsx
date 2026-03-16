@@ -1,4 +1,4 @@
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useState } from 'react';
 import { ActivityIndicator, Image, Pressable, ScrollView, Text, View } from 'react-native';
 import Animated, { FadeInUp } from 'react-native-reanimated';
@@ -9,6 +9,7 @@ import { PhoneActionButton, PhoneEyebrow, PhonePanel } from '@/components/ui/Pho
 import { StatusFilterBar, type StatusFilter } from '@/components/ui/StatusFilterBar';
 import { useViewportInfo } from '@/lib/constants';
 import { useSupplierDashboard } from '@/lib/hooks/useSupplierDashboard';
+import { getLiveIntakeCompletionCopy } from '@/lib/liveIntake/platform';
 import { formatMoney, type SupplierItemStatus } from '@/lib/models';
 import { supplierDesktopNav } from '@/lib/navigation';
 import { TIMING } from '@/lib/ui';
@@ -33,9 +34,12 @@ function filterMatches(filter: StatusFilter, status: SupplierItemStatus): boolea
 
 export default function SupplierInventoryScreen() {
   const router = useRouter();
+  const { from } = useLocalSearchParams<{ from?: string }>();
   const { items, loading, error, refresh } = useSupplierDashboard();
   const { isPhone, isTablet } = useViewportInfo();
   const [activeFilter, setActiveFilter] = useState<StatusFilter>('all');
+  const fromLiveIntake = from === 'live-intake';
+  const completionCopy = getLiveIntakeCompletionCopy('ready_for_claim');
 
   const filteredItems = items.filter((item) => filterMatches(activeFilter, item.status));
   const availableCount = items.filter((item) => item.status === 'available').length;
@@ -76,12 +80,23 @@ export default function SupplierInventoryScreen() {
         </View>
       ) : !isPhone ? (
         <ScrollView className="mt-2 flex-1" contentContainerClassName="gap-4 pb-10">
+          {fromLiveIntake ? (
+            <View className="rounded-[24px] border border-tato-profit/30 bg-tato-profit/10 p-5">
+              <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-profit">{completionCopy.eyebrow}</Text>
+              <Text className="mt-2 text-xl font-bold text-tato-text">{completionCopy.inventoryHeading}</Text>
+              <Text className="mt-2 text-sm leading-7 text-tato-muted">{completionCopy.inventoryDetail}</Text>
+            </View>
+          ) : null}
           <View className={`gap-3 ${isTablet ? '' : 'flex-row items-center justify-between'}`}>
             <Text className="font-sans-bold text-2xl text-tato-text">Inventory Management</Text>
             <StatusFilterBar activeFilter={activeFilter} onFilterChange={setActiveFilter} />
           </View>
           {filteredItems.length ? (
-            <InventoryTable items={filteredItems} variant={isTablet ? 'tablet' : 'desktop'} />
+            <InventoryTable
+              items={filteredItems}
+              onItemPress={(item) => router.push(`/(app)/item/${item.id}` as never)}
+              variant={isTablet ? 'tablet' : 'desktop'}
+            />
           ) : (
             <View className="items-center rounded-2xl border border-tato-line bg-tato-panel p-8">
               <Text className="text-sm text-tato-muted">No items match this filter.</Text>
@@ -90,13 +105,19 @@ export default function SupplierInventoryScreen() {
         </ScrollView>
       ) : (
         <ScrollView className="mt-2 flex-1" contentContainerClassName="gap-4 pb-36">
+          {fromLiveIntake ? (
+            <PhonePanel gradientTone="accent" padded="lg">
+              <PhoneEyebrow tone="accent">{completionCopy.eyebrow}</PhoneEyebrow>
+              <Text className="mt-3 text-[30px] font-sans-bold leading-[34px] text-tato-text">
+                {completionCopy.inventoryHeading}
+              </Text>
+              <Text className="mt-3 text-sm leading-7 text-tato-muted">{completionCopy.inventoryDetail}</Text>
+            </PhonePanel>
+          ) : null}
           <PhonePanel gradientTone="accent" padded="lg">
             <PhoneEyebrow>Inventory Management</PhoneEyebrow>
             <Text className="mt-3 text-[30px] font-sans-bold leading-[34px] text-tato-text">
-              {filteredItems.length} items visible across your live floor.
-            </Text>
-            <Text className="mt-3 text-[15px] leading-7 text-[#c3d3ec]">
-              Keep the floor organized by claim state, route fresh items into intake, and prevent pending pickups from burying new inventory.
+              {filteredItems.length} Items
             </Text>
 
             <View className="mt-5 flex-row gap-3">
@@ -128,7 +149,7 @@ export default function SupplierInventoryScreen() {
               <View className="flex-1">
                 <PhoneEyebrow>Status Filter</PhoneEyebrow>
                 <Text className="mt-2 text-[22px] font-sans-bold text-tato-text">
-                  Dial into what needs action.
+                  Filter
                 </Text>
               </View>
               <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-dim">
@@ -146,54 +167,56 @@ export default function SupplierInventoryScreen() {
                   className="overflow-hidden rounded-[28px] border border-[#16355f] bg-[#07172d]"
                   entering={FadeInUp.duration(TIMING.quick).delay(Math.min(index * 35, TIMING.slow))}
                   key={item.id}>
-                  <View className="absolute -right-10 -top-10 h-28 w-28 rounded-full bg-tato-accent/10" />
-                  <View className="p-4">
-                    <View className="flex-row gap-3">
-                      <Image className="h-[84px] w-[84px] rounded-[22px]" source={{ uri: item.thumbUrl }} />
-                      <View className="min-w-0 flex-1">
-                        <View className="flex-row items-start justify-between gap-3">
-                          <View className="min-w-0 flex-1">
-                            <Text className="text-[18px] font-sans-bold leading-6 text-tato-text" numberOfLines={2}>
-                              {item.title}
-                            </Text>
-                            <Text className="mt-1 text-sm leading-6 text-tato-muted" numberOfLines={2}>
-                              {item.subtitle}
+                  <Pressable onPress={() => router.push(`/(app)/item/${item.id}` as never)}>
+                    <View className="absolute -right-10 -top-10 h-28 w-28 rounded-full bg-tato-accent/10" />
+                    <View className="p-4">
+                      <View className="flex-row gap-3">
+                        <Image className="h-[84px] w-[84px] rounded-[22px]" source={{ uri: item.thumbUrl }} />
+                        <View className="min-w-0 flex-1">
+                          <View className="flex-row items-start justify-between gap-3">
+                            <View className="min-w-0 flex-1">
+                              <Text className="text-[18px] font-sans-bold leading-6 text-tato-text" numberOfLines={2}>
+                                {item.title}
+                              </Text>
+                              <Text className="mt-1 text-sm leading-6 text-tato-muted" numberOfLines={2}>
+                                {item.subtitle}
+                              </Text>
+                            </View>
+                            <Text className="font-mono text-[15px] font-semibold text-tato-accent">
+                              {formatMoney(item.askPriceCents, item.currencyCode, 2)}
                             </Text>
                           </View>
-                          <Text className="font-mono text-[15px] font-semibold text-tato-accent">
-                            {formatMoney(item.askPriceCents, item.currencyCode, 2)}
-                          </Text>
-                        </View>
 
-                        <View className="mt-3 flex-row flex-wrap gap-2">
-                          <Text
-                            className="rounded-full border px-2.5 py-1 text-[11px] font-semibold"
-                            style={{ color: status.color, borderColor: status.border, backgroundColor: status.bg }}>
-                            {status.text}
-                          </Text>
-                          <View className="rounded-full border border-[#1c3d6e] bg-[#0d223f] px-2.5 py-1">
-                            <Text className="font-mono text-[11px] uppercase tracking-[1px] text-[#9cb7e1]">
-                              {item.brokerActivity} demand
+                          <View className="mt-3 flex-row flex-wrap gap-2">
+                            <Text
+                              className="rounded-full border px-2.5 py-1 text-[11px] font-semibold"
+                              style={{ color: status.color, borderColor: status.border, backgroundColor: status.bg }}>
+                              {status.text}
                             </Text>
-                          </View>
-                          <View className="rounded-full border border-[#17355f] bg-[#091a31] px-2.5 py-1">
-                            <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-muted">
-                              Qty {item.quantity}
-                            </Text>
+                            <View className="rounded-full border border-[#1c3d6e] bg-[#0d223f] px-2.5 py-1">
+                              <Text className="font-mono text-[11px] uppercase tracking-[1px] text-[#9cb7e1]">
+                                {item.brokerActivity} demand
+                              </Text>
+                            </View>
+                            <View className="rounded-full border border-[#17355f] bg-[#091a31] px-2.5 py-1">
+                              <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-muted">
+                                Qty {item.quantity}
+                              </Text>
+                            </View>
                           </View>
                         </View>
                       </View>
-                    </View>
 
-                    <View className="mt-4 flex-row items-center justify-between border-t border-[#16355f] pt-3">
-                      <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-dim">
-                        SKU {item.sku}
-                      </Text>
-                      <Text className="font-mono text-[11px] uppercase tracking-[1px] text-[#9cb7e1]">
-                        Live floor item
-                      </Text>
+                      <View className="mt-4 flex-row items-center justify-between border-t border-[#16355f] pt-3">
+                        <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-dim">
+                          SKU {item.sku}
+                        </Text>
+                        <Text className="font-mono text-[11px] uppercase tracking-[1px] text-[#9cb7e1]">
+                          Open detail
+                        </Text>
+                      </View>
                     </View>
-                  </View>
+                  </Pressable>
                 </Animated.View>
               );
             })

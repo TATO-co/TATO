@@ -3,14 +3,13 @@ import { useState } from 'react';
 import { ActivityIndicator, Pressable, SafeAreaView, ScrollView, Text, View } from 'react-native';
 
 import { useAuth } from '@/components/providers/AuthProvider';
-import { trackEvent } from '@/lib/analytics';
-import { runtimeConfig } from '@/lib/config';
 
-export default function PendingReviewScreen() {
+export default function AccountSuspendedScreen() {
   const router = useRouter();
-  const { activateDevelopmentAccess, profile, refreshProfile, signOut } = useAuth();
-  const [busyAction, setBusyAction] = useState<'refresh' | 'bypass' | 'signout' | null>(null);
+  const { profile, refreshProfile, signOut, user } = useAuth();
+  const [busyAction, setBusyAction] = useState<'refresh' | 'signout' | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const signedInAs = profile?.email ?? user?.email ?? 'your account';
 
   return (
     <SafeAreaView className="flex-1 bg-tato-base">
@@ -18,22 +17,18 @@ export default function PendingReviewScreen() {
         <View className="flex-1 items-center justify-center px-8 py-8">
           <View className="w-full max-w-[560px] rounded-[28px] border border-tato-line bg-tato-panel p-6">
             <Text className="font-mono text-[11px] uppercase tracking-[2px] text-tato-accent">
-              Access Review
+              Account Suspended
             </Text>
             <Text className="mt-4 text-3xl font-sans-bold text-tato-text">
-              {profile?.status === 'suspended'
-                ? 'Your account is currently suspended.'
-                : 'Your account is waiting for approval.'}
+              This account is currently suspended.
             </Text>
             <Text className="mt-4 text-base leading-7 text-tato-muted">
-              {profile?.status === 'suspended'
-                ? 'Contact TATO operations if you believe this is an error.'
-                : 'A TATO operator must approve your access and assign roles before inventory, claims, or payments are available.'}
+              TATO has blocked workspace access for this account. Retry the account sync if you expect this suspension to have been lifted, or sign out.
             </Text>
 
             <View className="mt-5 rounded-2xl border border-tato-line bg-tato-panelSoft p-4">
               <Text className="text-sm text-tato-muted">
-                Signed in as {profile?.email ?? 'your account'}.
+                Signed in as {signedInAs}.
               </Text>
             </View>
 
@@ -44,55 +39,15 @@ export default function PendingReviewScreen() {
             ) : null}
 
             <View className="mt-5 gap-3">
-              {runtimeConfig.appEnv === 'development' ? (
-                <Pressable
-                  disabled={busyAction !== null}
-                  className="rounded-full border border-tato-accent/40 bg-tato-panelSoft px-5 py-3.5"
-                  onPress={async () => {
-                    setBusyAction('bypass');
-                    setMessage(null);
-                    trackEvent('profile_pending_review', {
-                      action: 'development_bypass',
-                      status: profile?.status ?? 'pending_review',
-                    });
-                    try {
-                      const { error } = await activateDevelopmentAccess();
-                      if (error) {
-                        setMessage(error);
-                        return;
-                      }
-
-                      router.replace('/(app)/(broker)/workspace');
-                    } finally {
-                      setBusyAction(null);
-                    }
-                  }}>
-                  {busyAction === 'bypass' ? (
-                    <ActivityIndicator color="#d9e7ff" />
-                  ) : (
-                    <Text className="text-center font-mono text-xs font-semibold uppercase tracking-[1px] text-tato-accent">
-                      Bypass In Dev
-                    </Text>
-                  )}
-                </Pressable>
-              ) : null}
-
               <Pressable
                 disabled={busyAction !== null}
                 className="rounded-full bg-tato-accent px-5 py-3.5"
                 onPress={async () => {
                   setBusyAction('refresh');
                   setMessage(null);
-                  trackEvent('profile_pending_review', {
-                    status: profile?.status ?? 'pending_review',
-                  });
                   try {
                     await refreshProfile();
-                    setMessage(
-                      profile?.status === 'suspended'
-                        ? 'Account status checked. This account is still suspended.'
-                        : 'Account status checked. Approval is still pending.',
-                    );
+                    setMessage('Account status checked. This account is still suspended unless TATO routes you back into the app.');
                   } finally {
                     setBusyAction(null);
                   }
@@ -101,7 +56,7 @@ export default function PendingReviewScreen() {
                   <ActivityIndicator color="#fff" />
                 ) : (
                   <Text className="text-center font-mono text-xs font-semibold uppercase tracking-[1px] text-white">
-                    Refresh Approval Status
+                    Refresh Account Status
                   </Text>
                 )}
               </Pressable>

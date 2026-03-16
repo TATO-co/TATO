@@ -71,8 +71,8 @@ function AnalysisPanel({
     itemTitle: entryMode === 'upload' ? 'Awaiting Upload' : 'Awaiting Capture',
     description:
       entryMode === 'upload'
-        ? 'Select an existing item photo to run Gemini ingestion.'
-        : 'Capture or select an item photo to run Gemini ingestion.',
+        ? 'Upload a photo to start.'
+        : 'Take or upload a photo to start.',
     conditionSummary: 'Pending',
     floorPriceCents: 0,
     suggestedListPriceCents: 0,
@@ -329,12 +329,12 @@ export default function IngestionScreen() {
           {requestingPermission ? <ActivityIndicator color="#1e6dff" /> : null}
             <Text className="text-center text-base text-tato-muted">
               {Platform.OS === 'web'
-                ? 'Upload an image from Gallery to start ingestion.'
+                ? 'Upload a photo to begin.'
                 : cameraPermission?.granted
                   ? entryMode === 'upload'
-                    ? 'Use Select Image to choose an existing photo for ingestion.'
-                    : 'Use Capture or Gallery to select an item image.'
-                  : 'Camera permission is required for auto-scan capture.'}
+                    ? 'Select a photo.'
+                    : 'Capture or select a photo.'
+                  : 'Camera access needed.'}
             </Text>
           </View>
       )}

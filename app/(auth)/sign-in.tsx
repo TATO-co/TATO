@@ -106,7 +106,7 @@ export default function SignInScreen() {
                 Unified Supplier +{'\n'}Broker Workspace
               </Text>
               <Text className="mt-3 max-w-[340px] text-center text-base text-tato-muted">
-                One sign-in for both roles. Enter your email to receive a secure login code. No password required.
+                One sign-in for both roles. After your first login, choose Broker, Supplier, or Both and TATO will remember your default workspace.
               </Text>
 
               {configured ? (
@@ -178,7 +178,7 @@ export default function SignInScreen() {
 
                   <View className="mt-1 items-center">
                     <Text className="px-4 text-center text-xs text-tato-muted">
-                      If an account doesn't exist for this email, it will be automatically created.
+                      If an account doesn't exist for this email, it will be automatically created and routed into persona setup.
                     </Text>
                   </View>
 

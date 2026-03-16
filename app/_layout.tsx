@@ -36,15 +36,24 @@ function BootScreen({ label }: { label: string }) {
 function RootNavigator() {
   const router = useRouter();
   const segments = useSegments();
-  const { configured, loading, isAuthenticated, preferredRoute } = useAuth();
+  const { configured, loading, isAuthenticated, preferredRoute, profile, profileError } = useAuth();
+
+  // Keep the boot screen up until auth state is fully settled.
+  // Without this, React state updates across await boundaries can
+  // cause a render where loading=false but profile is still null,
+  // flashing an auth-only recovery/setup route before the correct route.
+  const settling = configured && (
+    loading || (isAuthenticated && !profile && !profileError)
+  );
 
   useEffect(() => {
-    if (loading) {
+    if (settling) {
       return;
     }
 
     const inAuthGroup = segments[0] === '(auth)';
     const authScreen = String(segments[1] ?? '');
+    const currentPath = `/${segments.join('/')}`;
 
     if (!configured) {
       if (!inAuthGroup || authScreen !== 'configuration-required') {
@@ -58,12 +67,26 @@ function RootNavigator() {
       return;
     }
 
-    if (isAuthenticated && (inAuthGroup || preferredRoute.startsWith('/(auth)'))) {
-      router.replace(preferredRoute as never);
-    }
-  }, [configured, isAuthenticated, loading, preferredRoute, router, segments]);
+    if (isAuthenticated) {
+      // Avoid redundant navigation if we're already on the preferred route.
+      if (currentPath === preferredRoute) {
+        return;
+      }
 
-  if (configured && loading) {
+      // Authenticated user needs an auth screen (session-error, setup, suspended).
+      if (preferredRoute.startsWith('/(auth)')) {
+        router.replace(preferredRoute as never);
+        return;
+      }
+
+      // Authenticated user on an auth screen should be routed into the app.
+      if (inAuthGroup) {
+        router.replace(preferredRoute as never);
+      }
+    }
+  }, [configured, isAuthenticated, settling, preferredRoute, router, segments]);
+
+  if (settling) {
     return <BootScreen label="Initializing session and workspace routes." />;
   }
 

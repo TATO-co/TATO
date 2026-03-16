@@ -11,6 +11,8 @@ import {
   type SupplierMetric,
 } from '@/lib/models';
 import { captureException } from '@/lib/analytics';
+import type { SupplierItemUpdatePayload } from '@/lib/item-detail';
+import { classifyLiveWorkflowError } from '@/lib/liveIntake/errors';
 import { supabase } from '@/lib/supabase';
 
 type BrokerFeedRecord = {
@@ -46,14 +48,19 @@ type ClaimRecord = {
 
 type ItemDetailRecord = {
   id: string;
+  supplier_id: string;
   title: string | null;
   description: string | null;
   condition_summary: string | null;
   floor_price_cents: number | null;
   suggested_list_price_cents: number | null;
+  ingestion_ai_confidence: number | null;
+  ingestion_ai_attributes: Record<string, unknown> | null;
+  ingestion_ai_market_snapshot: Record<string, unknown> | null;
   photo_paths: string[] | null;
   digital_status: string;
   currency_code: string | null;
+  updated_at: string;
 };
 
 type SupplierDashboardItemRecord = {
@@ -97,18 +104,6 @@ export type LedgerEntry = {
 
 type SupplierHubRecord = {
   id: string;
-};
-
-export type ReviewProfile = {
-  id: string;
-  displayName: string;
-  email: string | null;
-  status: string;
-  canBroker: boolean;
-  canSupply: boolean;
-  isAdmin: boolean;
-  countryCode: string | null;
-  payoutCurrencyCode: CurrencyCode;
 };
 
 export type IngestionAnalysis = {
@@ -175,6 +170,136 @@ function placeholderImage(label: string) {
       <text x="50%" y="54%" dominant-baseline="middle" text-anchor="middle" fill="#8ea4c8" font-size="22" font-family="Arial">${label}</text>
     </svg>`,
   )}`;
+}
+
+function normalizeJsonObject(value: unknown) {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
+
+function normalizeJsonStringArray(value: unknown) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .map((entry) => (typeof entry === 'string' ? entry.trim() : ''))
+    .filter(Boolean);
+}
+
+function humanizeLabel(value: string) {
+  return value
+    .replace(/[_-]+/g, ' ')
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .trim()
+    .replace(/\b\w/g, (match) => match.toUpperCase());
+}
+
+function formatInsightValue(value: unknown): string | null {
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : null;
+  }
+
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? `${value}` : null;
+  }
+
+  if (typeof value === 'boolean') {
+    return value ? 'Yes' : 'No';
+  }
+
+  if (Array.isArray(value)) {
+    const entries = value
+      .map((entry) => formatInsightValue(entry))
+      .filter((entry): entry is string => Boolean(entry));
+    return entries.length ? entries.join(', ') : null;
+  }
+
+  if (value && typeof value === 'object') {
+    const entries = Object.entries(value)
+      .map(([key, entry]) => {
+        const formatted = formatInsightValue(entry);
+        return formatted ? `${humanizeLabel(key)}: ${formatted}` : null;
+      })
+      .filter((entry): entry is string => Boolean(entry));
+    return entries.length ? entries.join(', ') : null;
+  }
+
+  return null;
+}
+
+function buildObservedDetails(attributes: Record<string, unknown>) {
+  const sourceIgnored = new Set([
+    'source',
+    'category',
+    'brand',
+    'model',
+    'candidate_items',
+    'condition_signals',
+    'confirmed_condition_grade',
+    'condition_confidence',
+    'next_best_action',
+    'missing_views',
+    'capture_mode',
+    'live_session_id',
+  ]);
+
+  const observedDetails = Object.entries(attributes)
+    .flatMap(([key, value]) => {
+      if (sourceIgnored.has(key)) {
+        return [];
+      }
+
+      if (key === 'attributes' && value && typeof value === 'object' && !Array.isArray(value)) {
+        return Object.entries(value as Record<string, unknown>)
+          .map(([nestedKey, nestedValue]) => {
+            const formatted = formatInsightValue(nestedValue);
+            return formatted
+              ? { label: humanizeLabel(nestedKey), value: formatted }
+              : null;
+          })
+          .filter((entry): entry is { label: string; value: string } => Boolean(entry));
+      }
+
+      const formatted = formatInsightValue(value);
+      return formatted ? [{ label: humanizeLabel(key), value: formatted }] : [];
+    });
+
+  return observedDetails.slice(0, 8);
+}
+
+function buildCandidateItems(attributes: Record<string, unknown>) {
+  const candidates = Array.isArray(attributes.candidate_items) ? attributes.candidate_items : [];
+
+  return candidates
+    .map((entry) => {
+      if (!entry || typeof entry !== 'object') {
+        return null;
+      }
+
+      const candidate = entry as Record<string, unknown>;
+      const title = typeof candidate.title === 'string' ? candidate.title.trim() : '';
+      if (!title) {
+        return null;
+      }
+
+      const subtitle = [candidate.brand, candidate.model, candidate.category]
+        .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+        .join(' · ');
+      const confidence = typeof candidate.confidence === 'number'
+        ? Math.max(0, Math.min(1, candidate.confidence))
+        : 0;
+
+      return {
+        title,
+        subtitle,
+        confidence,
+      };
+    })
+    .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry))
+    .slice(0, 3);
 }
 
 function initials(name: string | null | undefined) {
@@ -405,13 +530,24 @@ export async function createClaim(args: {
 
   if (error) {
     captureException(error, { flow: 'repo.createClaim' });
-    return { ok: false as const, message: error.message };
+    const classified = await classifyLiveWorkflowError({
+      context: 'claim',
+      error,
+      fallbackMessage: 'Unable to create claim.',
+    });
+    return { ok: false as const, code: classified.code, message: classified.message };
   }
 
   if (!data?.ok) {
+    const classified = await classifyLiveWorkflowError({
+      context: 'claim',
+      data: data as MutationErrorResponse | null,
+      fallbackMessage: 'Unable to create claim.',
+    });
     return {
       ok: false as const,
-      message: toMutationMessage(data as MutationErrorResponse, 'Unable to create claim.'),
+      code: classified.code,
+      message: classified.message,
     };
   }
 
@@ -611,7 +747,7 @@ export async function fetchItemDetail(itemId: string): Promise<ItemDetail | null
   const { data, error } = await client
     .from('items')
     .select(
-      'id,title,description,condition_summary,floor_price_cents,suggested_list_price_cents,photo_paths,digital_status,currency_code',
+      'id,supplier_id,title,description,condition_summary,floor_price_cents,suggested_list_price_cents,ingestion_ai_confidence,ingestion_ai_attributes,ingestion_ai_market_snapshot,photo_paths,digital_status,currency_code,updated_at',
     )
     .eq('id', itemId)
     .maybeSingle<ItemDetailRecord>();
@@ -628,21 +764,105 @@ export async function fetchItemDetail(itemId: string): Promise<ItemDetail | null
   const floor = data.floor_price_cents ?? 0;
   const suggested = data.suggested_list_price_cents ?? Math.round(floor * 1.2);
   const currencyCode = resolveCurrencyCode(data.currency_code);
+  const attributes = normalizeJsonObject(data.ingestion_ai_attributes);
+  const marketSnapshot = normalizeJsonObject(data.ingestion_ai_market_snapshot);
+  const conditionSignals = normalizeJsonStringArray(attributes.condition_signals);
+  const missingViews = normalizeJsonStringArray(marketSnapshot.missing_views ?? attributes.missing_views);
+  const observedDetails = buildObservedDetails(attributes);
+  const candidateItems = buildCandidateItems(attributes);
+  const nextBestAction =
+    typeof marketSnapshot.next_best_action === 'string' && marketSnapshot.next_best_action.trim().length > 0
+      ? marketSnapshot.next_best_action.trim()
+      : typeof attributes.next_best_action === 'string' && attributes.next_best_action.trim().length > 0
+        ? attributes.next_best_action.trim()
+        : null;
+  const velocity =
+    typeof marketSnapshot.velocity === 'string' && marketSnapshot.velocity.trim().length > 0
+      ? humanizeLabel(marketSnapshot.velocity)
+      : suggested - floor > 5000
+        ? 'High'
+        : 'Medium';
 
   return {
     id: data.id,
+    supplierId: data.supplier_id,
     sku: `TATO-${data.id.slice(0, 8).toUpperCase()}`,
     title: data.title ?? 'Untitled Item',
+    editableTitle: data.title ?? '',
     description:
       data.description ??
       'Supplier ingestion available. Broker listing copy can be generated from verified physical photos.',
+    editableDescription: data.description ?? '',
     gradeLabel: data.condition_summary ?? 'Verified',
+    editableConditionSummary: data.condition_summary ?? '',
     imageUrl: await resolveImage(data.photo_paths?.[0], data.title ?? 'Item Detail'),
     lifecycleStage: lifecycleFromItemStatus(data.digital_status),
     estimatedProfitCents: Math.max(1000, suggested - floor),
-    marketVelocityLabel: suggested - floor > 5000 ? 'High' : 'Medium',
+    marketVelocityLabel: velocity,
     claimFeeCents: Math.max(200, Math.round(Math.max(floor, 5000) * 0.03)),
+    floorPriceCents: floor,
+    suggestedListPriceCents: suggested,
+    digitalStatus: data.digital_status,
+    ingestionConfidence: Math.max(0, Math.min(1, data.ingestion_ai_confidence ?? 0.65)),
+    nextBestAction,
+    conditionSignals,
+    missingViews,
+    observedDetails,
+    candidateItems,
     currencyCode,
+    updatedAt: data.updated_at,
+  };
+}
+
+export async function updateSupplierItemDraft(args: {
+  itemId: string;
+  payload: SupplierItemUpdatePayload;
+}): Promise<
+  | { ok: true; detail: ItemDetail }
+  | { ok: false; message: string }
+> {
+  const client = requireSupabase();
+
+  const { data, error } = await client
+    .from('items')
+    .update({
+      title: args.payload.title,
+      description: args.payload.description,
+      condition_summary: args.payload.conditionSummary,
+      floor_price_cents: args.payload.floorPriceCents,
+      suggested_list_price_cents: args.payload.suggestedListPriceCents,
+    })
+    .eq('id', args.itemId)
+    .in('digital_status', ['supplier_draft', 'ready_for_claim'])
+    .select('id')
+    .maybeSingle<{ id: string }>();
+
+  if (error) {
+    captureException(error, { flow: 'repo.updateSupplierItemDraft' });
+    return {
+      ok: false,
+      message: 'Unable to save supplier updates right now.',
+    };
+  }
+
+  if (!data) {
+    return {
+      ok: false,
+      message: 'This item is no longer editable from supplier inventory.',
+    };
+  }
+
+  const detail = await fetchItemDetail(args.itemId);
+  if (!detail) {
+    return {
+      ok: false,
+      message: 'Saved the supplier updates, but could not reload the item detail.',
+    };
+  }
+
+  return {
+    ok: true,
+    detail,
   };
 }
 
@@ -824,96 +1044,6 @@ export async function createSalePaymentIntent(args: {
   };
 }
 
-export async function fetchReviewProfiles(): Promise<ReviewProfile[]> {
-  const client = requireSupabase();
-
-  const { data, error } = await client
-    .from('profiles')
-    .select('id,display_name,email,status,can_broker,can_supply,is_admin,country_code,payout_currency_code')
-    .in('status', ['pending_review', 'suspended'])
-    .order('created_at', { ascending: true });
-
-  if (error) {
-    captureException(error, { flow: 'repo.fetchReviewProfiles' });
-    throw new Error(error.message);
-  }
-
-  return ((data as Array<{
-    id: string;
-    display_name: string | null;
-    email: string | null;
-    status: string;
-    can_broker: boolean;
-    can_supply: boolean;
-    is_admin: boolean;
-    country_code: string | null;
-    payout_currency_code: string | null;
-  }> | null | undefined) ?? []).map((profile) => ({
-    id: profile.id,
-    displayName: profile.display_name ?? 'Unknown user',
-    email: profile.email ?? null,
-    status: profile.status,
-    canBroker: profile.can_broker,
-    canSupply: profile.can_supply,
-    isAdmin: profile.is_admin,
-    countryCode: profile.country_code ?? null,
-    payoutCurrencyCode: resolveCurrencyCode(profile.payout_currency_code),
-  }));
-}
-
-export async function approveUserAccess(args: {
-  profileId: string;
-  canBroker?: boolean;
-  canSupply?: boolean;
-  defaultMode?: 'broker' | 'supplier';
-  payoutCurrencyCode?: CurrencyCode;
-}) {
-  const client = requireSupabase();
-  const { data, error } = await client.functions.invoke('approve-user', {
-    body: {
-      ...args,
-      requestKey: createRequestKey('approve'),
-    },
-  });
-
-  if (error) {
-    captureException(error, { flow: 'repo.approveUserAccess' });
-    return { ok: false as const, message: error.message };
-  }
-
-  if (!data?.ok) {
-    return {
-      ok: false as const,
-      message: toMutationMessage(data as MutationErrorResponse, 'Unable to approve user.'),
-    };
-  }
-
-  return { ok: true as const };
-}
-
-export async function suspendUserAccess(args: { profileId: string; reason?: string }) {
-  const client = requireSupabase();
-  const { data, error } = await client.functions.invoke('suspend-user', {
-    body: {
-      ...args,
-      requestKey: createRequestKey('suspend'),
-    },
-  });
-
-  if (error) {
-    captureException(error, { flow: 'repo.suspendUserAccess' });
-    return { ok: false as const, message: error.message };
-  }
-
-  if (!data?.ok) {
-    return {
-      ok: false as const,
-      message: toMutationMessage(data as MutationErrorResponse, 'Unable to suspend user.'),
-    };
-  }
-
-  return { ok: true as const };
-}
 
 export async function createConnectOnboardingLink() {
   const client = requireSupabase();

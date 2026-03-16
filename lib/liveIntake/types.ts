@@ -1,10 +1,12 @@
 import type { CurrencyCode } from '@/lib/models';
 
 export const LIVE_INTAKE_PUBLISH_STATE_TOOL_NAME = 'publish_intake_state';
+export const LIVE_INTAKE_FALLBACK_ROUTE = '/(app)/ingestion?entry=camera' as const;
 
 export type LiveCaptureMode = 'steady' | 'burst';
 export type LiveConditionGrade = 'like_new' | 'good' | 'fair' | 'parts';
 export type LiveConditionConfidence = 'high' | 'medium' | 'low';
+export type LiveIntakeFallbackRoute = typeof LIVE_INTAKE_FALLBACK_ROUTE;
 export type LiveConnectionState =
   | 'idle'
   | 'permissions'
@@ -66,6 +68,20 @@ export type LiveTranscriptEntry = {
   text: string;
   final: boolean;
   createdAt: string;
+};
+
+export type LiveIntakeAvailability = {
+  ok: true;
+  available: boolean;
+  code?: string;
+  message?: string;
+  fallbackRoute: LiveIntakeFallbackRoute;
+};
+
+export type LivePostedItem = {
+  itemId: string;
+  title: string;
+  postedAt: string;
 };
 
 export type LiveDraftPatch = {

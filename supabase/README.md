@@ -30,8 +30,10 @@ Use your preferred migration flow, or run the SQL directly in the Supabase SQL e
   - Creates a final sale PaymentIntent with idempotency and correlation metadata.
 - `complete-claim-payment`
   - Allows a supplier or admin to complete a claim after a succeeded sale payment exists.
+- `set-user-personas`
+  - Lets the authenticated user self-configure Broker, Supplier, or Both and persist the default entry mode.
 - `approve-user`
-  - Activates a pending account and grants launch roles.
+  - Legacy admin-only grant flow retained temporarily for compatibility; the client no longer depends on it.
 - `suspend-user`
   - Suspends a user and blocks automated payouts.
 - `create-connect-onboarding-link`

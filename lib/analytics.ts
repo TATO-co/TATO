@@ -28,14 +28,12 @@ export type AnalyticsEventName =
   | 'open_intake_hub'
   | 'refresh_feed'
   | 'refresh_wallet'
-  | 'profile_pending_review'
-  | 'admin_approve_user'
-  | 'admin_suspend_user'
   | 'ingestion_started'
   | 'ingestion_completed'
   | 'sale_payment_intent_created'
   | 'live_intake_session_requested'
   | 'live_intake_session_ready'
+  | 'live_intake_draft_posted'
   | 'live_intake_session_error';
 
 let telemetryInitialized = false;

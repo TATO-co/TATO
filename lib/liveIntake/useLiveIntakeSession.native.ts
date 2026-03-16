@@ -8,20 +8,27 @@ import {
   type LiveServerMessage,
   type Session,
 } from '@google/genai';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { captureException, trackEvent } from '@/lib/analytics';
 import {
+  captureStillPhotoAsBase64,
   captureFrameAsBase64,
   playAudioChunk,
   startNativeMicCapture,
 } from '@/lib/liveIntake/audio.native';
 import { canCreateLiveDraft, getLiveDraftCreateBlockers } from '@/lib/liveIntake/platform';
-import { mergeLiveDraftState } from '@/lib/liveIntake/state';
+import { looksLikeLiveDraftReadyClaim } from '@/lib/liveIntake/speech';
+import {
+  buildLiveDraftDescription,
+  getMissingLiveDraftRequiredFieldDetails,
+  mergeLiveDraftState,
+} from '@/lib/liveIntake/state';
 import {
   createLiveDraftPayload,
   createInitialLiveDraftState,
   completeLiveIntakeDraft,
+  getLiveIntakeAvailability,
   requestLiveIntakeBootstrap,
   startLiveIntakeDraft,
   uploadLiveIntakeSnapshot,
@@ -33,6 +40,8 @@ import type {
   LiveConnectionState,
   LiveDraftPatch,
   LiveDraftState,
+  LiveIntakeAvailability,
+  LivePostedItem,
   LiveTranscriptEntry,
 } from '@/lib/liveIntake/types';
 
@@ -40,6 +49,10 @@ const STEADY_FRAME_RATE = 2; // Lower than web due to native photo capture overh
 const BURST_FRAME_RATE = 5;
 const BURST_DURATION_MS = 2000;
 const MAX_RECONNECT_ATTEMPTS = 2;
+const STRUCTURED_UPDATE_TIMEOUT_MS = 7000;
+const STRUCTURED_UPDATE_TIMEOUT_MESSAGE = 'TATO answered, but the structured draft did not update. Re-scan or use photo capture.';
+const SPOKEN_READY_GUARD_TIMEOUT_MS = 1200;
+const SPOKEN_READY_GUARD_ERROR_MESSAGE = 'TATO said the draft was ready, but the structured draft still disagrees. Re-scan or use photo capture.';
 
 function createSessionResumptionConfig(handle?: string | null) {
   // Use a null-prototype object so inherited keys cannot trip SDK guards.
@@ -52,6 +65,18 @@ function createSessionResumptionConfig(handle?: string | null) {
 
 function createTranscriptId(prefix: string) {
   return `${prefix}_${Math.random().toString(36).slice(2, 10)}_${Date.now()}`;
+}
+
+function formatHumanList(values: string[]) {
+  if (values.length <= 1) {
+    return values[0] ?? '';
+  }
+
+  if (values.length === 2) {
+    return `${values[0]} and ${values[1]}`;
+  }
+
+  return `${values.slice(0, -1).join(', ')}, and ${values[values.length - 1]}`;
 }
 
 function upsertTranscriptEntry(args: {
@@ -104,35 +129,6 @@ function readAudioParts(message: LiveServerMessage) {
   return parts.filter((part) => part.inlineData?.mimeType?.startsWith('audio/pcm') && part.inlineData.data);
 }
 
-function buildDraftDescription(state: LiveDraftState) {
-  const lines: string[] = [];
-
-  if (state.bestGuess.title.trim()) {
-    lines.push(state.bestGuess.title.trim());
-  }
-
-  if (state.bestGuess.brand || state.bestGuess.model) {
-    lines.push(
-      [state.bestGuess.brand, state.bestGuess.model]
-        .filter(Boolean)
-        .join(' ')
-        .trim(),
-    );
-  }
-
-  if (state.condition.signals.length) {
-    lines.push(`Visible condition cues: ${state.condition.signals.join(', ')}.`);
-  }
-
-  if (state.pricing.rationale) {
-    lines.push(state.pricing.rationale);
-  }
-
-  return lines.length > 0
-    ? lines.join('\n')
-    : 'Supplier live intake completed from Gemini Live session.';
-}
-
 type UseLiveIntakeSessionArgs = {
   supplierId: string | null;
 };
@@ -158,17 +154,79 @@ export function useLiveIntakeSession(args: UseLiveIntakeSessionArgs) {
   const reconnectAttemptRef = useRef(0);
   const pendingUserTranscriptIdRef = useRef<string | null>(null);
   const pendingAgentTranscriptIdRef = useRef<string | null>(null);
+  const hasRequestedKickoffRef = useRef(false);
+  const readyToPostAnnouncedRef = useRef(false);
+  const draftCorrectionSignatureRef = useRef<string | null>(null);
+  const structuredUpdateTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastMeaningfulDraftUpdateAtRef = useRef(0);
+  const pendingStructuredUpdateRef = useRef<{ requestedAt: number; labels: string[] } | null>(null);
+  const spokenReadyGuardTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const spokenReadyGuardSignatureRef = useRef<string | null>(null);
 
   const [cameraGranted, setCameraGranted] = useState(false);
   const [microphoneGranted, setMicrophoneGranted] = useState(false);
   const [bootstrap, setBootstrap] = useState<LiveIntakeBootstrap | null>(null);
+  const [availability, setAvailability] = useState<LiveIntakeAvailability | null>(null);
+  const [availabilityLoading, setAvailabilityLoading] = useState(false);
   const [connectionState, setConnectionState] = useState<LiveConnectionState>('idle');
   const [draftState, setDraftState] = useState(() => createInitialLiveDraftState());
+  const draftStateRef = useRef(draftState);
   const [transcript, setTranscript] = useState<LiveTranscriptEntry[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [createDraftError, setCreateDraftError] = useState<string | null>(null);
   const [creatingDraft, setCreatingDraft] = useState(false);
   const [burstMode, setBurstMode] = useState(false);
+  const [postedItems, setPostedItems] = useState<LivePostedItem[]>([]);
+
+  const resetLiveState = () => {
+    clearSpokenReadyGuard();
+    const nextDraftState = createInitialLiveDraftState();
+    setBootstrap(null);
+    draftStateRef.current = nextDraftState;
+    setDraftState(nextDraftState);
+    setTranscript([]);
+    setCameraGranted(false);
+    setMicrophoneGranted(false);
+    setCreateDraftError(null);
+    setError(null);
+    setBurstMode(false);
+    setPostedItems([]);
+    pendingUserTranscriptIdRef.current = null;
+    pendingAgentTranscriptIdRef.current = null;
+    resumeHandleRef.current = null;
+    reconnectAttemptRef.current = 0;
+    readyToPostAnnouncedRef.current = false;
+    draftCorrectionSignatureRef.current = null;
+    lastMeaningfulDraftUpdateAtRef.current = 0;
+    pendingStructuredUpdateRef.current = null;
+    spokenReadyGuardSignatureRef.current = null;
+  };
+
+  const resetDraftForNextItem = () => {
+    clearSpokenReadyGuard();
+    const nextDraftState = createInitialLiveDraftState();
+    draftStateRef.current = nextDraftState;
+    setDraftState(nextDraftState);
+    setTranscript([]);
+    setCreateDraftError(null);
+    setError(null);
+    clearBurstMode();
+    pendingUserTranscriptIdRef.current = null;
+    pendingAgentTranscriptIdRef.current = null;
+    hasRequestedKickoffRef.current = false;
+    readyToPostAnnouncedRef.current = false;
+    draftCorrectionSignatureRef.current = null;
+    pendingStructuredUpdateRef.current = null;
+    spokenReadyGuardSignatureRef.current = null;
+  };
+
+  const refreshAvailability = useCallback(async () => {
+    setAvailabilityLoading(true);
+    const result = await getLiveIntakeAvailability({ supplierId: args.supplierId });
+    setAvailability(result);
+    setAvailabilityLoading(false);
+    return result;
+  }, [args.supplierId]);
 
   const clearFrameLoop = () => {
     if (frameIntervalRef.current != null) {
@@ -195,8 +253,194 @@ export function useLiveIntakeSession(args: UseLiveIntakeSessionArgs) {
     setDraftState((current) => mergeLiveDraftState(current, { captureMode: 'steady' }));
   };
 
+  const clearStructuredUpdateWatchdog = () => {
+    if (structuredUpdateTimeoutRef.current != null) {
+      clearTimeout(structuredUpdateTimeoutRef.current);
+      structuredUpdateTimeoutRef.current = null;
+    }
+    pendingStructuredUpdateRef.current = null;
+  };
+
+  const clearSpokenReadyGuard = () => {
+    if (spokenReadyGuardTimeoutRef.current != null) {
+      clearTimeout(spokenReadyGuardTimeoutRef.current);
+      spokenReadyGuardTimeoutRef.current = null;
+    }
+  };
+
+  const appendTranscriptEntry = useCallback((speaker: LiveTranscriptEntry['speaker'], text: string) => {
+    const trimmed = text.trim();
+    if (!trimmed) {
+      return;
+    }
+
+    setTranscript((current) => {
+      const lastEntry = current[current.length - 1];
+      if (lastEntry?.speaker === speaker && lastEntry.text === trimmed) {
+        return current;
+      }
+
+      return [
+        ...current,
+        {
+          id: createTranscriptId(speaker),
+          speaker,
+          text: trimmed,
+          final: true,
+          createdAt: new Date().toISOString(),
+        },
+      ];
+    });
+  }, []);
+
+  const startStructuredUpdateWatchdog = useCallback((labels: string[]) => {
+    clearStructuredUpdateWatchdog();
+    const requestedAt = Date.now();
+    pendingStructuredUpdateRef.current = { requestedAt, labels };
+    structuredUpdateTimeoutRef.current = setTimeout(() => {
+      const pending = pendingStructuredUpdateRef.current;
+      if (!pending || lastMeaningfulDraftUpdateAtRef.current >= pending.requestedAt) {
+        return;
+      }
+
+      appendTranscriptEntry(
+        'system',
+        `TATO spoke, but the structured draft still did not update for ${formatHumanList(pending.labels)}.`,
+      );
+      setCreateDraftError(STRUCTURED_UPDATE_TIMEOUT_MESSAGE);
+      pendingStructuredUpdateRef.current = null;
+      structuredUpdateTimeoutRef.current = null;
+    }, STRUCTURED_UPDATE_TIMEOUT_MS);
+  }, [appendTranscriptEntry]);
+
+  const sendMissingFieldCorrection = useCallback((missingFieldLabels: string[], missingFieldPaths: string[]) => {
+    if (!sessionRef.current) {
+      return;
+    }
+
+    sessionRef.current.sendClientContent({
+      turns: [
+        {
+          role: 'user',
+          parts: [{
+            text:
+              `Before you answer out loud, call publish_intake_state with the freshest draft state. The UI still shows these required fields as missing: ${missingFieldLabels.join(', ')} (${missingFieldPaths.join(', ')}). ` +
+              'Re-check the current camera view, update publish_intake_state with any corrected fields, and if something is still missing leave draftReady=false, set draftBlockers, and ask for one specific next view. Do not say the draft is ready until the structured tool state reflects it.',
+          }],
+        },
+      ],
+      turnComplete: true,
+    });
+  }, []);
+
+  const scheduleSpokenReadyGuard = useCallback((agentText: string) => {
+    if (!looksLikeLiveDraftReadyClaim(agentText)) {
+      return;
+    }
+
+    const missingRequiredFields = getMissingLiveDraftRequiredFieldDetails(draftStateRef.current);
+    if (missingRequiredFields.length === 0) {
+      return;
+    }
+
+    const correctionSignature = `${missingRequiredFields.map((field) => field.key).join(',')}::${agentText.trim().toLowerCase()}`;
+    if (correctionSignature === spokenReadyGuardSignatureRef.current) {
+      return;
+    }
+
+    clearSpokenReadyGuard();
+    spokenReadyGuardTimeoutRef.current = setTimeout(() => {
+      const latestMissingRequiredFields = getMissingLiveDraftRequiredFieldDetails(draftStateRef.current);
+      if (latestMissingRequiredFields.length === 0) {
+        spokenReadyGuardSignatureRef.current = null;
+        spokenReadyGuardTimeoutRef.current = null;
+        return;
+      }
+
+      spokenReadyGuardSignatureRef.current = correctionSignature;
+      appendTranscriptEntry(
+        'system',
+        `TATO said the draft was ready, but the structured draft still needs ${formatHumanList(latestMissingRequiredFields.map((field) => field.label))}.`,
+      );
+      setCreateDraftError(SPOKEN_READY_GUARD_ERROR_MESSAGE);
+
+      try {
+        sendMissingFieldCorrection(
+          latestMissingRequiredFields.map((field) => field.label),
+          latestMissingRequiredFields.map((field) => field.fieldPath),
+        );
+        startStructuredUpdateWatchdog(latestMissingRequiredFields.map((field) => field.label));
+      } catch {
+        // Ignore send errors — the session may have disconnected
+      }
+
+      spokenReadyGuardTimeoutRef.current = null;
+    }, SPOKEN_READY_GUARD_TIMEOUT_MS);
+  }, [appendTranscriptEntry, sendMissingFieldCorrection, startStructuredUpdateWatchdog]);
+
+  const isMeaningfulDraftPatch = (patch: LiveDraftPatch) => (
+    patch.candidateItems !== undefined
+    || patch.bestGuess !== undefined
+    || patch.condition !== undefined
+    || patch.pricing !== undefined
+    || patch.nextBestAction !== undefined
+    || patch.missingViews !== undefined
+    || patch.captureMode !== undefined
+    || patch.draftReady !== undefined
+    || patch.draftBlockers !== undefined
+  );
+
   const applyDraftPatch = (patch: LiveDraftPatch) => {
-    setDraftState((current) => mergeLiveDraftState(current, patch));
+    setDraftState((current) => {
+      const merged = mergeLiveDraftState(current, patch);
+      draftStateRef.current = merged;
+      const missingRequiredFields = getMissingLiveDraftRequiredFieldDetails(merged);
+      const correctionSignature = missingRequiredFields.map((field) => field.key).join(',');
+
+      if (patch.draftReady === true && !merged.draftReady && missingRequiredFields.length > 0 && correctionSignature !== draftCorrectionSignatureRef.current) {
+        draftCorrectionSignatureRef.current = correctionSignature;
+        appendTranscriptEntry(
+          'system',
+          `Draft still needs ${formatHumanList(missingRequiredFields.map((field) => field.label))} before the post actions appear.`,
+        );
+
+        try {
+          sendMissingFieldCorrection(
+            missingRequiredFields.map((field) => field.label),
+            missingRequiredFields.map((field) => field.fieldPath),
+          );
+        } catch {
+          // Ignore send errors — the session may have disconnected
+        }
+      }
+
+      if (missingRequiredFields.length === 0) {
+        draftCorrectionSignatureRef.current = null;
+        spokenReadyGuardSignatureRef.current = null;
+        clearSpokenReadyGuard();
+      }
+
+      if (merged.draftReady && canCreateLiveDraft(merged) && sessionRef.current && !readyToPostAnnouncedRef.current) {
+        readyToPostAnnouncedRef.current = true;
+        try {
+          sessionRef.current.sendClientContent({
+            turns: [
+              {
+                role: 'user',
+                parts: [{
+                  text: 'The draft is ready to post. Acknowledge that once in one short sentence, then wait for the supplier to either post this item, ask for another scan, or start the next item.',
+                }],
+              },
+            ],
+            turnComplete: true,
+          });
+        } catch {
+          // Ignore send errors — the session may have disconnected
+        }
+      }
+
+      return merged;
+    });
   };
 
   const closeTransport = async () => {
@@ -221,13 +465,17 @@ export function useLiveIntakeSession(args: UseLiveIntakeSessionArgs) {
 
   const teardown = async () => {
     manualCloseRef.current = true;
+    hasRequestedKickoffRef.current = false;
     clearReconnectLoop();
     clearBurstMode();
+    clearStructuredUpdateWatchdog();
+    clearSpokenReadyGuard();
     await closeTransport();
+    resetLiveState();
     setConnectionState('idle');
   };
 
-  const activateBurstMode = (reason: 'identify' | 'tool') => {
+  const activateBurstMode = (reason: 'identify' | 'tool' | 'resolve') => {
     setBurstMode(true);
     setDraftState((current) => mergeLiveDraftState(current, { captureMode: 'burst' }));
 
@@ -278,6 +526,18 @@ export function useLiveIntakeSession(args: UseLiveIntakeSessionArgs) {
     const patch = parsePublishIntakeStateToolArgs(call.args);
     if (!patch) {
       return;
+    }
+
+    if (isMeaningfulDraftPatch(patch)) {
+      lastMeaningfulDraftUpdateAtRef.current = Date.now();
+      clearStructuredUpdateWatchdog();
+      clearSpokenReadyGuard();
+      spokenReadyGuardSignatureRef.current = null;
+      setCreateDraftError((current) =>
+        current === STRUCTURED_UPDATE_TIMEOUT_MESSAGE || current === SPOKEN_READY_GUARD_ERROR_MESSAGE
+          ? null
+          : current,
+      );
     }
 
     applyDraftPatch(patch);
@@ -356,6 +616,10 @@ export function useLiveIntakeSession(args: UseLiveIntakeSessionArgs) {
       );
     }
 
+    for (const toolCall of message.toolCall?.functionCalls ?? []) {
+      handleToolCall(toolCall);
+    }
+
     const outputTranscription = message.serverContent?.outputTranscription;
     if (outputTranscription?.text) {
       setTranscript((current) =>
@@ -367,14 +631,14 @@ export function useLiveIntakeSession(args: UseLiveIntakeSessionArgs) {
           final: Boolean(outputTranscription.finished),
         }),
       );
+
+      if (outputTranscription.finished) {
+        scheduleSpokenReadyGuard(outputTranscription.text);
+      }
     }
 
     for (const audioPart of readAudioParts(message)) {
       void playAudioChunk(audioPart.inlineData?.data ?? '', audioPart.inlineData?.mimeType);
-    }
-
-    for (const toolCall of message.toolCall?.functionCalls ?? []) {
-      handleToolCall(toolCall);
     }
   };
 
@@ -456,6 +720,14 @@ export function useLiveIntakeSession(args: UseLiveIntakeSessionArgs) {
       // Start frame capture loop
       scheduleFrameLoop();
       setConnectionState('connected');
+      if (!resumptionHandle && !hasRequestedKickoffRef.current) {
+        hasRequestedKickoffRef.current = true;
+        session.sendClientContent({
+          turns:
+            'Greet the supplier immediately, share your current best read if you have one, and ask for the first specific view or detail you need next. Do this even if the supplier has not spoken yet.',
+          turnComplete: true,
+        });
+      }
       trackEvent('live_intake_session_ready', {
         supplier_id: args.supplierId ?? 'unknown',
         model: resolvedBootstrap.model,
@@ -473,6 +745,16 @@ export function useLiveIntakeSession(args: UseLiveIntakeSessionArgs) {
     if (!args.supplierId) {
       setConnectionState('error');
       setError('Sign in with an approved supplier account before starting live intake.');
+      return;
+    }
+
+    setError(null);
+    setCreateDraftError(null);
+
+    const availabilityResult = await refreshAvailability();
+    if (!availabilityResult.available) {
+      setConnectionState('idle');
+      setError(availabilityResult.message ?? 'Live posting is temporarily unavailable. Use photo capture instead.');
       return;
     }
 
@@ -503,6 +785,7 @@ export function useLiveIntakeSession(args: UseLiveIntakeSessionArgs) {
 
       setBootstrap(bootstrapResult.bootstrap);
       manualCloseRef.current = false;
+      hasRequestedKickoffRef.current = false;
       await connectSession(bootstrapResult.bootstrap);
     } catch (startError) {
       captureException(startError, { flow: 'liveIntake.native.start' });
@@ -515,8 +798,41 @@ export function useLiveIntakeSession(args: UseLiveIntakeSessionArgs) {
     activateBurstMode('identify');
   };
 
+  const requestMissingFieldResolution = () => {
+    if (connectionState !== 'connected' || !sessionRef.current) {
+      setCreateDraftError('Start or reconnect the live session before asking TATO to fill the remaining fields.');
+      return;
+    }
+
+    const missingRequiredFields = getMissingLiveDraftRequiredFieldDetails(draftState);
+    if (missingRequiredFields.length === 0) {
+      return;
+    }
+
+    setCreateDraftError(null);
+    activateBurstMode('resolve');
+    appendTranscriptEntry(
+      'system',
+      `Re-checking ${formatHumanList(missingRequiredFields.map((field) => field.label))} now.`,
+    );
+    startStructuredUpdateWatchdog(missingRequiredFields.map((field) => field.label));
+
+    try {
+      sendMissingFieldCorrection(
+        missingRequiredFields.map((field) => field.label),
+        missingRequiredFields.map((field) => field.fieldPath),
+      );
+    } catch {
+      setCreateDraftError('Unable to ask TATO for another pass right now. Try reconnecting the live session.');
+    }
+  };
+
   const confirmConditionGrade = (grade: LiveConditionGrade) => {
-    setDraftState((current) => ({ ...current, confirmedConditionGrade: grade }));
+    setDraftState((current) => {
+      const nextState = { ...current, confirmedConditionGrade: grade };
+      draftStateRef.current = nextState;
+      return nextState;
+    });
   };
 
   const reconnect = async () => {
@@ -534,7 +850,12 @@ export function useLiveIntakeSession(args: UseLiveIntakeSessionArgs) {
   };
 
   const createDraft = async () => {
-    if (creatingDraft || !bootstrap) {
+    if (creatingDraft) {
+      return null;
+    }
+
+    if (connectionState !== 'connected' || !bootstrap) {
+      setCreateDraftError('Start or reconnect the live session before sending the draft to the broker queue.');
       return null;
     }
 
@@ -561,7 +882,7 @@ export function useLiveIntakeSession(args: UseLiveIntakeSessionArgs) {
       // Capture a still frame from the camera for the draft photo
       let storagePath = draftInit.storagePath;
       if (cameraRef.current) {
-        const frame = await captureFrameAsBase64(cameraRef.current);
+        const frame = await captureStillPhotoAsBase64(cameraRef.current);
         if (frame) {
           // Convert base64 to Uint8Array for the upload function
           const binaryStr = atob(frame.data);
@@ -578,7 +899,7 @@ export function useLiveIntakeSession(args: UseLiveIntakeSessionArgs) {
         }
       }
 
-      const description = buildDraftDescription(draftState);
+      const description = buildLiveDraftDescription(draftState);
       const payload = createLiveDraftPayload({
         itemId: draftInit.itemId,
         storagePath,
@@ -593,13 +914,31 @@ export function useLiveIntakeSession(args: UseLiveIntakeSessionArgs) {
         return null;
       }
 
-      trackEvent('live_intake_session_ready', {
+      trackEvent('live_intake_draft_posted', {
         supplier_id: args.supplierId ?? 'unknown',
         condition_grade: draftState.confirmedConditionGrade ?? draftState.condition.proposedGrade ?? 'unknown',
         platform: 'native',
       });
 
-      return result;
+      // Track the posted item then reset draft for next item (session stays alive)
+      const postedTitle = draftState.bestGuess.title.trim() || 'Untitled Item';
+      setPostedItems((current) => [
+        ...current,
+        { itemId: result.itemId, title: postedTitle, postedAt: new Date().toISOString() },
+      ]);
+      resetDraftForNextItem();
+
+      // Re-orient Gemini for the next item
+      if (sessionRef.current) {
+        hasRequestedKickoffRef.current = true;
+        sessionRef.current.sendClientContent({
+          turns:
+            'The previous item has been posted to the broker queue successfully. The supplier is ready to scan the next item. Greet them, and ask what they want to catalog next.',
+          turnComplete: true,
+        });
+      }
+
+      return result.itemId;
     } catch (draftError) {
       captureException(draftError, { flow: 'liveIntake.native.createDraft' });
       setCreateDraftError(draftError instanceof Error ? draftError.message : 'Unable to create the draft.');
@@ -608,6 +947,20 @@ export function useLiveIntakeSession(args: UseLiveIntakeSessionArgs) {
       setCreatingDraft(false);
     }
   };
+
+  const endSession = async () => {
+    const items = [...postedItems];
+    await teardown();
+    return items;
+  };
+
+  useEffect(() => {
+    void refreshAvailability();
+  }, [refreshAvailability]);
+
+  useEffect(() => {
+    draftStateRef.current = draftState;
+  }, [draftState]);
 
   useEffect(() => {
     return () => {
@@ -618,6 +971,8 @@ export function useLiveIntakeSession(args: UseLiveIntakeSessionArgs) {
   return {
     cameraRef,
     bootstrap,
+    availability,
+    availabilityLoading,
     cameraGranted,
     microphoneGranted,
     connectionState,
@@ -627,10 +982,14 @@ export function useLiveIntakeSession(args: UseLiveIntakeSessionArgs) {
     createDraftError,
     creatingDraft,
     burstMode,
+    postedItems,
+    refreshAvailability,
     requestPermissionsAndStart,
     requestIdentifyBurst,
+    requestMissingFieldResolution,
     confirmConditionGrade,
     createDraft,
+    endSession,
     reconnect,
     stopSession,
     resumable: Boolean(resumeHandleRef.current),

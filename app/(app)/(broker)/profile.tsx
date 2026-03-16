@@ -4,6 +4,7 @@ import { ActivityIndicator, Image, Pressable, Text, View } from 'react-native';
 import Animated, { FadeInUp } from 'react-native-reanimated';
 
 import { ModeShell } from '@/components/layout/ModeShell';
+import { PersonaAccessCard } from '@/components/profile/PersonaAccessCard';
 import { useAuth } from '@/components/providers/AuthProvider';
 import { brokerDesktopNav } from '@/lib/navigation';
 import { TIMING } from '@/lib/ui';
@@ -72,7 +73,7 @@ export default function ProfileScreen() {
               Identity
             </Text>
             <Text className="mt-2 text-sm text-tato-text">
-              Status: {(profile?.status ?? 'pending_review').replace(/_/g, ' ')}. Single account access for both broker and supplier workflows.
+              Status: {(profile?.status ?? 'active').replace(/_/g, ' ')}. Single account access for both broker and supplier workflows.
             </Text>
           </View>
 
@@ -101,13 +102,17 @@ export default function ProfileScreen() {
           </Pressable>
         ) : (
           <View className="mt-5 rounded-2xl border border-tato-line bg-tato-panelSoft px-4 py-3">
-            <Text className="text-sm text-tato-muted">Supplier role is not enabled for this account yet.</Text>
+            <Text className="text-sm text-tato-muted">Supplier access is currently off. Enable it below whenever you want both workflows.</Text>
           </View>
         )}
 
         {switchError ? (
           <Text className="mt-2 text-sm text-[#ff8f8f]">{switchError}</Text>
         ) : null}
+
+        <View className="mt-5">
+          <PersonaAccessCard />
+        </View>
 
         <Pressable className="mt-3 rounded-full border border-tato-line bg-tato-panelSoft px-5 py-3.5 hover:bg-[#1a3158] focus:bg-[#1a3158]">
           <Text className="text-center text-xs font-bold uppercase tracking-[1px] text-tato-text" style={{ fontFamily: 'SpaceMono' }}>

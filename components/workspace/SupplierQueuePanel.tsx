@@ -223,7 +223,11 @@ export function SupplierQueuePanel({ isDesktop }: SupplierQueuePanelProps) {
                   onRetry={refresh}
                 />
               ) : (
-                <InventoryTable items={filteredItems} variant="desktop" />
+                <InventoryTable
+                  items={filteredItems}
+                  onItemPress={(item) => router.push(`/(app)/item/${item.id}` as never)}
+                  variant="desktop"
+                />
               )}
             </View>
           }
@@ -319,7 +323,11 @@ export function SupplierQueuePanel({ isDesktop }: SupplierQueuePanelProps) {
               onRetry={refresh}
             />
           ) : (
-            <InventoryTable items={filteredItems} variant="tablet" />
+            <InventoryTable
+              items={filteredItems}
+              onItemPress={(item) => router.push(`/(app)/item/${item.id}` as never)}
+              variant="tablet"
+            />
           )}
         </View>
 
@@ -390,9 +398,6 @@ export function SupplierQueuePanel({ isDesktop }: SupplierQueuePanelProps) {
             <Text className="mt-3 text-[30px] font-sans-bold leading-[34px] text-tato-text">
               {availableCount} claim-ready items on deck.
             </Text>
-            <Text className="mt-3 text-[15px] leading-7 text-[#c3d3ec]">
-              Keep intake moving, surface the hottest SKUs first, and give brokers a cleaner queue to claim from.
-            </Text>
 
             <View className="mt-5 flex-row gap-3">
               <PhoneMetricChip
@@ -440,7 +445,7 @@ export function SupplierQueuePanel({ isDesktop }: SupplierQueuePanelProps) {
               <PhoneEyebrow>Claimed flow</PhoneEyebrow>
               <Text className="mt-2 text-[24px] font-sans-bold text-tato-text">{claimedCount}</Text>
               <Text className="mt-1 text-sm leading-6 text-tato-muted">
-                Items already spoken for by brokers.
+                Claimed
               </Text>
             </View>
           </ScrollView>
@@ -450,7 +455,7 @@ export function SupplierQueuePanel({ isDesktop }: SupplierQueuePanelProps) {
               <View className="flex-1">
                 <PhoneEyebrow>Live Inventory</PhoneEyebrow>
                 <Text className="mt-2 text-[22px] font-sans-bold text-tato-text">
-                  Prioritize the next best handoff.
+                  Inventory
                 </Text>
               </View>
               <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-dim">

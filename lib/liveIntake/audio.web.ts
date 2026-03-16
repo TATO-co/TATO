@@ -1,6 +1,20 @@
 const INPUT_SAMPLE_RATE = 16000;
 const OUTPUT_SAMPLE_RATE = 24000;
 
+type AudioContextConstructor = typeof AudioContext;
+
+function getAudioContextConstructor(): AudioContextConstructor {
+  const resolved =
+    globalThis.AudioContext
+    || (globalThis as typeof globalThis & { webkitAudioContext?: AudioContextConstructor }).webkitAudioContext;
+
+  if (!resolved) {
+    throw new Error('Web Audio is not available in this browser.');
+  }
+
+  return resolved;
+}
+
 function bytesToBase64(bytes: Uint8Array) {
   let binary = '';
   const chunkSize = 0x8000;
@@ -167,7 +181,7 @@ export async function captureVideoStill(args: {
   context.drawImage(args.video, 0, 0, width, height);
 
   return new Promise<Blob | null>((resolve) =>
-    args.canvas.toBlob((blob) => resolve(blob), 'image/jpeg', args.quality ?? 0.92),
+    args.canvas.toBlob((blob) => resolve(blob), 'image/jpeg', args.quality ?? 0.96),
   );
 }
 
@@ -221,7 +235,8 @@ export class PcmAudioPlayer {
 
   private ensureAudioContext() {
     if (!this.audioContext) {
-      this.audioContext = new AudioContext({ sampleRate: OUTPUT_SAMPLE_RATE });
+      const AudioContextImpl = getAudioContextConstructor();
+      this.audioContext = new AudioContextImpl({ sampleRate: OUTPUT_SAMPLE_RATE });
       this.nextStartTime = this.audioContext.currentTime;
     }
 
@@ -233,7 +248,8 @@ async function startMicrophonePcmStreamWorklet(args: {
   stream: MediaStream;
   onChunk: (chunk: { mimeType: string; data: string }) => void;
 }) {
-  const audioContext = new AudioContext();
+  const AudioContextImpl = getAudioContextConstructor();
+  const audioContext = new AudioContextImpl();
   const source = audioContext.createMediaStreamSource(args.stream);
 
   // Use a root-relative static path here to avoid import.meta syntax, which
@@ -267,7 +283,8 @@ function startMicrophonePcmStreamLegacy(args: {
   stream: MediaStream;
   onChunk: (chunk: { mimeType: string; data: string }) => void;
 }) {
-  const audioContext = new AudioContext();
+  const AudioContextImpl = getAudioContextConstructor();
+  const audioContext = new AudioContextImpl();
   const source = audioContext.createMediaStreamSource(args.stream);
   const processor = audioContext.createScriptProcessor(4096, 1, 1);
   const sink = audioContext.createGain();

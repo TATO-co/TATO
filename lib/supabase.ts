@@ -12,7 +12,7 @@ export const supabase =
         auth: {
           persistSession: true,
           autoRefreshToken: true,
-          detectSessionInUrl: false,
+          detectSessionInUrl: Platform.OS === 'web',
           storage: Platform.OS === 'web' ? undefined : AsyncStorage,
         },
       })

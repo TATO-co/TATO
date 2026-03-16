@@ -340,10 +340,7 @@ export function BrokerFeedPanel({
       <View className="flex-1 rounded-[24px] border border-tato-line bg-[#09172d] p-5">
         <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-dim">Desk Controls</Text>
         <Text className="mt-2 text-lg font-sans-bold leading-7 text-tato-text">
-          Search and filter the feed without leaving the broker workspace.
-        </Text>
-        <Text className="mt-2 text-sm leading-6 text-tato-muted">
-          Use the drawer for city scoping, margin thresholds, shipping mode, and AI confidence trimming.
+          Filters
         </Text>
 
         <View className="mt-4 flex-row flex-wrap gap-2">
@@ -351,13 +348,6 @@ export function BrokerFeedPanel({
             <SummaryPill key={token} label={token} />
           ))}
           {!activeDesktopTokens.length ? <SummaryPill label="Nearby default" /> : null}
-        </View>
-
-        <View className="mt-5 rounded-[20px] border border-[#1d3f71] bg-[#102443] px-4 py-4">
-          <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-accent">AI Note</Text>
-          <Text className="mt-2 text-sm leading-6 text-tato-muted">
-            Start with local pickup and high-confidence reads, then widen to shippable inventory when margin pressure rises.
-          </Text>
         </View>
 
         <Pressable
@@ -386,10 +376,7 @@ export function BrokerFeedPanel({
               <View className="flex-1">
                 <Text className="font-mono text-[11px] uppercase tracking-[1px] text-[#85a6d9]">Broker Discovery Desk</Text>
                 <Text className={`mt-3 font-sans-bold leading-[46px] text-tato-text ${compactDesktop ? 'max-w-[760px] text-[34px]' : 'max-w-[720px] text-[40px]'}`}>
-                  Source local inventory with enough margin to make cross-listing worth your time.
-                </Text>
-                <Text className="mt-3 max-w-[780px] text-base leading-7 text-[#91a6c7]">
-                  The desktop experience now behaves like a broker workstation. Search inventory, trim weak reads, and monitor spread before you burn time on a claim.
+                  Broker Queue
                 </Text>
 
                 <View className="mt-6 flex-row flex-wrap gap-4">
@@ -445,7 +432,7 @@ export function BrokerFeedPanel({
               <Text className="mt-2 text-sm leading-6 text-tato-muted">
                 {normalizedSearchQuery
                   ? `Searching for “${searchQuery.trim()}” with ${activeDesktopTokens.length} active filter${activeDesktopTokens.length === 1 ? '' : 's'}.`
-                  : 'Use search and filter controls to tighten the feed around margin, geography, and AI certainty.'}
+                  : 'All items shown.'}
               </Text>
             </View>
 
@@ -575,10 +562,7 @@ export function BrokerFeedPanel({
               <View>
                 <Text className="font-mono text-[11px] uppercase tracking-[1px] text-[#85a6d9]">Broker Discovery Desk</Text>
                 <Text className="mt-3 max-w-[720px] font-sans-bold text-[34px] leading-[42px] text-tato-text">
-                  Source local inventory with enough margin to make cross-listing worth your time.
-                </Text>
-                <Text className="mt-3 max-w-[780px] text-base leading-7 text-[#91a6c7]">
-                  Tablet keeps the broker desk active without collapsing back to the phone swipe deck. Filter the feed, compare a priority pick, and work a 2-up inventory grid.
+                  Broker Queue
                 </Text>
               </View>
 
@@ -633,7 +617,7 @@ export function BrokerFeedPanel({
                 <Text className="mt-2 text-sm leading-6 text-tato-muted">
                   {normalizedSearchQuery
                     ? `Searching for “${searchQuery.trim()}” with ${activeDesktopTokens.length} active filter${activeDesktopTokens.length === 1 ? '' : 's'}.`
-                    : 'Keep controls open while you compare the feed in a two-column tablet grid.'}
+                    : 'All items shown.'}
                 </Text>
               </View>
 

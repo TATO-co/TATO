@@ -14,19 +14,27 @@ import {
   setTelemetryUser,
 } from '@/lib/analytics';
 import { getRuntimeConfigIssueMessage, runtimeConfig } from '@/lib/config';
+import { createRequestKey } from '@/lib/models';
 import type {
   AppMode,
   CurrencyCode,
   PayoutReadiness,
   ProfileStatus,
 } from '@/lib/models';
+import {
+  modeRoute,
+  resolvePayoutReadiness,
+  resolvePreferredRoute,
+  resolveRoleLabel,
+  withTimeout,
+} from '@/lib/auth-helpers';
 import { supabase } from '@/lib/supabase';
 
 export type ProfileRecord = {
   id: string;
   email: string | null;
   display_name: string;
-  default_mode: AppMode;
+  default_mode: AppMode | null;
   status: ProfileStatus;
   can_supply: boolean;
   can_broker: boolean;
@@ -41,16 +49,23 @@ type AuthContextValue = {
   configured: boolean;
   configurationError: string | null;
   isAuthenticated: boolean;
-  isApproved: boolean;
+  isActive: boolean;
   isAdmin: boolean;
+  needsPersonaSetup: boolean;
   payoutReadiness: PayoutReadiness;
   loading: boolean;
   session: Session | null;
   user: User | null;
   profile: ProfileRecord | null;
+  profileError: string | null;
   nextMode: AppMode | null;
   setNextMode: (mode: AppMode | null) => void;
   switchMode: (mode: AppMode) => Promise<{ error: string | null }>;
+  updatePersonas: (input: {
+    canBroker: boolean;
+    canSupply: boolean;
+    defaultMode: AppMode;
+  }) => Promise<{ error: string | null }>;
   signInWithPassword: (email: string, password: string) => Promise<{ error: string | null }>;
   signInWithOtp: (email: string) => Promise<{ error: string | null }>;
   verifyOtp: (email: string, token: string) => Promise<{ error: string | null }>;
@@ -62,66 +77,65 @@ type AuthContextValue = {
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
-function modeRoute(mode: AppMode) {
-  return mode === 'supplier' ? '/(app)/(supplier)/dashboard' : '/(app)/(broker)/workspace';
-}
+const developmentApprovalBypassEnabled = runtimeConfig.appEnv === 'development';
+const AUTH_VALIDATE_TIMEOUT_MS = 5000;
+const PROFILE_SYNC_TIMEOUT_MS = 10000;
+const PROFILE_SYNC_ERROR_MESSAGE = 'We could not restore your account access. Retry the sync or sign out.';
+const PERSONA_UPDATE_ERROR_MESSAGE = 'We could not save your workspace access. Retry or sign out.';
+const PROFILE_CACHE_KEY = 'tato:cached_profile';
 
-function resolvePayoutReadiness(profile: ProfileRecord | null): PayoutReadiness {
-  if (!profile) {
-    return 'not_ready';
-  }
-
-  if (profile.payouts_enabled) {
-    return 'enabled';
-  }
-
-  if (profile.stripe_connect_onboarding_complete) {
-    return 'pending';
-  }
-
-  return 'not_ready';
-}
-
-function resolveRoleLabel(profile: ProfileRecord | null) {
-  if (!profile) {
+function resolveSupabaseAuthStorageKey() {
+  const url = runtimeConfig.supabaseUrl;
+  if (!url) {
     return null;
   }
 
-  if (profile.can_supply && profile.can_broker) {
-    return 'broker_supplier';
+  try {
+    const host = new URL(url).hostname;
+    const projectRef = host.split('.')[0];
+    return projectRef ? `sb-${projectRef}-auth-token` : null;
+  } catch {
+    return null;
   }
-
-  if (profile.can_supply) {
-    return 'supplier';
-  }
-
-  if (profile.can_broker) {
-    return 'broker';
-  }
-
-  return 'pending_access';
 }
 
-const developmentApprovalBypassEnabled = runtimeConfig.appEnv === 'development';
-const AUTH_BOOT_TIMEOUT_MS = 4000;
+function readCachedSession(): Session | null {
+  try {
+    if (typeof localStorage === 'undefined') return null;
+    const storageKey = resolveSupabaseAuthStorageKey();
+    if (!storageKey) return null;
+    const raw = localStorage.getItem(storageKey);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
 
-function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => {
-      reject(new Error(`${label} timed out after ${timeoutMs}ms`));
-    }, timeoutMs);
+    if (
+      parsed
+      && typeof parsed.access_token === 'string'
+      && parsed.user
+      && typeof parsed.user.id === 'string'
+    ) {
+      return parsed as Session;
+    }
 
-    promise.then(
-      (value) => {
-        clearTimeout(timer);
-        resolve(value);
-      },
-      (error) => {
-        clearTimeout(timer);
-        reject(error);
-      },
-    );
-  });
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function syncTelemetryProfile(authUser: User | null, resolved: ProfileRecord | null) {
+  setTelemetryUser(
+    authUser && resolved
+      ? {
+          id: authUser.id,
+          email: authUser.email ?? null,
+          role: resolveRoleLabel(resolved),
+          status: resolved.status,
+          countryCode: resolved.country_code,
+          currencyCode: resolved.payout_currency_code,
+        }
+      : null,
+  );
 }
 
 async function ensureDevelopmentHub(profile: ProfileRecord) {
@@ -175,7 +189,7 @@ async function ensureDevelopmentAccess(profile: ProfileRecord): Promise<ProfileR
     && profile.payouts_enabled
     && profile.stripe_connect_onboarding_complete
   ) {
-    await ensureDevelopmentHub(profile);
+    void ensureDevelopmentHub(profile);
     return profile;
   }
 
@@ -214,7 +228,7 @@ async function ensureDevelopmentAccess(profile: ProfileRecord): Promise<ProfileR
     stripe_connect_onboarding_complete: true,
   };
 
-  await ensureDevelopmentHub(resolved);
+  void ensureDevelopmentHub(resolved);
   return resolved;
 }
 
@@ -248,8 +262,8 @@ async function ensureProfile(user: User): Promise<ProfileRecord | null> {
     id: user.id,
     email: user.email ?? null,
     display_name: inferredName,
-    default_mode: 'broker',
-    status: developmentApprovalBypassEnabled ? 'active' : 'pending_review',
+    default_mode: developmentApprovalBypassEnabled ? 'broker' : null,
+    status: 'active',
     can_supply: developmentApprovalBypassEnabled,
     can_broker: developmentApprovalBypassEnabled,
     is_admin: developmentApprovalBypassEnabled,
@@ -274,44 +288,109 @@ async function ensureProfile(user: User): Promise<ProfileRecord | null> {
   return ensureDevelopmentAccess(inserted ?? profileSeed);
 }
 
+function cacheProfile(record: ProfileRecord | null) {
+  try {
+    if (typeof localStorage === 'undefined') return;
+    if (record) {
+      localStorage.setItem(PROFILE_CACHE_KEY, JSON.stringify(record));
+    } else {
+      localStorage.removeItem(PROFILE_CACHE_KEY);
+    }
+  } catch {
+    // Storage full or unavailable — not critical.
+  }
+}
+
+function readCachedProfile(userId: string | null): ProfileRecord | null {
+  try {
+    if (typeof localStorage === 'undefined') return null;
+    const raw = localStorage.getItem(PROFILE_CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    // Basic shape check — must have id and status, and only hydrate it when it
+    // belongs to the same cached auth session.
+    if (
+      parsed
+      && typeof parsed.id === 'string'
+      && typeof parsed.status === 'string'
+      && parsed.id === userId
+    ) {
+      return parsed as ProfileRecord;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 export function AuthProvider({ children }: PropsWithChildren) {
   const configured = Boolean(supabase);
   const configurationError = getRuntimeConfigIssueMessage();
-  const [loading, setLoading] = useState(true);
-  const [session, setSession] = useState<Session | null>(null);
-  const [user, setUser] = useState<User | null>(null);
-  const [profile, setProfile] = useState<ProfileRecord | null>(null);
+
+  // On web, seed auth state from the Supabase session cache first. Hydrating
+  // from profile data alone can make the router think the user is signed out
+  // during refresh and briefly bounce through auth-only screens.
+  const cachedSession = useMemo(() => readCachedSession(), []);
+  const cachedProfile = useMemo(
+    () => readCachedProfile(cachedSession?.user?.id ?? null),
+    [cachedSession],
+  );
+  const hasCachedAuth = cachedSession !== null;
+
+  const [loading, setLoading] = useState(!hasCachedAuth);
+  const [session, setSession] = useState<Session | null>(cachedSession);
+  const [user, setUser] = useState<User | null>(cachedSession?.user ?? null);
+  const [profile, setProfileRaw] = useState<ProfileRecord | null>(cachedProfile);
+  const [profileError, setProfileError] = useState<string | null>(null);
   const [nextMode, setNextMode] = useState<AppMode | null>(null);
 
+  // Wrapper that keeps the localStorage cache in sync with React state.
+  const setProfile = useCallback((value: ProfileRecord | null) => {
+    setProfileRaw(value);
+    cacheProfile(value);
+  }, []);
+
   const loadProfile = useCallback(
-    async (authUser: User | null) => {
+    async (authUser: User | null): Promise<ProfileRecord | null> => {
       if (!configured) {
         setProfile(null);
-        return;
+        return null;
       }
 
       if (!authUser) {
         setProfile(null);
         setTelemetryUser(null);
-        return;
+        return null;
       }
 
       const resolved = await ensureProfile(authUser);
       setProfile(resolved);
-      setTelemetryUser(
-        resolved
-          ? {
-              id: authUser.id,
-              email: authUser.email ?? null,
-              role: resolveRoleLabel(resolved),
-              status: resolved.status,
-              countryCode: resolved.country_code,
-              currencyCode: resolved.payout_currency_code,
-            }
-          : null,
-      );
+      syncTelemetryProfile(authUser, resolved);
+      return resolved;
     },
     [configured],
+  );
+
+  const syncProfile = useCallback(
+    async (authUser: User | null, label: string, errorFlow: string) => {
+      try {
+        const resolved = await withTimeout(
+          loadProfile(authUser),
+          PROFILE_SYNC_TIMEOUT_MS,
+          label,
+        );
+
+        setProfileError(authUser && !resolved ? PROFILE_SYNC_ERROR_MESSAGE : null);
+        return resolved;
+      } catch (error) {
+        captureException(error, { flow: errorFlow });
+        setProfile(null);
+        setTelemetryUser(null);
+        setProfileError(authUser ? PROFILE_SYNC_ERROR_MESSAGE : null);
+        return null;
+      }
+    },
+    [loadProfile],
   );
 
   useEffect(() => {
@@ -325,18 +404,38 @@ export function AuthProvider({ children }: PropsWithChildren) {
         return;
       }
 
-      let data: { session: Session | null } = { session: null };
+      let resolvedSession: Session | null = null;
 
       try {
-        const sessionResult = await withTimeout(
-          supabase.auth.getSession(),
-          AUTH_BOOT_TIMEOUT_MS,
-          'supabase.auth.getSession',
-        );
-        data = sessionResult.data;
+        // Step 1: Read the cached session to see if this is a returning user.
+        const { data: cachedData } = await supabase.auth.getSession();
+        resolvedSession = cachedData?.session ?? null;
 
-        if (sessionResult.error) {
-          captureException(sessionResult.error, { flow: 'auth.initialize' });
+        // Step 2: If we have a cached session, validate the token server-side.
+        // getUser() hits the Supabase Auth server and triggers a JWT refresh
+        // when the access token is expired (using the refresh token).
+        if (resolvedSession) {
+          try {
+            const userResult = await withTimeout(
+              supabase.auth.getUser(),
+              AUTH_VALIDATE_TIMEOUT_MS,
+              'supabase.auth.getUser',
+            );
+
+            if (userResult.error) {
+              // Validation failed but we have a cached session — keep it.
+              // autoRefreshToken will handle recovery asynchronously.
+              captureException(userResult.error, { flow: 'auth.initialize.validate' });
+            } else if (userResult.data?.user) {
+              // Validation succeeded — re-read the (now-refreshed) session.
+              const { data: freshData } = await supabase.auth.getSession();
+              resolvedSession = freshData?.session ?? resolvedSession;
+            }
+          } catch (validateError) {
+            // Timeout or network error — keep the cached session and let
+            // autoRefreshToken recover in the background.
+            captureException(validateError, { flow: 'auth.initialize.validate.timeout' });
+          }
         }
       } catch (error) {
         captureException(error, { flow: 'auth.initialize.timeout' });
@@ -346,20 +445,9 @@ export function AuthProvider({ children }: PropsWithChildren) {
         return;
       }
 
-      setSession(data.session);
-      setUser(data.session?.user ?? null);
-
-      try {
-        await withTimeout(
-          loadProfile(data.session?.user ?? null),
-          AUTH_BOOT_TIMEOUT_MS,
-          'auth.loadProfile',
-        );
-      } catch (error) {
-        captureException(error, { flow: 'auth.loadProfile.timeout' });
-        setProfile(null);
-        setTelemetryUser(null);
-      }
+      setSession(resolvedSession);
+      setUser(resolvedSession?.user ?? null);
+      await syncProfile(resolvedSession?.user ?? null, 'auth.loadProfile', 'auth.loadProfile.timeout');
 
       if (mounted) {
         setLoading(false);
@@ -376,21 +464,40 @@ export function AuthProvider({ children }: PropsWithChildren) {
 
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange(async (_event, changedSession) => {
+    } = supabase.auth.onAuthStateChange(async (event, changedSession) => {
+      if (event === 'INITIAL_SESSION') {
+        return;
+      }
+
+      // SIGNED_OUT — clear everything immediately, no DB call needed.
+      if (event === 'SIGNED_OUT') {
+        setSession(null);
+        setUser(null);
+        setProfile(null);
+        setProfileError(null);
+        setNextMode(null);
+        setTelemetryUser(null);
+        setLoading(false);
+        return;
+      }
+
+      // TOKEN_REFRESHED — the JWT was rotated but the user hasn't changed.
+      // Update session/user state without hitting the profiles table.
+      if (event === 'TOKEN_REFRESHED') {
+        setSession(changedSession);
+        setUser(changedSession?.user ?? null);
+        return;
+      }
+
+      // SIGNED_IN, USER_UPDATED, PASSWORD_RECOVERY, MFA_CHALLENGE_VERIFIED
+      // — these require a profile re-sync.
       setSession(changedSession);
       setUser(changedSession?.user ?? null);
-
-      try {
-        await withTimeout(
-          loadProfile(changedSession?.user ?? null),
-          AUTH_BOOT_TIMEOUT_MS,
-          'auth.onAuthStateChange.loadProfile',
-        );
-      } catch (error) {
-        captureException(error, { flow: 'auth.onAuthStateChange.timeout' });
-        setProfile(null);
-        setTelemetryUser(null);
-      }
+      await syncProfile(
+        changedSession?.user ?? null,
+        'auth.onAuthStateChange.loadProfile',
+        'auth.onAuthStateChange.timeout',
+      );
 
       setLoading(false);
     });
@@ -399,7 +506,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
       mounted = false;
       subscription.unsubscribe();
     };
-  }, [loadProfile]);
+  }, [syncProfile]);
 
   const signInWithPassword = useCallback(async (email: string, password: string) => {
     if (!supabase) {
@@ -476,49 +583,126 @@ export function AuthProvider({ children }: PropsWithChildren) {
     }
 
     setProfile(resolved);
-    setTelemetryUser({
-      id: user.id,
-      email: user.email ?? null,
-      role: resolveRoleLabel(resolved),
-      status: resolved.status,
-      countryCode: resolved.country_code,
-      currencyCode: resolved.payout_currency_code,
-    });
+    setProfileError(null);
+    syncTelemetryProfile(user, resolved);
 
     return { error: null };
   }, [user]);
 
+  const updatePersonas = useCallback(async (input: {
+    canBroker: boolean;
+    canSupply: boolean;
+    defaultMode: AppMode;
+  }) => {
+    if (!input.canBroker && !input.canSupply) {
+      return { error: 'Choose at least one persona before continuing.' };
+    }
+
+    if (
+      (input.defaultMode === 'broker' && !input.canBroker)
+      || (input.defaultMode === 'supplier' && !input.canSupply)
+    ) {
+      return { error: 'Default mode must match an enabled persona.' };
+    }
+
+    if (!supabase || !user) {
+      return { error: configurationError ?? 'You must be signed in to update workspace access.' };
+    }
+
+    const { data, error } = await supabase.functions.invoke('set-user-personas', {
+      body: {
+        canBroker: input.canBroker,
+        canSupply: input.canSupply,
+        defaultMode: input.defaultMode,
+        requestKey: createRequestKey('personas'),
+      },
+    });
+
+    if (error) {
+      captureException(error, { flow: 'auth.updatePersonas' });
+      return { error: error.message };
+    }
+
+    const resolvedProfile = (data?.profile ?? null) as ProfileRecord | null;
+    if (!data?.ok || !resolvedProfile) {
+      return {
+        error: typeof data?.message === 'string' && data.message.length > 0
+          ? data.message
+          : PERSONA_UPDATE_ERROR_MESSAGE,
+      };
+    }
+
+    setProfile(resolvedProfile);
+    setProfileError(null);
+    syncTelemetryProfile(user, resolvedProfile);
+    setNextMode(resolvedProfile.default_mode);
+
+    return { error: null };
+  }, [configurationError, user]);
+
   const signOut = useCallback(async () => {
+    // Call supabase.auth.signOut() FIRST to remove the token from
+    // storage. Clear local state afterward, whether or not the call
+    // succeeds — this prevents the stale-token-in-storage problem
+    // where users are auto-signed-in on next launch despite signing out.
+    if (supabase) {
+      try {
+        const { error } = await supabase.auth.signOut();
+        if (error) {
+          captureException(error, { flow: 'auth.signOut' });
+        }
+      } catch (error) {
+        captureException(error, { flow: 'auth.signOut.unhandled' });
+      }
+    }
+
     setSession(null);
     setUser(null);
     setProfile(null);
+    setProfileError(null);
     setLoading(false);
     setNextMode(null);
     setTelemetryUser(null);
-
-    if (supabase) {
-      const { error } = await supabase.auth.signOut();
-      if (error) {
-        captureException(error, { flow: 'auth.signOut' });
-      }
-    }
   }, []);
 
   const refreshProfile = useCallback(async () => {
-    await loadProfile(user);
-  }, [loadProfile, user]);
+    // Read the current user fresh from Supabase instead of relying on
+    // the `user` state variable, which may be stale when this callback
+    // is invoked (e.g. from the session-error retry button).
+    let currentUser: User | null = session?.user ?? user ?? null;
+    if (supabase) {
+      try {
+        const { data, error } = await supabase.auth.getUser();
+        if (error) {
+          captureException(error, { flow: 'auth.refreshProfile.getUser' });
+        }
+
+        currentUser = data?.user ?? currentUser;
+        if (currentUser) {
+          setUser(currentUser);
+        }
+      } catch {
+        // Fall through — keep the last known user if the auth server is briefly unavailable.
+      }
+    }
+    await syncProfile(currentUser, 'auth.refreshProfile', 'auth.refreshProfile.timeout');
+  }, [session, syncProfile, user]);
 
   const switchMode = useCallback(
     async (mode: AppMode) => {
-      if (profile?.status !== 'active') {
-        return { error: 'Your account is pending approval.' };
+      if (!profile) {
+        return { error: 'Your account access is still loading.' };
       }
 
-      if (mode === 'supplier' && profile && !profile.can_supply) {
+      if (profile.status === 'suspended') {
+        return { error: 'This account is suspended.' };
+      }
+
+      if (mode === 'supplier' && !profile.can_supply) {
         return { error: 'Supplier role is not enabled for this account.' };
       }
 
-      if (mode === 'broker' && profile && !profile.can_broker) {
+      if (mode === 'broker' && !profile.can_broker) {
         return { error: 'Broker role is not enabled for this account.' };
       }
 
@@ -544,81 +728,50 @@ export function AuthProvider({ children }: PropsWithChildren) {
 
       if (data) {
         setProfile(data);
+        syncTelemetryProfile(user ?? null, data);
       }
 
       return { error: null };
     },
-    [configurationError, profile, user?.id],
+    [configurationError, profile, user],
   );
 
   const isAuthenticated = Boolean(session);
-  const isApproved = profile?.status === 'active';
-  const isAdmin = Boolean(profile?.is_admin && isApproved);
+  const isActive = profile?.status === 'active';
+  const needsPersonaSetup = Boolean(isActive && profile && !profile.can_supply && !profile.can_broker);
+  const isAdmin = Boolean(profile?.is_admin && isActive);
   const payoutReadiness = resolvePayoutReadiness(profile);
 
-  const preferredRoute = useMemo(() => {
-    if (!configured) {
-      return '/(auth)/configuration-required';
-    }
-
-    if (!isAuthenticated) {
-      return '/(auth)/sign-in';
-    }
-
-    if (profile?.status === 'pending_review') {
-      return '/(auth)/pending-review';
-    }
-
-    if (profile?.status === 'suspended') {
-      return '/(auth)/pending-review';
-    }
-
-    if (nextMode === 'supplier' && profile?.can_supply) {
-      return modeRoute('supplier');
-    }
-
-    if (nextMode === 'broker' && profile?.can_broker) {
-      return modeRoute('broker');
-    }
-
-    if (profile?.default_mode === 'supplier' && profile.can_supply) {
-      return modeRoute('supplier');
-    }
-
-    if (profile?.default_mode === 'broker' && profile.can_broker) {
-      return modeRoute('broker');
-    }
-
-    if (profile?.can_broker) {
-      return modeRoute('broker');
-    }
-
-    if (profile?.can_supply) {
-      return modeRoute('supplier');
-    }
-
-    if (isAdmin) {
-      return '/(app)/admin/users';
-    }
-
-    return '/(auth)/pending-review';
-  }, [configured, isAdmin, isAuthenticated, nextMode, profile]);
+  const preferredRoute = useMemo(
+    () => resolvePreferredRoute({
+      configured,
+      isAuthenticated,
+      isAdmin,
+      profileError,
+      profile,
+      nextMode,
+    }),
+    [configured, isAdmin, isAuthenticated, nextMode, profile, profileError],
+  );
 
   const value = useMemo<AuthContextValue>(
     () => ({
       configured,
       configurationError,
       isAuthenticated,
-      isApproved,
+      isActive,
       isAdmin,
+      needsPersonaSetup,
       payoutReadiness,
       loading,
       session,
       user,
       profile,
+      profileError,
       nextMode,
       setNextMode,
       switchMode,
+      updatePersonas,
       signInWithPassword,
       signInWithOtp,
       verifyOtp,
@@ -631,13 +784,15 @@ export function AuthProvider({ children }: PropsWithChildren) {
       configured,
       configurationError,
       isAdmin,
-      isApproved,
+      isActive,
       isAuthenticated,
       loading,
+      needsPersonaSetup,
       nextMode,
       payoutReadiness,
       preferredRoute,
       profile,
+      profileError,
       refreshProfile,
       session,
       activateDevelopmentAccess,
@@ -645,6 +800,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
       signInWithPassword,
       signOut,
       switchMode,
+      updatePersonas,
       user,
       verifyOtp,
     ],

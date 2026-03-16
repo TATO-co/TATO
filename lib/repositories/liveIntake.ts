@@ -1,5 +1,6 @@
 import { captureException } from '@/lib/analytics';
 import { runtimeConfig } from '@/lib/config';
+import { classifyLiveWorkflowError } from '@/lib/liveIntake/errors';
 import {
   buildLiveDraftPersistencePayload,
   createEmptyLiveDraftState,
@@ -7,7 +8,10 @@ import {
 import type {
   LiveDraftPersistencePayload,
   LiveDraftState,
+  LiveIntakeAvailability,
+  LiveIntakeFallbackRoute,
 } from '@/lib/liveIntake/types';
+import { LIVE_INTAKE_FALLBACK_ROUTE } from '@/lib/liveIntake/types';
 import { createRequestKey, type CurrencyCode } from '@/lib/models';
 import { supabase } from '@/lib/supabase';
 
@@ -55,6 +59,7 @@ export type LiveIntakeBootstrapResult =
     }
   | {
       ok: false;
+      code?: string;
       message: string;
     };
 
@@ -77,6 +82,7 @@ export type StartLiveIntakeDraftResult =
     }
   | {
       ok: false;
+      code?: string;
       message: string;
     };
 
@@ -89,6 +95,7 @@ export type CompleteLiveIntakeDraftResult =
     }
   | {
       ok: false;
+      code?: string;
       message: string;
     };
 
@@ -106,6 +113,14 @@ function normalizeBaseUrl(url: string) {
 
 async function getAccessToken() {
   if (!supabase) {
+    return null;
+  }
+
+  // Validate the token server-side first (triggers refresh if expired),
+  // then grab the access_token from the (now-fresh) session.
+  const { error: userError } = await supabase.auth.getUser();
+  if (userError) {
+    captureException(userError, { flow: 'liveIntake.getAccessToken.validate' });
     return null;
   }
 
@@ -150,8 +165,96 @@ export function isLiveIntakeConfigured() {
   return Boolean(runtimeConfig.liveAgentServiceUrl);
 }
 
-function toMutationMessage(data: MutationErrorResponse | null | undefined, fallback: string) {
-  return data?.message ?? fallback;
+function createLiveIntakeAvailability(args: {
+  available: boolean;
+  code?: string;
+  message?: string;
+  fallbackRoute?: LiveIntakeFallbackRoute;
+}): LiveIntakeAvailability {
+  return {
+    ok: true,
+    available: args.available,
+    code: args.code,
+    message: args.message,
+    fallbackRoute: args.fallbackRoute ?? LIVE_INTAKE_FALLBACK_ROUTE,
+  };
+}
+
+export async function getLiveIntakeAvailability(args: {
+  supplierId: string | null;
+}): Promise<LiveIntakeAvailability> {
+  if (!args.supplierId) {
+    return createLiveIntakeAvailability({
+      available: false,
+      code: 'supplier_required',
+      message: 'Sign in with an approved supplier account before starting live intake.',
+    });
+  }
+
+  if (!isLiveIntakeConfigured()) {
+    return createLiveIntakeAvailability({
+      available: false,
+      code: 'live_agent_unconfigured',
+      message: 'Live intake is temporarily unavailable. Use photo capture instead.',
+    });
+  }
+
+  try {
+    const client = requireSupabase();
+    const { data, error } = await client.functions.invoke('check-live-intake-availability');
+
+    if (error) {
+      captureException(error, { flow: 'liveIntake.checkAvailability' });
+      const classified = await classifyLiveWorkflowError({
+        context: 'availability',
+        error,
+        fallbackMessage: 'Live intake is temporarily unavailable. Use photo capture instead.',
+      });
+      return createLiveIntakeAvailability({
+        available: false,
+        code: classified.code,
+        message: classified.message,
+        fallbackRoute: classified.fallbackRoute,
+      });
+    }
+
+    if (!data?.ok) {
+      const classified = await classifyLiveWorkflowError({
+        context: 'availability',
+        data: data as MutationErrorResponse | null,
+        fallbackMessage: 'Live intake is temporarily unavailable. Use photo capture instead.',
+      });
+      return createLiveIntakeAvailability({
+        available: false,
+        code: classified.code,
+        message: classified.message,
+        fallbackRoute: classified.fallbackRoute,
+      });
+    }
+
+    return createLiveIntakeAvailability({
+      available: Boolean(data.available),
+      code: typeof data.code === 'string' ? data.code : undefined,
+      message: typeof data.message === 'string' ? data.message : undefined,
+      fallbackRoute:
+        typeof data.fallbackRoute === 'string'
+          ? data.fallbackRoute as LiveIntakeFallbackRoute
+          : LIVE_INTAKE_FALLBACK_ROUTE,
+    });
+  } catch (error) {
+    captureException(error, { flow: 'liveIntake.checkAvailability.unhandled' });
+    const classified = await classifyLiveWorkflowError({
+      context: 'availability',
+      error,
+      fallbackMessage: 'Live intake is temporarily unavailable. Use photo capture instead.',
+    });
+    return createLiveIntakeAvailability({
+      available: false,
+      code: classified.code,
+      message: classified.message,
+      fallbackRoute: classified.fallbackRoute,
+    });
+  }
 }
 
 export async function requestLiveIntakeBootstrap(args: {
@@ -250,7 +353,12 @@ export async function startLiveIntakeDraft(args: {
 
     if (error) {
       captureException(error, { flow: 'liveIntake.startDraft' });
-      return { ok: false, message: error.message };
+      const classified = await classifyLiveWorkflowError({
+        context: 'posting',
+        error,
+        fallbackMessage: 'Unable to post this live item right now. Use photo capture instead.',
+      });
+      return { ok: false, code: classified.code, message: classified.message };
     }
 
     if (
@@ -261,9 +369,15 @@ export async function startLiveIntakeDraft(args: {
       || !data?.storageKey
       || !data?.storagePath
     ) {
+      const classified = await classifyLiveWorkflowError({
+        context: 'posting',
+        data: data as MutationErrorResponse | null,
+        fallbackMessage: 'Unable to start the live intake draft.',
+      });
       return {
         ok: false,
-        message: toMutationMessage(data as MutationErrorResponse, 'Unable to start the live intake draft.'),
+        code: classified.code,
+        message: classified.message,
       };
     }
 
@@ -278,9 +392,15 @@ export async function startLiveIntakeDraft(args: {
     };
   } catch (error) {
     captureException(error, { flow: 'liveIntake.startDraft.unhandled' });
+    const classified = await classifyLiveWorkflowError({
+      context: 'posting',
+      error,
+      fallbackMessage: 'Unable to start the live intake draft.',
+    });
     return {
       ok: false,
-      message: error instanceof Error ? error.message : 'Unable to start the live intake draft.',
+      code: classified.code,
+      message: classified.message,
     };
   }
 }
@@ -328,13 +448,24 @@ export async function completeLiveIntakeDraft(args: {
 
     if (error) {
       captureException(error, { flow: 'liveIntake.completeDraft' });
-      return { ok: false, message: error.message };
+      const classified = await classifyLiveWorkflowError({
+        context: 'posting',
+        error,
+        fallbackMessage: 'Unable to post this live item right now. Use photo capture instead.',
+      });
+      return { ok: false, code: classified.code, message: classified.message };
     }
 
     if (!data?.ok || !data?.itemId || !data?.storagePath) {
+      const classified = await classifyLiveWorkflowError({
+        context: 'posting',
+        data: data as MutationErrorResponse | null,
+        fallbackMessage: 'Unable to complete the live intake draft.',
+      });
       return {
         ok: false,
-        message: toMutationMessage(data as MutationErrorResponse, 'Unable to complete the live intake draft.'),
+        code: classified.code,
+        message: classified.message,
       };
     }
 
@@ -346,9 +477,15 @@ export async function completeLiveIntakeDraft(args: {
     };
   } catch (error) {
     captureException(error, { flow: 'liveIntake.completeDraft.unhandled' });
+    const classified = await classifyLiveWorkflowError({
+      context: 'posting',
+      error,
+      fallbackMessage: 'Unable to complete the live intake draft.',
+    });
     return {
       ok: false,
-      message: error instanceof Error ? error.message : 'Unable to complete the live intake draft.',
+      code: classified.code,
+      message: classified.message,
     };
   }
 }

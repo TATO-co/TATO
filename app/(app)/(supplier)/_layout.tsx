@@ -1,8 +1,9 @@
-import { TABLET_BREAKPOINT } from '@/lib/constants';
 import { PhoneTabButton, getFloatingDockStyle } from '@/components/layout/PhoneTabBar';
-import { Tabs } from 'expo-router';
-import { SymbolView } from 'expo-symbols';
-import { useWindowDimensions } from 'react-native';
+import { useAuth } from '@/components/providers/AuthProvider';
+import { TABLET_BREAKPOINT } from '@/lib/constants';
+import { resolveModeAccessRoute } from '@/lib/auth-helpers';
+import { Tabs, Redirect } from 'expo-router';
+import { ActivityIndicator, View, useWindowDimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const activeColor = '#1e6dff';
@@ -11,7 +12,25 @@ const inactiveColor = '#7a8fb3';
 export default function SupplierTabLayout() {
   const { width } = useWindowDimensions();
   const insets = useSafeAreaInsets();
+  const { loading, profile, profileError } = useAuth();
   const showBottomTabs = width < TABLET_BREAKPOINT;
+  const redirectTarget = resolveModeAccessRoute('supplier', profile);
+
+  if (loading || (!profile && !profileError)) {
+    return (
+      <View className="flex-1 items-center justify-center bg-tato-base">
+        <ActivityIndicator color="#1e6dff" />
+      </View>
+    );
+  }
+
+  if (profileError) {
+    return <Redirect href="/(auth)/session-error" />;
+  }
+
+  if (redirectTarget) {
+    return <Redirect href={redirectTarget as never} />;
+  }
 
   return (
     <Tabs

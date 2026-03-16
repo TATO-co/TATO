@@ -217,3 +217,39 @@ export async function captureFrameAsBase64(cameraRef: {
     return null;
   }
 }
+
+/**
+ * Capture a high-quality still photo for the saved listing record.
+ * This is separate from the low-bandwidth frame capture used during
+ * the live streaming loop.
+ */
+export async function captureStillPhotoAsBase64(cameraRef: {
+  takePictureAsync?: (options?: {
+    quality?: number;
+    base64?: boolean;
+    skipProcessing?: boolean;
+  }) => Promise<{ base64?: string; uri: string } | undefined>;
+}) {
+  if (!cameraRef.takePictureAsync) {
+    return null;
+  }
+
+  try {
+    const photo = await cameraRef.takePictureAsync({
+      quality: 0.92,
+      base64: true,
+      skipProcessing: false,
+    });
+
+    if (!photo?.base64) {
+      return null;
+    }
+
+    return {
+      mimeType: 'image/jpeg',
+      data: photo.base64,
+    };
+  } catch {
+    return null;
+  }
+}

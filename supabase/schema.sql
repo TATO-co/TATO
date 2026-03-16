@@ -6,7 +6,7 @@ create extension if not exists pgcrypto;
 -- Enums -----------------------------------------------------------------------
 
 create type public.user_default_mode as enum ('supplier', 'broker');
-create type public.user_status as enum ('active', 'suspended', 'invited');
+create type public.user_status as enum ('active', 'suspended');
 
 create type public.hub_status as enum ('active', 'paused', 'closed');
 
@@ -83,10 +83,10 @@ create table public.profiles (
   display_name text not null,
   phone text,
   avatar_url text,
-  default_mode public.user_default_mode not null default 'broker',
+  default_mode public.user_default_mode,
   status public.user_status not null default 'active',
-  can_supply boolean not null default true,
-  can_broker boolean not null default true,
+  can_supply boolean not null default false,
+  can_broker boolean not null default false,
   stripe_connected_account_id text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
@@ -423,14 +423,51 @@ begin
     from pg_enum e
     join pg_type t on t.oid = e.enumtypid
     where t.typname = 'user_status'
-      and e.enumlabel = 'invited'
+      and e.enumlabel in ('pending_review', 'invited')
   ) then
-    alter type public.user_status rename value 'invited' to 'pending_review';
+    update public.profiles
+    set status = 'active'
+    where status::text in ('pending_review', 'invited');
+
+    alter type public.user_status rename to user_status_legacy;
+    create type public.user_status as enum ('active', 'suspended');
+
+    alter table public.profiles
+      alter column status drop default;
+
+    alter table public.profiles
+      alter column status type public.user_status
+      using (
+        case
+          when status::text = 'suspended' then 'suspended'::public.user_status
+          else 'active'::public.user_status
+        end
+      );
+
+    drop type public.user_status_legacy;
   end if;
 end $$;
 
 alter table public.profiles
-  alter column status set default 'pending_review';
+  alter column status set default 'active',
+  alter column default_mode drop not null,
+  alter column default_mode drop default,
+  alter column can_supply set default false,
+  alter column can_broker set default false;
+
+update public.profiles
+set default_mode = case
+  when can_broker and not can_supply then 'broker'::public.user_default_mode
+  when can_supply and not can_broker then 'supplier'::public.user_default_mode
+  when can_broker and can_supply then coalesce(default_mode, 'broker'::public.user_default_mode)
+  else null
+end
+where default_mode is distinct from case
+  when can_broker and not can_supply then 'broker'::public.user_default_mode
+  when can_supply and not can_broker then 'supplier'::public.user_default_mode
+  when can_broker and can_supply then coalesce(default_mode, 'broker'::public.user_default_mode)
+  else null
+end;
 
 alter table public.profiles
   add column if not exists is_admin boolean not null default false,
@@ -507,6 +544,8 @@ create or replace function public.current_profile_is_active()
 returns boolean
 language sql
 stable
+security definer
+set search_path = public
 as $$
   select exists(
     select 1
@@ -520,6 +559,8 @@ create or replace function public.current_profile_is_admin()
 returns boolean
 language sql
 stable
+security definer
+set search_path = public
 as $$
   select exists(
     select 1

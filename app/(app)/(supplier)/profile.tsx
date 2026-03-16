@@ -5,6 +5,7 @@ import Animated, { FadeInUp } from 'react-native-reanimated';
 
 import { ModeShell } from '@/components/layout/ModeShell';
 import { useAuth } from '@/components/providers/AuthProvider';
+import { PersonaAccessCard } from '@/components/profile/PersonaAccessCard';
 import { ResponsiveKpiGrid } from '@/components/layout/ResponsivePrimitives';
 import { useViewportInfo } from '@/lib/constants';
 import { supplierDesktopNav } from '@/lib/navigation';
@@ -55,7 +56,7 @@ export default function SupplierProfileScreen() {
       <ScrollView className="mt-2 flex-1" contentContainerClassName="gap-5 pb-10">
         <ResponsiveKpiGrid tier={tier} columns={{ phone: 1, tablet: 2, desktop: 3, wideDesktop: 3 }}>
           <Animated.View className="rounded-2xl border border-tato-line bg-tato-panel p-4" entering={FadeInUp.duration(TIMING.quick)}>
-            <Text className="text-sm text-tato-text">Account status: {(profile?.status ?? 'pending_review').replace(/_/g, ' ')}</Text>
+            <Text className="text-sm text-tato-text">Account status: {(profile?.status ?? 'active').replace(/_/g, ' ')}</Text>
           </Animated.View>
           <Animated.View className="rounded-2xl border border-tato-line bg-tato-panel p-4" entering={FadeInUp.duration(TIMING.base)}>
             <Text className="text-sm text-tato-text">
@@ -82,13 +83,15 @@ export default function SupplierProfileScreen() {
           </Pressable>
         ) : (
           <View className="rounded-2xl border border-tato-line bg-tato-panelSoft px-4 py-3">
-            <Text className="text-sm text-tato-muted">Broker role is not enabled for this account yet.</Text>
+            <Text className="text-sm text-tato-muted">Broker access is currently off. Enable it below whenever you want both workflows.</Text>
           </View>
         )}
 
         {switchError ? (
           <Text className="text-sm text-[#ff8f8f]">{switchError}</Text>
         ) : null}
+
+        <PersonaAccessCard />
 
         <Pressable
           className="rounded-full border border-tato-line bg-tato-panelSoft py-3.5 hover:bg-[#1a3158] focus:bg-[#1a3158]"

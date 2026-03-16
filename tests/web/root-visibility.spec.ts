@@ -25,14 +25,24 @@ const routeExpectations: RouteExpectation[] = [
     visibleTexts: ['TATO ACCESS', 'Configuration Error'],
   },
   {
-    name: 'pending-review',
-    path: '/pending-review',
-    visibleTexts: ['Access Review', 'TATO ACCESS', 'Configuration Error'],
+    name: 'persona-setup',
+    path: '/persona-setup',
+    visibleTexts: ['Workspace Setup', 'Choose how you want to use TATO.', 'TATO ACCESS'],
+  },
+  {
+    name: 'account-suspended',
+    path: '/account-suspended',
+    visibleTexts: ['Account Suspended', 'This account is currently suspended.', 'TATO ACCESS'],
   },
   {
     name: 'configuration-required',
     path: '/configuration-required',
     visibleTexts: ['Configuration Error', 'TATO ACCESS'],
+  },
+  {
+    name: 'session-error',
+    path: '/session-error',
+    visibleTexts: ['Session Recovery', 'We couldn\'t restore your workspace.'],
   },
   {
     name: 'root',
