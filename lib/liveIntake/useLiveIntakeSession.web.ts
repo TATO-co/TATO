@@ -172,6 +172,28 @@ export function useLiveIntakeSession(args: UseLiveIntakeSessionArgs) {
     setPreviewVersion((value) => value + 1);
   };
 
+  const syncPreviewVideoElement = () => {
+    const video = videoRef.current;
+    if (!video) {
+      return;
+    }
+
+    const stream = mediaStreamRef.current;
+    if (!stream) {
+      if (video.srcObject) {
+        video.srcObject = null;
+      }
+      return;
+    }
+
+    if (video.srcObject !== stream) {
+      video.srcObject = stream;
+    }
+    video.muted = true;
+    video.playsInline = true;
+    void video.play().catch(() => undefined);
+  };
+
   const clearFrameLoop = () => {
     if (frameTimeoutRef.current != null) {
       window.clearTimeout(frameTimeoutRef.current);
@@ -660,18 +682,8 @@ export function useLiveIntakeSession(args: UseLiveIntakeSessionArgs) {
   };
 
   useEffect(() => {
-    const video = videoRef.current;
-    const stream = mediaStreamRef.current;
-
-    if (!video || !stream) {
-      return;
-    }
-
-    video.srcObject = stream;
-    video.muted = true;
-    video.playsInline = true;
-    void video.play().catch(() => undefined);
-  }, [previewVersion]);
+    syncPreviewVideoElement();
+  }, [previewVersion, connectionState]);
 
   useEffect(() => {
     return () => {
