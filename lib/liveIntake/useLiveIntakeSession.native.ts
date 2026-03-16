@@ -392,7 +392,6 @@ export function useLiveIntakeSession(args: UseLiveIntakeSessionArgs) {
           inputAudioTranscription: {},
           outputAudioTranscription: {},
           sessionResumption: {
-            transparent: true,
             handle: resumptionHandle ?? undefined,
           },
           contextWindowCompression: {

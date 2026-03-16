@@ -85,35 +85,50 @@ function MobileIdleView({
   error,
   onStart,
   onFallback,
+  onBack,
 }: {
   error: string | null;
   onStart: () => void;
   onFallback: () => void;
+  onBack: () => void;
 }) {
   return (
-    <View className="flex-1 items-center justify-center bg-tato-base px-6">
-      <Text className="text-center text-3xl font-bold text-tato-text">Live Intake</Text>
-      <Text className="mt-2 text-center text-sm leading-6 text-tato-muted">
-        Start a Gemini Live session to catalog items with your camera and voice.
-      </Text>
+    <View className="flex-1 bg-tato-base px-6">
+      {/* Back button */}
+      <View className="pt-4">
+        <Pressable
+          accessibilityLabel="Go back"
+          accessibilityRole="button"
+          className="h-11 w-11 items-center justify-center rounded-full bg-tato-panelSoft"
+          onPress={onBack}>
+          <SymbolView name={{ ios: 'chevron.left', android: 'arrow_back', web: 'arrow_back' }} size={18} tintColor="#edf4ff" />
+        </Pressable>
+      </View>
 
-      {error ? (
-        <View className="mt-4 w-full rounded-[14px] border border-tato-error/30 bg-tato-error/10 p-3">
-          <Text className="text-sm text-tato-error">{error}</Text>
-        </View>
-      ) : null}
+      <View className="flex-1 items-center justify-center">
+        <Text className="text-center text-3xl font-bold text-tato-text">Live Intake</Text>
+        <Text className="mt-2 text-center text-sm leading-6 text-tato-muted">
+          Start a Gemini Live session to catalog items with your camera and voice.
+        </Text>
 
-      <Pressable
-        className="mt-8 rounded-full border border-tato-accent/50 bg-tato-accent/10 px-8 py-4"
-        onPress={onStart}>
-        <Text className="text-base font-semibold text-tato-accent">✦ Start Live Session</Text>
-      </Pressable>
+        {error ? (
+          <View className="mt-4 w-full rounded-[14px] border border-tato-error/30 bg-tato-error/10 p-3">
+            <Text className="text-sm text-tato-error">{error}</Text>
+          </View>
+        ) : null}
 
-      <Pressable
-        className="mt-4 rounded-full border border-tato-line bg-tato-panel px-6 py-3"
-        onPress={onFallback}>
-        <Text className="text-sm text-tato-muted">Use Photo Capture Instead</Text>
-      </Pressable>
+        <Pressable
+          className="mt-8 rounded-full border border-tato-accent/50 bg-tato-accent/10 px-8 py-4"
+          onPress={onStart}>
+          <Text className="text-base font-semibold text-tato-accent">✦ Start Live Session</Text>
+        </Pressable>
+
+        <Pressable
+          className="mt-4 rounded-full border border-tato-line bg-tato-panel px-6 py-3"
+          onPress={onFallback}>
+          <Text className="text-sm text-tato-muted">Use Photo Capture Instead</Text>
+        </Pressable>
+      </View>
     </View>
   );
 }
@@ -796,6 +811,7 @@ export default function LiveIntakeScreen() {
         error={!browserSupported ? 'This browser does not support live intake. Use Chrome or Edge.' : session.error}
         onStart={session.requestPermissionsAndStart}
         onFallback={() => router.push('/(app)/ingestion?entry=camera' as never)}
+        onBack={() => router.back()}
       />
     );
   }

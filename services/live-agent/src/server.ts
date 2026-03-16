@@ -154,9 +154,7 @@ app.post<{ Body: BootstrapBody }>('/sessions/live-intake', async (request, reply
             enableAffectiveDialog: true,
             inputAudioTranscription: {},
             outputAudioTranscription: {},
-            sessionResumption: {
-              transparent: true,
-            },
+            sessionResumption: {},
             contextWindowCompression: {
               triggerTokens: '24000',
               slidingWindow: {
