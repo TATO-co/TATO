@@ -43,7 +43,7 @@ serve(async (req) => {
     const { data: claim, error: claimError } = await admin
       .from('claims')
       .select(
-        'id,item_id,hub_id,broker_id,claim_fee_cents,items!inner(supplier_id)',
+        'id,item_id,hub_id,broker_id,claim_fee_cents,claim_deposit_cents,currency_code,items!inner(supplier_id)',
       )
       .eq('id', payload.claimId)
       .maybeSingle<{
@@ -52,6 +52,8 @@ serve(async (req) => {
         hub_id: string;
         broker_id: string;
         claim_fee_cents: number;
+        claim_deposit_cents: number | null;
+        currency_code: string | null;
         items: { supplier_id: string };
       }>();
 
@@ -67,7 +69,7 @@ serve(async (req) => {
       .from('transactions')
       .select('id,stripe_payment_intent_id,status')
       .eq('claim_id', claim.id)
-      .eq('transaction_type', 'claim_fee')
+      .in('transaction_type', ['claim_deposit', 'claim_fee'])
       .order('created_at', { ascending: false })
       .limit(1)
       .maybeSingle<{ id: string; stripe_payment_intent_id: string | null; status: string }>();
@@ -81,22 +83,23 @@ serve(async (req) => {
       });
     }
 
+    const claimDepositCents = claim.claim_deposit_cents ?? claim.claim_fee_cents;
     const stripe = new Stripe(stripeSecretKey, {
       apiVersion: '2024-04-10',
     });
 
     const intent = await stripe.paymentIntents.create({
-      amount: claim.claim_fee_cents,
-      currency: 'usd',
+      amount: claimDepositCents,
+      currency: (claim.currency_code ?? 'usd').toLowerCase(),
       automatic_payment_methods: { enabled: true },
       metadata: {
-        kind: 'claim_fee',
+        kind: 'claim_deposit',
         claim_id: claim.id,
         item_id: claim.item_id,
         broker_id: claim.broker_id,
         supplier_id: claim.items.supplier_id,
       },
-      description: `TATO claim fee for claim ${claim.id}`,
+      description: `TATO claim deposit for claim ${claim.id}`,
     });
 
     const { data: txRow, error: txError } = await admin
@@ -107,16 +110,19 @@ serve(async (req) => {
         hub_id: claim.hub_id,
         supplier_id: claim.items.supplier_id,
         broker_id: claim.broker_id,
-        transaction_type: 'claim_fee',
+        transaction_type: 'claim_deposit',
         status: 'pending',
-        currency_code: 'USD',
-        gross_amount_cents: claim.claim_fee_cents,
+        currency_code: (claim.currency_code ?? 'USD').toUpperCase(),
+        gross_amount_cents: claimDepositCents,
         supplier_amount_cents: 0,
         broker_amount_cents: 0,
-        platform_amount_cents: claim.claim_fee_cents,
+        platform_amount_cents: 0,
         stripe_payment_intent_id: intent.id,
         stripe_transfer_group: intent.transfer_group ?? null,
-        metadata: { source: 'create-claim-fee-intent' },
+        metadata: {
+          source: 'create-claim-fee-intent',
+          deposit_policy: 'refundable_on_completion',
+        },
       })
       .select('id')
       .single<{ id: string }>();

@@ -1,6 +1,6 @@
 import { useRouter } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
-import { FlatList, Image, ScrollView, Text, View } from 'react-native';
+import { ActivityIndicator, FlatList, Image, ScrollView, Text, View } from 'react-native';
 import Animated, { FadeInUp } from 'react-native-reanimated';
 
 import { ResponsiveKpiGrid, ResponsiveSplitPane } from '@/components/layout/ResponsivePrimitives';
@@ -15,7 +15,7 @@ import { useViewportInfo } from '@/lib/constants';
 import { useReducedMotionPreference } from '@/lib/hooks/useReducedMotionPreference';
 import { formatMoney, type SupplierItem as SupplierItemRow, type SupplierItemStatus } from '@/lib/models';
 import { useSupplierDashboard } from '@/lib/hooks/useSupplierDashboard';
-import { TIMING } from '@/lib/ui';
+import { confirmDestructiveAction, TIMING } from '@/lib/ui';
 
 type SupplierQueuePanelProps = {
   isDesktop?: boolean;
@@ -52,7 +52,8 @@ export function SupplierQueuePanel({ isDesktop }: SupplierQueuePanelProps) {
   const tier = resolvedDesktop ? viewport.tier : useTabletLayout ? 'tablet' : 'phone';
   const router = useRouter();
   const [activeFilter, setActiveFilter] = useState<StatusFilter>('all');
-  const { items, metrics, loading, error, refresh } = useSupplierDashboard();
+  const [actionFeedback, setActionFeedback] = useState<{ tone: 'success' | 'error'; message: string } | null>(null);
+  const { items, metrics, loading, deletingItemId, error, refresh, deleteItem } = useSupplierDashboard();
   const reducedMotion = useReducedMotionPreference();
 
   const filteredItems = useMemo(
@@ -79,63 +80,123 @@ export function SupplierQueuePanel({ isDesktop }: SupplierQueuePanelProps) {
     [items],
   );
 
+  const handleDeleteItem = useCallback(
+    async (item: SupplierItemRow) => {
+      const confirmed = await confirmDestructiveAction({
+        title: 'Delete item?',
+        message: `${item.title} will be removed from your supplier dashboard. This cannot be undone.`,
+        confirmLabel: 'Delete Item',
+      });
+
+      if (!confirmed) {
+        return;
+      }
+
+      setActionFeedback(null);
+      const result = await deleteItem(item.id);
+
+      if (!result.ok) {
+        setActionFeedback({ tone: 'error', message: result.message });
+        return;
+      }
+
+      setActionFeedback({ tone: 'success', message: 'Item deleted from supplier inventory.' });
+    },
+    [deleteItem],
+  );
+
+  const renderDeleteAction = useCallback(
+    (item: SupplierItemRow) => {
+      if (!item.canDelete) {
+        return (
+          <View className="rounded-full border border-[#17355f] bg-[#091a31] px-3 py-1.5">
+            <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-dim">Locked</Text>
+          </View>
+        );
+      }
+
+      const deleting = deletingItemId === item.id;
+      return (
+        <PressableScale
+          activeScale={0.98}
+          className="rounded-full border border-tato-error/40 bg-tato-error/10 px-4 py-2"
+          disabled={deleting}
+          onPress={() => handleDeleteItem(item)}>
+          {deleting ? (
+            <ActivityIndicator color="#ff8f8f" />
+          ) : (
+            <Text className="font-mono text-[11px] font-semibold uppercase tracking-[1px] text-tato-error">
+              Delete
+            </Text>
+          )}
+        </PressableScale>
+      );
+    },
+    [deletingItemId, handleDeleteItem],
+  );
+
   const renderMobileItem = useCallback(
     ({ item }: { item: SupplierItemRow }) => (
       <Animated.View
         className="px-1"
         entering={reducedMotion ? undefined : FadeInUp.duration(TIMING.quick)}>
-        <PressableScale
-          activeScale={0.985}
-          className="overflow-hidden rounded-[28px] border border-[#16355f] bg-[#07172d]"
-          onPress={() => router.push(`/(app)/item/${item.id}` as never)}>
-          <View className="absolute -right-10 -top-10 h-28 w-28 rounded-full bg-tato-accent/10" />
-          <View className="p-4">
-            <View className="flex-row gap-3">
-              <Image className="h-[84px] w-[84px] rounded-[22px]" source={{ uri: item.thumbUrl }} />
-              <View className="min-w-0 flex-1">
-                <View className="flex-row items-start justify-between gap-3">
-                  <View className="min-w-0 flex-1">
-                    <Text className="text-[18px] font-sans-bold leading-6 text-tato-text" numberOfLines={2}>
-                      {item.title}
-                    </Text>
-                    <Text className="mt-1 text-sm leading-6 text-tato-muted" numberOfLines={2}>
-                      {item.subtitle}
+        <View className="overflow-hidden rounded-[28px] border border-[#16355f] bg-[#07172d]">
+          <PressableScale
+            activeScale={0.985}
+            onPress={() => router.push(`/(app)/item/${item.id}` as never)}>
+            <View className="absolute -right-10 -top-10 h-28 w-28 rounded-full bg-tato-accent/10" />
+            <View className="p-4">
+              <View className="flex-row gap-3">
+                <Image className="h-[84px] w-[84px] rounded-[22px]" source={{ uri: item.thumbUrl }} />
+                <View className="min-w-0 flex-1">
+                  <View className="flex-row items-start justify-between gap-3">
+                    <View className="min-w-0 flex-1">
+                      <Text className="text-[18px] font-sans-bold leading-6 text-tato-text" numberOfLines={2}>
+                        {item.title}
+                      </Text>
+                      <Text className="mt-1 text-sm leading-6 text-tato-muted" numberOfLines={2}>
+                        {item.subtitle}
+                      </Text>
+                    </View>
+                    <Text className="font-mono text-[15px] font-semibold text-tato-accent">
+                      {formatMoney(item.askPriceCents, item.currencyCode, 2)}
                     </Text>
                   </View>
-                  <Text className="font-mono text-[15px] font-semibold text-tato-accent">
-                    {formatMoney(item.askPriceCents, item.currencyCode, 2)}
-                  </Text>
-                </View>
 
-                <View className="mt-3 flex-row flex-wrap gap-2">
-                  <StatusPill status={item.status} />
-                  <View className="rounded-full border border-[#1c3d6e] bg-[#0d223f] px-2.5 py-1">
-                    <Text className="font-mono text-[11px] uppercase tracking-[1px] text-[#9cb7e1]">
-                      {item.brokerActivity} activity
-                    </Text>
-                  </View>
-                  <View className="rounded-full border border-[#17355f] bg-[#091a31] px-2.5 py-1">
-                    <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-muted">
-                      Qty {item.quantity}
-                    </Text>
+                  <View className="mt-3 flex-row flex-wrap gap-2">
+                    <StatusPill status={item.status} />
+                    <View className="rounded-full border border-[#1c3d6e] bg-[#0d223f] px-2.5 py-1">
+                      <Text className="font-mono text-[11px] uppercase tracking-[1px] text-[#9cb7e1]">
+                        {item.brokerActivity} activity
+                      </Text>
+                    </View>
+                    <View className="rounded-full border border-[#17355f] bg-[#091a31] px-2.5 py-1">
+                      <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-muted">
+                        Qty {item.quantity}
+                      </Text>
+                    </View>
                   </View>
                 </View>
               </View>
-            </View>
 
-            <View className="mt-4 flex-row items-center justify-between border-t border-[#16355f] pt-3">
-              <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-dim">
-                SKU {item.sku}
-              </Text>
-              <Text className="font-mono text-[11px] uppercase tracking-[1px] text-[#9cb7e1]">
-                Open Item
-              </Text>
+              <View className="mt-4 flex-row items-center justify-between border-t border-[#16355f] pt-3">
+                <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-dim">
+                  SKU {item.sku}
+                </Text>
+                <Text className="font-mono text-[11px] uppercase tracking-[1px] text-[#9cb7e1]">
+                  Open Item
+                </Text>
+              </View>
             </View>
+          </PressableScale>
+
+          <View className="border-t border-[#16355f] px-4 py-3">
+            {renderDeleteAction(item)}
           </View>
-        </PressableScale>
+        </View>
       </Animated.View>
     ),
-    [reducedMotion, router],
+    [reducedMotion, renderDeleteAction, router],
   );
 
   const keyExtractor = useCallback((item: SupplierItemRow) => item.id, []);
@@ -215,6 +276,18 @@ export function SupplierQueuePanel({ isDesktop }: SupplierQueuePanelProps) {
                 <Text className="font-sans-bold text-xl text-tato-text">Live Inventory</Text>
                 <StatusFilterBar activeFilter={activeFilter} onFilterChange={setActiveFilter} />
               </View>
+              {actionFeedback ? (
+                <View
+                  className={`mb-3 rounded-[18px] border p-3 ${
+                    actionFeedback.tone === 'success'
+                      ? 'border-tato-profit/30 bg-tato-profit/10'
+                      : 'border-tato-error/30 bg-tato-error/10'
+                  }`}>
+                  <Text className={`text-sm ${actionFeedback.tone === 'success' ? 'text-tato-profit' : 'text-tato-error'}`}>
+                    {actionFeedback.message}
+                  </Text>
+                </View>
+              ) : null}
               {hasError || isEmpty ? (
                 <FeedState
                   error={error}
@@ -226,6 +299,7 @@ export function SupplierQueuePanel({ isDesktop }: SupplierQueuePanelProps) {
                 <InventoryTable
                   items={filteredItems}
                   onItemPress={(item) => router.push(`/(app)/item/${item.id}` as never)}
+                  renderActions={renderDeleteAction}
                   variant="desktop"
                 />
               )}
@@ -315,6 +389,18 @@ export function SupplierQueuePanel({ isDesktop }: SupplierQueuePanelProps) {
             <Text className="font-sans-bold text-xl text-tato-text">Live Inventory</Text>
             <StatusFilterBar activeFilter={activeFilter} onFilterChange={setActiveFilter} />
           </View>
+          {actionFeedback ? (
+            <View
+              className={`rounded-[18px] border p-3 ${
+                actionFeedback.tone === 'success'
+                  ? 'border-tato-profit/30 bg-tato-profit/10'
+                  : 'border-tato-error/30 bg-tato-error/10'
+              }`}>
+              <Text className={`text-sm ${actionFeedback.tone === 'success' ? 'text-tato-profit' : 'text-tato-error'}`}>
+                {actionFeedback.message}
+              </Text>
+            </View>
+          ) : null}
           {hasError || isEmpty ? (
             <FeedState
               error={error}
@@ -326,6 +412,7 @@ export function SupplierQueuePanel({ isDesktop }: SupplierQueuePanelProps) {
             <InventoryTable
               items={filteredItems}
               onItemPress={(item) => router.push(`/(app)/item/${item.id}` as never)}
+              renderActions={renderDeleteAction}
               variant="tablet"
             />
           )}
@@ -464,6 +551,19 @@ export function SupplierQueuePanel({ isDesktop }: SupplierQueuePanelProps) {
             </View>
             <StatusFilterBar activeFilter={activeFilter} compact onFilterChange={setActiveFilter} scrollable />
           </View>
+          {actionFeedback ? (
+            <PhonePanel
+              className={
+                actionFeedback.tone === 'success'
+                  ? 'border-tato-profit/30 bg-tato-profit/10'
+                  : 'border-tato-error/30 bg-tato-error/10'
+              }
+              padded="lg">
+              <Text className={`text-sm ${actionFeedback.tone === 'success' ? 'text-tato-profit' : 'text-tato-error'}`}>
+                {actionFeedback.message}
+              </Text>
+            </PhonePanel>
+          ) : null}
         </View>
       }
     />

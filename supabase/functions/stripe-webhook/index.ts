@@ -4,7 +4,7 @@ import Stripe from 'npm:stripe@15.12.0';
 
 import { corsHeaders, withCors } from '../_shared/cors.ts';
 import { writeAuditEvent } from '../_shared/audit.ts';
-import { resolveSplitAmounts } from '../_shared/domain.ts';
+import { resolveClaimSettlement, resolveSplitAmounts } from '../_shared/domain.ts';
 import { createCorrelationId } from '../_shared/responses.ts';
 
 serve(async (req) => {
@@ -83,10 +83,63 @@ serve(async (req) => {
         }>();
 
       if (baseTx) {
-        const splits =
-          baseTx.transaction_type === 'sale_payment'
-            ? resolveSplitAmounts(baseTx.gross_amount_cents)
-            : { supplierAmount: 0, brokerAmount: 0, platformAmount: baseTx.gross_amount_cents };
+        let splits:
+          | { supplierAmount: number; brokerAmount: number; platformAmount: number }
+          | {
+              supplierAmount: number;
+              brokerAmount: number;
+              platformAmount: number;
+              lockedFloorPriceCents?: number;
+              upsideCents?: number;
+            };
+
+        if (baseTx.transaction_type === 'sale_payment' && baseTx.claim_id) {
+          const { data: claimEconomics } = await admin
+            .from('claims')
+            .select(
+              'id,locked_floor_price_cents,supplier_upside_bps,broker_upside_bps,platform_upside_bps,claim_deposit_cents,claim_deposit_refunded_at,items!inner(floor_price_cents)',
+            )
+            .eq('id', baseTx.claim_id)
+            .maybeSingle<{
+              id: string;
+              locked_floor_price_cents: number | null;
+              supplier_upside_bps: number | null;
+              broker_upside_bps: number | null;
+              platform_upside_bps: number | null;
+              claim_deposit_cents: number | null;
+              claim_deposit_refunded_at: string | null;
+              items: { floor_price_cents: number | null };
+            }>();
+
+          if (claimEconomics) {
+            const settlement = resolveClaimSettlement({
+              salePriceCents: baseTx.gross_amount_cents,
+              lockedFloorPriceCents: claimEconomics.locked_floor_price_cents ?? claimEconomics.items.floor_price_cents ?? 0,
+              supplierUpsideBps: claimEconomics.supplier_upside_bps,
+              brokerUpsideBps: claimEconomics.broker_upside_bps,
+              platformUpsideBps: claimEconomics.platform_upside_bps,
+            });
+
+            splits = {
+              supplierAmount: settlement.supplierAmount,
+              brokerAmount: settlement.brokerAmount,
+              platformAmount: settlement.platformAmount,
+              lockedFloorPriceCents: settlement.lockedFloorPriceCents,
+              upsideCents: settlement.upsideCents,
+            };
+          } else {
+            const legacy = resolveSplitAmounts(baseTx.gross_amount_cents);
+            splits = {
+              supplierAmount: legacy.supplierAmount,
+              brokerAmount: legacy.brokerAmount,
+              platformAmount: legacy.platformAmount,
+            };
+          }
+        } else if (baseTx.transaction_type === 'claim_deposit') {
+          splits = { supplierAmount: 0, brokerAmount: 0, platformAmount: 0 };
+        } else {
+          splits = { supplierAmount: 0, brokerAmount: 0, platformAmount: baseTx.gross_amount_cents };
+        }
 
         await admin
           .from('transactions')
@@ -101,11 +154,43 @@ serve(async (req) => {
             metadata: {
               webhook_event_type: event.type,
               stripe_event_id: event.id,
+              settlement_model:
+                baseTx.transaction_type === 'sale_payment' && 'lockedFloorPriceCents' in splits
+                  ? 'floor_v1'
+                  : baseTx.transaction_type === 'claim_deposit'
+                    ? 'claim_deposit'
+                    : 'legacy',
             },
           })
           .eq('id', baseTx.id);
 
+        if (baseTx.transaction_type === 'claim_deposit' && baseTx.claim_id) {
+          await admin
+            .from('claims')
+            .update({
+              claim_deposit_captured_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', baseTx.claim_id);
+        }
+
         if (baseTx.transaction_type === 'sale_payment' && baseTx.claim_id) {
+          const { data: claimDepositTx } = await admin
+            .from('transactions')
+            .select('id,transaction_type,status,gross_amount_cents,currency_code,stripe_payment_intent_id')
+            .eq('claim_id', baseTx.claim_id)
+            .eq('transaction_type', 'claim_deposit')
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .maybeSingle<{
+              id: string;
+              transaction_type: string;
+              status: string;
+              gross_amount_cents: number;
+              currency_code: string;
+              stripe_payment_intent_id: string | null;
+            }>();
+
           const { data: existingSplitRows } = await admin
             .from('transactions')
             .select('id')
@@ -173,6 +258,65 @@ serve(async (req) => {
             ]);
           }
 
+          if (claimDepositTx?.status === 'succeeded' && claimDepositTx.stripe_payment_intent_id) {
+            const { data: existingRefund } = await admin
+              .from('transactions')
+              .select('id')
+              .eq('claim_id', baseTx.claim_id)
+              .eq('transaction_type', 'refund')
+              .contains('metadata', {
+                source_claim_deposit_intent_id: claimDepositTx.stripe_payment_intent_id,
+              })
+              .maybeSingle<{ id: string }>();
+
+            if (!existingRefund) {
+              const refund = await stripe.refunds.create(
+                {
+                  payment_intent: claimDepositTx.stripe_payment_intent_id,
+                  amount: claimDepositTx.gross_amount_cents,
+                  metadata: {
+                    kind: 'claim_deposit_refund',
+                    claim_id: baseTx.claim_id,
+                    broker_id: baseTx.broker_id ?? '',
+                  },
+                },
+                {
+                  idempotencyKey: `claim_deposit_refund:${claimDepositTx.id}`,
+                },
+              );
+
+              await admin.from('transactions').insert({
+                claim_id: baseTx.claim_id,
+                item_id: baseTx.item_id,
+                hub_id: baseTx.hub_id,
+                supplier_id: baseTx.supplier_id,
+                broker_id: baseTx.broker_id,
+                transaction_type: 'refund',
+                status: 'succeeded',
+                currency_code: claimDepositTx.currency_code,
+                gross_amount_cents: claimDepositTx.gross_amount_cents,
+                supplier_amount_cents: 0,
+                broker_amount_cents: claimDepositTx.gross_amount_cents,
+                platform_amount_cents: 0,
+                stripe_payment_intent_id: claimDepositTx.stripe_payment_intent_id,
+                metadata: {
+                  source_payment_intent_id: intentId,
+                  source_claim_deposit_intent_id: claimDepositTx.stripe_payment_intent_id,
+                  stripe_refund_id: refund.id,
+                  refund_kind: 'claim_deposit',
+                },
+              });
+
+              await admin
+                .from('claims')
+                .update({
+                  claim_deposit_refunded_at: new Date().toISOString(),
+                  updated_at: new Date().toISOString(),
+                })
+                .eq('id', baseTx.claim_id);
+            }
+          }
+
           await admin
             .from('claims')
             .update({
@@ -194,7 +338,7 @@ serve(async (req) => {
             },
           });
         }
-      } else if (metadataKind === 'sale_payment' || metadataKind === 'claim_fee') {
+      } else if (metadataKind === 'sale_payment' || metadataKind === 'claim_deposit' || metadataKind === 'claim_fee') {
         return withCors({ error: 'Base transaction row not found for payment intent.' }, { status: 404 });
       }
     }

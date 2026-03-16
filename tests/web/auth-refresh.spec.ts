@@ -36,6 +36,30 @@ async function captureRefreshSamples(page: Page, count: number, intervalMs: numb
   return samples;
 }
 
+test('signed-out visitors can stay on the welcome root', async ({ page }) => {
+  await page.goto('/', { waitUntil: 'networkidle' });
+
+  await expect(page).toHaveURL(/\/$/);
+  await expect(page.getByText('Turn supplier intake into broker-ready opportunity.', { exact: false })).toBeVisible();
+});
+
+test('signed-out protected routes still redirect to direct sign-in', async ({ page }) => {
+  await page.goto('/workspace', { waitUntil: 'networkidle' });
+
+  await expect(page).toHaveURL(/\/sign-in$/);
+  await expect(page.getByText('Access TATO.', { exact: false })).toBeVisible();
+});
+
+test('authenticated visitors are redirected away from public entry points', async ({ page }) => {
+  await signInWithDevBypass(page);
+
+  await page.goto('/', { waitUntil: 'networkidle' });
+  await expect(page).toHaveURL(/\/workspace$/, { timeout: 15_000 });
+
+  await page.goto('/sign-in', { waitUntil: 'networkidle' });
+  await expect(page).toHaveURL(/\/workspace$/, { timeout: 15_000 });
+});
+
 test('authenticated refresh stays out of auth recovery screens', async ({ page }) => {
   await signInWithDevBypass(page);
 
@@ -50,6 +74,7 @@ test('authenticated refresh stays out of auth recovery screens', async ({ page }
   expect(samples.some((sample) => sample.text.includes('Session Recovery'))).toBeFalsy();
   expect(samples.some((sample) => sample.text.includes('We couldn\'t restore your workspace.'))).toBeFalsy();
   expect(samples.some((sample) => sample.text.includes('TATO ACCESS'))).toBeFalsy();
+  expect(samples.some((sample) => sample.text.includes('Turn supplier intake into broker-ready opportunity.'))).toBeFalsy();
 
   await expect(page).toHaveURL(/\/workspace$/);
 });

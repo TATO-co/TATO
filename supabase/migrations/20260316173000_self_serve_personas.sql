@@ -2,33 +2,11 @@ update public.profiles
 set status = 'active'
 where status::text in ('pending_review', 'invited');
 
-do $$
-begin
-  if exists (
-    select 1
-    from pg_enum e
-    join pg_type t on t.oid = e.enumtypid
-    where t.typname = 'user_status'
-      and e.enumlabel in ('pending_review', 'invited')
-  ) then
-    alter type public.user_status rename to user_status_legacy;
-    create type public.user_status as enum ('active', 'suspended');
-
-    alter table public.profiles
-      alter column status drop default;
-
-    alter table public.profiles
-      alter column status type public.user_status
-      using (
-        case
-          when status::text = 'suspended' then 'suspended'::public.user_status
-          else 'active'::public.user_status
-        end
-      );
-
-    drop type public.user_status_legacy;
-  end if;
-end $$;
+-- Keep any legacy enum labels in place for now. Removing them safely requires
+-- dropping and recreating a broad set of RLS policies that reference
+-- public.profiles.status. The application no longer uses pending_review, and
+-- the functional fix for self-serve onboarding is to normalize existing rows
+-- and relax the profile bootstrap columns below.
 
 alter table public.profiles
   alter column status set default 'active',

@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { Animated, Text, View } from 'react-native';
+import { Animated, Platform, Text, View } from 'react-native';
 
 import { formatMoney, type RecentFlip } from '@/lib/models';
 
@@ -23,11 +23,13 @@ export function RecentFlipsTicker({ flips }: RecentFlipsTickerProps) {
     }, [translateX]);
 
     const content = flips
-        .map((f) => `${f.title} settled for +${formatMoney(f.profitCents, f.currencyCode, 0)} (${f.agoLabel})`)
+        .map((f) => `${f.title} paid out +${formatMoney(f.payoutCents, f.currencyCode, 0)} (${f.agoLabel})`)
         .join('  •  ');
+    
+    // Create a single long string that repeats to ensure it fills the screen,
+    // rather than two separate Text nodes that might wrap in a flex container.
+    const repeatedContent = `${content}  •  ${content}`;
 
-    // We render the text twice side-by-side and translate by percentage
-    // so it loops seamlessly. The Animated.Value of -1 maps to -50% via interpolation.
     const animatedStyle = {
         transform: [
             {
@@ -39,16 +41,19 @@ export function RecentFlipsTicker({ flips }: RecentFlipsTickerProps) {
         ],
     };
 
+    // Platform-specific style to force text to never wrap on web
+    const textStyle = Platform.OS === 'web' ? { whiteSpace: 'nowrap' } as any : undefined;
+
     return (
-        <View className="overflow-hidden rounded-[18px] border border-tato-line bg-[#0a1931] py-3 shadow-[0_14px_40px_rgba(0,0,0,0.18)]">
-            <Animated.View className="flex-row" style={animatedStyle}>
-                <Text className="font-mono text-[11px] text-tato-muted whitespace-nowrap px-5">
-                    <Text className="text-tato-accent uppercase tracking-[1px]">Live Profit Tape </Text>
-                    {content}
+        <View className="overflow-hidden rounded-[18px] border border-tato-line bg-[#0a1931] shadow-[0_14px_40px_rgba(0,0,0,0.18)]" style={{ height: 42, position: 'relative' }}>
+            <Animated.View className="flex-row absolute items-center left-0 top-0 bottom-0" style={[animatedStyle, Platform.OS === 'web' && { width: 'max-content' } as any]}>
+                <Text className="font-mono text-[11px] text-tato-muted px-5" style={textStyle}>
+                    <Text className="text-tato-accent uppercase tracking-[1px]">Live Payout Tape </Text>
+                    {repeatedContent}
                 </Text>
-                <Text className="font-mono text-[11px] text-tato-muted whitespace-nowrap px-5">
-                    <Text className="text-tato-accent uppercase tracking-[1px]">Live Profit Tape </Text>
-                    {content}
+                <Text className="font-mono text-[11px] text-tato-muted px-5" style={textStyle}>
+                    <Text className="text-tato-accent uppercase tracking-[1px]">Live Payout Tape </Text>
+                    {repeatedContent}
                 </Text>
             </Animated.View>
         </View>

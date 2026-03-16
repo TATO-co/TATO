@@ -1,17 +1,37 @@
 import {
   brokerCategories,
+  lifecycleFromClaimStatus,
   createRequestKey,
   formatMoney,
+  normalizeClaimPlatformVariants,
+  normalizeClaimStatus,
+  normalizeExternalListingRefs,
   resolveCurrencyCode,
+  serializeExternalListingRefs,
+  slugifyClaimPlatform,
+  type ClaimExternalListing,
   type BrokerFeedItem,
   type ClaimSnapshot,
+  type ClaimStatus,
   type CurrencyCode,
   type ItemDetail,
   type SupplierItem,
   type SupplierMetric,
 } from '@/lib/models';
 import { captureException } from '@/lib/analytics';
-import type { SupplierItemUpdatePayload } from '@/lib/item-detail';
+import {
+  DEFAULT_BROKER_UPSIDE_BPS,
+  DEFAULT_PLATFORM_UPSIDE_BPS,
+  DEFAULT_SUPPLIER_UPSIDE_BPS,
+  resolveEstimatedClaimEconomics,
+} from '@/lib/economics';
+import {
+  canSupplierDeleteItem,
+  canSupplierEditItem,
+  supplierDeletableItemStatuses,
+  supplierEditableItemStatuses,
+  type SupplierItemUpdatePayload,
+} from '@/lib/item-detail';
 import { classifyLiveWorkflowError } from '@/lib/liveIntake/errors';
 import { supabase } from '@/lib/supabase';
 
@@ -42,8 +62,20 @@ type ClaimRecord = {
   status: string;
   expires_at: string;
   claim_fee_cents: number;
+  claim_deposit_cents: number | null;
   hub_id: string;
   currency_code: string | null;
+  locked_floor_price_cents: number | null;
+  locked_suggested_list_price_cents: number | null;
+  supplier_upside_bps: number | null;
+  broker_upside_bps: number | null;
+  platform_upside_bps: number | null;
+  listing_ai_title: string | null;
+  listing_ai_description: string | null;
+  listing_ai_platform_variants: Record<string, unknown> | null;
+  external_listing_refs: Record<string, unknown> | null;
+  buyer_committed_at: string | null;
+  pickup_due_at: string | null;
 };
 
 type ItemDetailRecord = {
@@ -61,6 +93,14 @@ type ItemDetailRecord = {
   digital_status: string;
   currency_code: string | null;
   updated_at: string;
+};
+
+type SupplierItemPhotoRecord = {
+  id: string;
+  supplier_id: string;
+  digital_status: string;
+  primary_photo_path: string | null;
+  photo_paths: string[] | null;
 };
 
 type SupplierDashboardItemRecord = {
@@ -82,6 +122,8 @@ type TransactionRecord = {
   currency_code: string;
   occurred_at: string;
   item_id: string;
+  supplier_id: string;
+  broker_id: string | null;
 };
 
 type MutationErrorResponse = {
@@ -312,28 +354,6 @@ function initials(name: string | null | undefined) {
   return chars.join('') || 'TA';
 }
 
-function normalizeClaimStatus(raw: string): ClaimSnapshot['status'] {
-  if (raw === 'listed_externally' || raw === 'buyer_committed' || raw === 'awaiting_pickup' || raw === 'completed') {
-    return raw;
-  }
-
-  return 'active';
-}
-
-function lifecycleFromClaim(status: ClaimSnapshot['status']): ClaimSnapshot['lifecycleStage'] {
-  if (status === 'completed') {
-    return 'sold';
-  }
-  if (status === 'listed_externally') {
-    return 'listed';
-  }
-  if (status === 'buyer_committed' || status === 'awaiting_pickup') {
-    return 'claimed';
-  }
-
-  return 'inventoried';
-}
-
 function lifecycleFromItemStatus(status: string): ItemDetail['lifecycleStage'] {
   if (status === 'completed' || status === 'paid_at_hub') {
     return 'sold';
@@ -404,6 +424,79 @@ function inferImageExtension(uri: string, mimeType?: string) {
   return 'jpg';
 }
 
+function parseStoragePath(path: string | null | undefined) {
+  if (!path) {
+    return null;
+  }
+
+  const parts = path.split('/').filter(Boolean);
+  if (parts.length < 2) {
+    return null;
+  }
+
+  return {
+    bucket: parts[0],
+    objectPath: parts.slice(1).join('/'),
+  };
+}
+
+async function removeStoragePaths(paths: Array<string | null | undefined>) {
+  const client = requireSupabase();
+  const groupedPaths = paths.reduce<Map<string, string[]>>((current, path) => {
+    const parsed = parseStoragePath(path);
+    if (!parsed) {
+      return current;
+    }
+
+    const bucketPaths = current.get(parsed.bucket) ?? [];
+    bucketPaths.push(parsed.objectPath);
+    current.set(parsed.bucket, bucketPaths);
+    return current;
+  }, new Map());
+
+  await Promise.all(
+    [...groupedPaths.entries()].map(async ([bucket, objectPaths]) => {
+      if (!objectPaths.length) {
+        return;
+      }
+
+      const { error } = await client.storage.from(bucket).remove(objectPaths);
+      if (error) {
+        captureException(error, {
+          flow: 'repo.removeStoragePaths',
+          bucket,
+          objectPathCount: objectPaths.length,
+        });
+      }
+    }),
+  );
+}
+
+async function uploadSupplierItemPhoto(args: {
+  supplierId: string;
+  itemId: string;
+  imageUri: string;
+  mimeType?: string;
+}) {
+  const client = requireSupabase();
+  const fileExt = inferImageExtension(args.imageUri, args.mimeType);
+  const storageKey = `${args.supplierId}/${args.itemId}/photo-${Date.now()}.${fileExt}`;
+  const storagePath = `items/${storageKey}`;
+  const response = await fetch(args.imageUri);
+  const blob = await response.blob();
+
+  const { error } = await client.storage.from('items').upload(storageKey, blob, {
+    upsert: false,
+    contentType: args.mimeType ?? blob.type ?? 'image/jpeg',
+  });
+
+  if (error) {
+    throw error;
+  }
+
+  return storagePath;
+}
+
 function toMutationMessage(data: MutationErrorResponse | null | undefined, fallback: string) {
   return data?.message ?? fallback;
 }
@@ -417,7 +510,7 @@ function buildRecentFlips(entries: LedgerEntry[]) {
       const agoLabel = diffMinutes < 60 ? `${diffMinutes}m ago` : `${Math.round(diffMinutes / 60)}h ago`;
       return {
         title: entry.label,
-        profitCents: entry.amountCents,
+        payoutCents: entry.amountCents,
         agoLabel,
         currencyCode: entry.currencyCode,
       };
@@ -479,9 +572,13 @@ export async function fetchBrokerFeed(limit = 40): Promise<BrokerFeedItem[]> {
     items.map(async (item) => {
       const hub = hubMap.get(item.hub_id);
       const supplier = supplierMap.get(item.supplier_id);
-      const floor = item.floor_price_cents ?? 0;
-      const suggested = item.suggested_list_price_cents ?? Math.round(floor * 1.18);
-      const potential = Math.max(1200, suggested - floor);
+      const economics = resolveEstimatedClaimEconomics({
+        floorPriceCents: item.floor_price_cents,
+        suggestedListPriceCents: item.suggested_list_price_cents,
+        supplierUpsideBps: DEFAULT_SUPPLIER_UPSIDE_BPS,
+        brokerUpsideBps: DEFAULT_BROKER_UPSIDE_BPS,
+        platformUpsideBps: DEFAULT_PLATFORM_UPSIDE_BPS,
+      });
       const currencyCode = resolveCurrencyCode(item.currency_code);
       const label = item.title ?? 'TATO Item';
 
@@ -491,9 +588,10 @@ export async function fetchBrokerFeed(limit = 40): Promise<BrokerFeedItem[]> {
         subtitle: item.condition_summary ?? item.description ?? 'Supplier catalog item',
         hubName: `Hub: ${hub?.name ?? 'Supplier Hub'}`,
         city: hub?.city ?? 'Local',
-        floorPriceCents: floor,
-        claimFeeCents: Math.max(200, Math.round(Math.max(floor, 5000) * 0.03)),
-        potentialProfitCents: potential,
+        floorPriceCents: economics.floorPriceCents,
+        claimDepositCents: economics.claimDepositCents,
+        estimatedSalePriceCents: economics.estimatedSalePriceCents,
+        estimatedBrokerPayoutCents: economics.estimatedBrokerPayoutCents,
         photoCount: Math.max(item.photo_paths?.length ?? 0, 1),
         aiIngestionConfidence: Math.min(0.999, Math.max(0.45, item.ingestion_ai_confidence ?? 0.82)),
         tags: [
@@ -515,7 +613,7 @@ export async function createClaim(args: {
   brokerId: string;
   itemId: string;
   hubId: string;
-  claimFeeCents: number;
+  claimDepositCents: number;
   expiresInDays?: number;
 }) {
   const client = requireSupabase();
@@ -569,7 +667,9 @@ export async function fetchBrokerClaims(brokerId: string | null): Promise<ClaimS
 
   const { data: claimRows, error } = await client
     .from('claims')
-    .select('id,item_id,status,expires_at,claim_fee_cents,hub_id,currency_code')
+    .select(
+      'id,item_id,status,expires_at,claim_fee_cents,claim_deposit_cents,hub_id,currency_code,locked_floor_price_cents,locked_suggested_list_price_cents,supplier_upside_bps,broker_upside_bps,platform_upside_bps,listing_ai_title,listing_ai_description,listing_ai_platform_variants,external_listing_refs,buyer_committed_at,pickup_due_at',
+    )
     .eq('broker_id', brokerId)
     .order('created_at', { ascending: false })
     .limit(40);
@@ -612,8 +712,13 @@ export async function fetchBrokerClaims(brokerId: string | null): Promise<ClaimS
   return claims.map((claim) => {
     const item = itemMap.get(claim.item_id);
     const status = normalizeClaimStatus(claim.status);
-    const floor = item?.floor_price_cents ?? 0;
-    const suggested = item?.suggested_list_price_cents ?? Math.round(floor * 1.2);
+    const economics = resolveEstimatedClaimEconomics({
+      floorPriceCents: claim.locked_floor_price_cents ?? item?.floor_price_cents ?? 0,
+      suggestedListPriceCents: claim.locked_suggested_list_price_cents ?? item?.suggested_list_price_cents ?? 0,
+      supplierUpsideBps: claim.supplier_upside_bps,
+      brokerUpsideBps: claim.broker_upside_bps,
+      platformUpsideBps: claim.platform_upside_bps,
+    });
 
     return {
       id: claim.id,
@@ -623,12 +728,115 @@ export async function fetchBrokerClaims(brokerId: string | null): Promise<ClaimS
       supplierName: hubMap.get(claim.hub_id)?.name ?? 'Supplier Hub',
       status,
       expiresAt: claim.expires_at,
-      lifecycleStage: lifecycleFromClaim(status),
-      claimFeeCents: claim.claim_fee_cents,
-      estimatedProfitCents: Math.max(1000, suggested - floor),
+      lifecycleStage: lifecycleFromClaimStatus(status),
+      claimDepositCents: claim.claim_deposit_cents ?? claim.claim_fee_cents,
+      estimatedBrokerPayoutCents: economics.estimatedBrokerPayoutCents,
       currencyCode: resolveCurrencyCode(claim.currency_code),
+      listingTitle: claim.listing_ai_title,
+      listingDescription: claim.listing_ai_description,
+      platformVariants: normalizeClaimPlatformVariants(claim.listing_ai_platform_variants),
+      externalListings: normalizeExternalListingRefs(claim.external_listing_refs),
+      buyerCommittedAt: claim.buyer_committed_at,
+      pickupDueAt: claim.pickup_due_at,
     } satisfies ClaimSnapshot;
   });
+}
+
+export async function saveBrokerExternalListing(args: {
+  claimId: string;
+  platform: string;
+  listingUrl?: string | null;
+  externalId?: string | null;
+}): Promise<{ ok: true } | { ok: false; message: string }> {
+  const client = requireSupabase();
+  const platform = args.platform.trim();
+  const listingUrl = args.listingUrl?.trim() || null;
+  const externalId = args.externalId?.trim() || null;
+
+  if (!platform) {
+    return { ok: false, message: 'Enter a marketplace name before saving the listing.' };
+  }
+
+  if (!listingUrl && !externalId) {
+    return { ok: false, message: 'Add a listing URL or marketplace listing ID before saving.' };
+  }
+
+  const { data: claimRow, error: loadError } = await client
+    .from('claims')
+    .select('status,external_listing_refs')
+    .eq('id', args.claimId)
+    .maybeSingle<{ status: string; external_listing_refs: Record<string, unknown> | null }>();
+
+  if (loadError) {
+    captureException(loadError, { flow: 'repo.saveBrokerExternalListing.load' });
+    return { ok: false, message: 'Unable to load the current listing tracker.' };
+  }
+
+  const currentListings = normalizeExternalListingRefs(claimRow?.external_listing_refs);
+  const currentStatus = normalizeClaimStatus(claimRow?.status);
+  const key = slugifyClaimPlatform(platform);
+  const timestamp = new Date().toISOString();
+  const nextListings: ClaimExternalListing[] = [
+    ...currentListings.filter((listing) => listing.key !== key),
+    {
+      key,
+      platform,
+      url: listingUrl,
+      externalId,
+      source: 'manual',
+      updatedAt: timestamp,
+    },
+  ];
+
+  const { error: updateError } = await client
+    .from('claims')
+    .update({
+      external_listing_refs: serializeExternalListingRefs(nextListings),
+      status:
+        currentStatus === 'active' || currentStatus === 'listing_generated'
+          ? 'listed_externally'
+          : currentStatus,
+    })
+    .eq('id', args.claimId);
+
+  if (updateError) {
+    captureException(updateError, { flow: 'repo.saveBrokerExternalListing.update' });
+    return { ok: false, message: 'Unable to save the external listing right now.' };
+  }
+
+  return { ok: true };
+}
+
+export async function updateBrokerClaimWorkflow(args: {
+  claimId: string;
+  status: Extract<ClaimStatus, 'buyer_committed' | 'awaiting_pickup' | 'cancelled'>;
+  buyerCommittedAt?: string | null;
+  pickupDueAt?: string | null;
+}): Promise<{ ok: true } | { ok: false; message: string }> {
+  const client = requireSupabase();
+  const patch: Record<string, string | null> = {
+    status: args.status,
+  };
+
+  if (args.status === 'buyer_committed') {
+    patch.buyer_committed_at = args.buyerCommittedAt ?? new Date().toISOString();
+  }
+
+  if (args.status === 'awaiting_pickup') {
+    patch.pickup_due_at = args.pickupDueAt ?? null;
+  }
+
+  const { error } = await client
+    .from('claims')
+    .update(patch)
+    .eq('id', args.claimId);
+
+  if (error) {
+    captureException(error, { flow: 'repo.updateBrokerClaimWorkflow' });
+    return { ok: false, message: 'Unable to update the claim workflow right now.' };
+  }
+
+  return { ok: true };
 }
 
 export async function fetchSupplierDashboard(supplierId: string | null): Promise<{
@@ -685,6 +893,7 @@ export async function fetchSupplierDashboard(supplierId: string | null): Promise
         thumbUrl: await resolveImage(item.photo_paths?.[0], item.title ?? 'Inventory'),
         subtitle: item.title ?? 'Catalog item',
         brokerActivity: 'Medium' as const,
+        canDelete: canSupplierDeleteItem(item.digital_status),
         currencyCode,
       } satisfies SupplierItem;
     }),
@@ -761,8 +970,15 @@ export async function fetchItemDetail(itemId: string): Promise<ItemDetail | null
     return null;
   }
 
-  const floor = data.floor_price_cents ?? 0;
-  const suggested = data.suggested_list_price_cents ?? Math.round(floor * 1.2);
+  const economics = resolveEstimatedClaimEconomics({
+    floorPriceCents: data.floor_price_cents,
+    suggestedListPriceCents: data.suggested_list_price_cents,
+    supplierUpsideBps: DEFAULT_SUPPLIER_UPSIDE_BPS,
+    brokerUpsideBps: DEFAULT_BROKER_UPSIDE_BPS,
+    platformUpsideBps: DEFAULT_PLATFORM_UPSIDE_BPS,
+  });
+  const floor = economics.floorPriceCents;
+  const suggested = economics.estimatedSalePriceCents;
   const currencyCode = resolveCurrencyCode(data.currency_code);
   const attributes = normalizeJsonObject(data.ingestion_ai_attributes);
   const marketSnapshot = normalizeJsonObject(data.ingestion_ai_market_snapshot);
@@ -770,6 +986,9 @@ export async function fetchItemDetail(itemId: string): Promise<ItemDetail | null
   const missingViews = normalizeJsonStringArray(marketSnapshot.missing_views ?? attributes.missing_views);
   const observedDetails = buildObservedDetails(attributes);
   const candidateItems = buildCandidateItems(attributes);
+  const photoUrls = await Promise.all(
+    (data.photo_paths ?? []).map((path) => resolveImage(path, data.title ?? 'Item Detail')),
+  );
   const nextBestAction =
     typeof marketSnapshot.next_best_action === 'string' && marketSnapshot.next_best_action.trim().length > 0
       ? marketSnapshot.next_best_action.trim()
@@ -795,13 +1014,15 @@ export async function fetchItemDetail(itemId: string): Promise<ItemDetail | null
     editableDescription: data.description ?? '',
     gradeLabel: data.condition_summary ?? 'Verified',
     editableConditionSummary: data.condition_summary ?? '',
-    imageUrl: await resolveImage(data.photo_paths?.[0], data.title ?? 'Item Detail'),
+    imageUrl: photoUrls[0] ?? placeholderImage(data.title ?? 'Item Detail'),
+    photoUrls,
     lifecycleStage: lifecycleFromItemStatus(data.digital_status),
-    estimatedProfitCents: Math.max(1000, suggested - floor),
+    estimatedBrokerPayoutCents: economics.estimatedBrokerPayoutCents,
     marketVelocityLabel: velocity,
-    claimFeeCents: Math.max(200, Math.round(Math.max(floor, 5000) * 0.03)),
+    claimDepositCents: economics.claimDepositCents,
     floorPriceCents: floor,
     suggestedListPriceCents: suggested,
+    supplierPayoutAtSuggestedCents: economics.supplierPayoutCents,
     digitalStatus: data.digital_status,
     ingestionConfidence: Math.max(0, Math.min(1, data.ingestion_ai_confidence ?? 0.65)),
     nextBestAction,
@@ -866,6 +1087,317 @@ export async function updateSupplierItemDraft(args: {
   };
 }
 
+async function loadSupplierItemPhotoRecord(itemId: string) {
+  const client = requireSupabase();
+  const { data, error } = await client
+    .from('items')
+    .select('id,supplier_id,digital_status,primary_photo_path,photo_paths')
+    .eq('id', itemId)
+    .maybeSingle<SupplierItemPhotoRecord>();
+
+  if (error) {
+    captureException(error, { flow: 'repo.loadSupplierItemPhotoRecord' });
+    return {
+      ok: false as const,
+      message: 'Unable to load the latest item details right now.',
+    };
+  }
+
+  if (!data) {
+    return {
+      ok: false as const,
+      message: 'Item not found.',
+    };
+  }
+
+  return {
+    ok: true as const,
+    item: data,
+  };
+}
+
+async function mutateSupplierItemPhotos(args: {
+  itemId: string;
+  supplierId: string;
+  mode: 'append' | 'replace' | 'remove';
+  photoIndex?: number;
+  imageUri?: string;
+  mimeType?: string;
+}): Promise<
+  | { ok: true; detail: ItemDetail }
+  | { ok: false; message: string }
+> {
+  const client = requireSupabase();
+  const loadedItem = await loadSupplierItemPhotoRecord(args.itemId);
+
+  if (!loadedItem.ok) {
+    return loadedItem;
+  }
+
+  const item = loadedItem.item;
+  if (item.supplier_id !== args.supplierId) {
+    return {
+      ok: false,
+      message: 'You can only manage photos for your own items.',
+    };
+  }
+
+  if (!canSupplierEditItem(item.digital_status)) {
+    return {
+      ok: false,
+      message: 'Item photos are locked once broker work has started.',
+    };
+  }
+
+  const currentPaths = item.photo_paths ?? [];
+  const index = args.photoIndex ?? -1;
+  let nextPaths = [...currentPaths];
+  let uploadedStoragePath: string | null = null;
+  let stalePaths: string[] = [];
+
+  if (args.mode === 'append' || args.mode === 'replace') {
+    if (!args.imageUri) {
+      return {
+        ok: false,
+        message: 'Choose an image before saving photo updates.',
+      };
+    }
+
+    try {
+      uploadedStoragePath = await uploadSupplierItemPhoto({
+        supplierId: args.supplierId,
+        itemId: args.itemId,
+        imageUri: args.imageUri,
+        mimeType: args.mimeType,
+      });
+    } catch (error) {
+      captureException(error, { flow: 'repo.mutateSupplierItemPhotos.upload' });
+      return {
+        ok: false,
+        message: error instanceof Error ? error.message : 'Unable to upload the selected photo.',
+      };
+    }
+  }
+
+  if (args.mode === 'append' && uploadedStoragePath) {
+    nextPaths = [...currentPaths, uploadedStoragePath];
+  }
+
+  if (args.mode === 'replace') {
+    if (!currentPaths.length) {
+      if (uploadedStoragePath) {
+        await removeStoragePaths([uploadedStoragePath]);
+      }
+
+      return {
+        ok: false,
+        message: 'There is no saved photo to replace yet.',
+      };
+    }
+
+    if (index < 0 || index >= currentPaths.length || !uploadedStoragePath) {
+      if (uploadedStoragePath) {
+        await removeStoragePaths([uploadedStoragePath]);
+      }
+
+      return {
+        ok: false,
+        message: 'Choose a valid item photo to replace.',
+      };
+    }
+
+    stalePaths = currentPaths[index] ? [currentPaths[index]] : [];
+    nextPaths = currentPaths.map((path, pathIndex) => (pathIndex === index ? uploadedStoragePath! : path));
+  }
+
+  if (args.mode === 'remove') {
+    if (!currentPaths.length) {
+      return {
+        ok: false,
+        message: 'There are no saved photos to remove.',
+      };
+    }
+
+    if (currentPaths.length === 1) {
+      return {
+        ok: false,
+        message: 'Keep at least one image on the item. Replace the current photo instead of removing the last one.',
+      };
+    }
+
+    if (index < 0 || index >= currentPaths.length) {
+      return {
+        ok: false,
+        message: 'Choose a valid item photo to remove.',
+      };
+    }
+
+    stalePaths = currentPaths[index] ? [currentPaths[index]] : [];
+    nextPaths = currentPaths.filter((_, pathIndex) => pathIndex !== index);
+  }
+
+  const { data, error } = await client
+    .from('items')
+    .update({
+      primary_photo_path: nextPaths[0] ?? null,
+      photo_paths: nextPaths,
+    })
+    .eq('id', args.itemId)
+    .in('digital_status', [...supplierEditableItemStatuses])
+    .select('id')
+    .maybeSingle<{ id: string }>();
+
+  if (error) {
+    if (uploadedStoragePath) {
+      await removeStoragePaths([uploadedStoragePath]);
+    }
+
+    captureException(error, { flow: 'repo.mutateSupplierItemPhotos.update' });
+    return {
+      ok: false,
+      message: 'Unable to save the updated item photos right now.',
+    };
+  }
+
+  if (!data) {
+    if (uploadedStoragePath) {
+      await removeStoragePaths([uploadedStoragePath]);
+    }
+
+    return {
+      ok: false,
+      message: 'This item is no longer editable from supplier inventory.',
+    };
+  }
+
+  if (stalePaths.length) {
+    await removeStoragePaths(stalePaths);
+  }
+
+  const detail = await fetchItemDetail(args.itemId);
+  if (!detail) {
+    return {
+      ok: false,
+      message: 'Saved the photo update, but could not reload the item detail.',
+    };
+  }
+
+  return {
+    ok: true,
+    detail,
+  };
+}
+
+export async function appendSupplierItemPhoto(args: {
+  itemId: string;
+  supplierId: string;
+  imageUri: string;
+  mimeType?: string;
+}) {
+  return mutateSupplierItemPhotos({
+    ...args,
+    mode: 'append',
+  });
+}
+
+export async function replaceSupplierItemPhoto(args: {
+  itemId: string;
+  supplierId: string;
+  photoIndex: number;
+  imageUri: string;
+  mimeType?: string;
+}) {
+  return mutateSupplierItemPhotos({
+    ...args,
+    mode: 'replace',
+  });
+}
+
+export async function removeSupplierItemPhoto(args: {
+  itemId: string;
+  supplierId: string;
+  photoIndex: number;
+}) {
+  return mutateSupplierItemPhotos({
+    ...args,
+    mode: 'remove',
+  });
+}
+
+export async function deleteSupplierItem(args: {
+  itemId: string;
+  supplierId: string;
+}): Promise<{ ok: true } | { ok: false; message: string }> {
+  const client = requireSupabase();
+  const loadedItem = await loadSupplierItemPhotoRecord(args.itemId);
+
+  if (!loadedItem.ok) {
+    return loadedItem;
+  }
+
+  const item = loadedItem.item;
+  if (item.supplier_id !== args.supplierId) {
+    return {
+      ok: false,
+      message: 'You can only delete items you posted.',
+    };
+  }
+
+  if (!canSupplierDeleteItem(item.digital_status)) {
+    return {
+      ok: false,
+      message: 'Only items that are still in your supplier queue can be deleted.',
+    };
+  }
+
+  const { count, error: transactionError } = await client
+    .from('transactions')
+    .select('id', { count: 'exact', head: true })
+    .eq('item_id', args.itemId);
+
+  if (transactionError) {
+    captureException(transactionError, { flow: 'repo.deleteSupplierItem.transactions' });
+    return {
+      ok: false,
+      message: 'Unable to verify the current item activity right now.',
+    };
+  }
+
+  if ((count ?? 0) > 0) {
+    return {
+      ok: false,
+      message: 'This item already has payment activity and can no longer be deleted.',
+    };
+  }
+
+  const { data, error } = await client
+    .from('items')
+    .delete()
+    .eq('id', args.itemId)
+    .in('digital_status', [...supplierDeletableItemStatuses])
+    .select('id')
+    .maybeSingle<{ id: string }>();
+
+  if (error) {
+    captureException(error, { flow: 'repo.deleteSupplierItem' });
+    return {
+      ok: false,
+      message: 'Unable to delete this supplier item right now.',
+    };
+  }
+
+  if (!data) {
+    return {
+      ok: false,
+      message: 'This item is no longer deletable from the supplier dashboard.',
+    };
+  }
+
+  await removeStoragePaths(item.photo_paths ?? []);
+
+  return { ok: true };
+}
+
 export async function fetchLedger(userId: string | null): Promise<LedgerEntry[]> {
   if (!userId) {
     return [];
@@ -874,7 +1406,7 @@ export async function fetchLedger(userId: string | null): Promise<LedgerEntry[]>
   const client = requireSupabase();
   const { data, error } = await client
     .from('transactions')
-    .select('id,transaction_type,status,gross_amount_cents,currency_code,occurred_at,item_id')
+    .select('id,transaction_type,status,gross_amount_cents,currency_code,occurred_at,item_id,supplier_id,broker_id')
     .or(`broker_id.eq.${userId},supplier_id.eq.${userId}`)
     .order('occurred_at', { ascending: false })
     .limit(100);
@@ -884,20 +1416,47 @@ export async function fetchLedger(userId: string | null): Promise<LedgerEntry[]>
     throw new Error(error.message);
   }
 
-  return ((data as TransactionRecord[] | null | undefined) ?? []).map((row) => {
-    const isInflow = row.transaction_type.includes('payout');
+  return ((data as TransactionRecord[] | null | undefined) ?? []).flatMap((row) => {
     const currencyCode = resolveCurrencyCode(row.currency_code);
+    let direction: LedgerEntry['direction'] | null = null;
+    let label = row.transaction_type.replace(/_/g, ' ');
 
-    return {
+    if (row.transaction_type === 'supplier_payout') {
+      if (row.supplier_id !== userId) {
+        return [];
+      }
+      direction = 'in';
+    } else if (row.transaction_type === 'broker_payout') {
+      if (row.broker_id !== userId) {
+        return [];
+      }
+      direction = 'in';
+    } else if (row.transaction_type === 'claim_deposit' || row.transaction_type === 'claim_fee') {
+      if (row.broker_id !== userId) {
+        return [];
+      }
+      direction = 'out';
+      label = row.transaction_type === 'claim_deposit' ? 'claim deposit' : 'claim fee';
+    } else if (row.transaction_type === 'refund') {
+      if (row.broker_id !== userId) {
+        return [];
+      }
+      direction = 'in';
+      label = 'deposit refund';
+    } else {
+      return [];
+    }
+
+    return [{
       id: row.id,
-      label: row.transaction_type.replace(/_/g, ' '),
+      label,
       status: row.status,
-      amountText: `${isInflow ? '+' : '-'}${formatMoney(row.gross_amount_cents, currencyCode, 2)}`,
+      amountText: `${direction === 'in' ? '+' : '-'}${formatMoney(row.gross_amount_cents, currencyCode, 2)}`,
       amountCents: row.gross_amount_cents,
       currencyCode,
       occurredAt: row.occurred_at,
-      direction: isInflow ? 'in' : 'out',
-    };
+      direction,
+    }];
   });
 }
 
@@ -1004,7 +1563,7 @@ export async function runIngestionPipeline(args: {
 export async function createClaimFeeIntent(_claimId: string): Promise<ClaimFeeIntentResult> {
   return {
     ok: false,
-    message: 'Claim fee intents are created as part of the create-claim mutation.',
+    message: 'Claim deposit intents are created as part of the create-claim mutation.',
   };
 }
 

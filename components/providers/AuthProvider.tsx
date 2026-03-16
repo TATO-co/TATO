@@ -6,6 +6,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from 'react';
 
@@ -79,10 +80,28 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 
 const developmentApprovalBypassEnabled = runtimeConfig.appEnv === 'development';
 const AUTH_VALIDATE_TIMEOUT_MS = 5000;
+const AUTH_RECOVERY_RETRY_MS = 1500;
 const PROFILE_SYNC_TIMEOUT_MS = 10000;
 const PROFILE_SYNC_ERROR_MESSAGE = 'We could not restore your account access. Retry the sync or sign out.';
 const PERSONA_UPDATE_ERROR_MESSAGE = 'We could not save your workspace access. Retry or sign out.';
 const PROFILE_CACHE_KEY = 'tato:cached_profile';
+
+type SessionValidationResult =
+  | {
+      kind: 'none';
+      session: null;
+      user: null;
+    }
+  | {
+      kind: 'validated';
+      session: Session;
+      user: User;
+    }
+  | {
+      kind: 'deferred';
+      session: Session;
+      user: User;
+    };
 
 function resolveSupabaseAuthStorageKey() {
   const url = runtimeConfig.supabaseUrl;
@@ -343,11 +362,19 @@ export function AuthProvider({ children }: PropsWithChildren) {
   const [profile, setProfileRaw] = useState<ProfileRecord | null>(cachedProfile);
   const [profileError, setProfileError] = useState<string | null>(null);
   const [nextMode, setNextMode] = useState<AppMode | null>(null);
+  const authRecoveryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Wrapper that keeps the localStorage cache in sync with React state.
   const setProfile = useCallback((value: ProfileRecord | null) => {
     setProfileRaw(value);
     cacheProfile(value);
+  }, []);
+
+  const clearAuthRecovery = useCallback(() => {
+    if (authRecoveryTimerRef.current) {
+      clearTimeout(authRecoveryTimerRef.current);
+      authRecoveryTimerRef.current = null;
+    }
   }, []);
 
   const loadProfile = useCallback(
@@ -393,6 +420,106 @@ export function AuthProvider({ children }: PropsWithChildren) {
     [loadProfile],
   );
 
+  const validateSession = useCallback(
+    async (
+      candidateSession: Session | null,
+      errorFlow: string,
+    ): Promise<SessionValidationResult> => {
+      if (!supabase || !candidateSession?.user) {
+        return {
+          kind: 'none',
+          session: null,
+          user: null,
+        };
+      }
+
+      try {
+        const userResult = await withTimeout(
+          supabase.auth.getUser(),
+          AUTH_VALIDATE_TIMEOUT_MS,
+          'supabase.auth.getUser',
+        );
+
+        if (userResult.error || !userResult.data?.user) {
+          if (userResult.error) {
+            captureException(userResult.error, { flow: errorFlow });
+          }
+
+          return {
+            kind: 'deferred',
+            session: candidateSession,
+            user: candidateSession.user,
+          };
+        }
+
+        const { data: freshData } = await supabase.auth.getSession();
+        const resolvedSession = freshData?.session ?? candidateSession;
+
+        if (!resolvedSession?.user) {
+          return {
+            kind: 'none',
+            session: null,
+            user: null,
+          };
+        }
+
+        return {
+          kind: 'validated',
+          session: resolvedSession,
+          user: userResult.data.user,
+        };
+      } catch (error) {
+        captureException(error, { flow: errorFlow });
+        return {
+          kind: 'deferred',
+          session: candidateSession,
+          user: candidateSession.user,
+        };
+      }
+    },
+    [],
+  );
+
+  const scheduleAuthRecovery = useCallback((reason: string) => {
+    const sb = supabase;
+    if (!sb || authRecoveryTimerRef.current) {
+      return;
+    }
+
+    authRecoveryTimerRef.current = setTimeout(async () => {
+      authRecoveryTimerRef.current = null;
+
+      const { data } = await sb.auth.getSession();
+      const validation = await validateSession(
+        data?.session ?? null,
+        `${reason}.validate`,
+      );
+
+      if (validation.kind === 'none') {
+        setSession(null);
+        setUser(null);
+        setProfile(null);
+        setProfileError(null);
+        setLoading(false);
+        return;
+      }
+
+      if (validation.kind === 'deferred') {
+        scheduleAuthRecovery(reason);
+        return;
+      }
+
+      setSession(validation.session);
+      setUser(validation.user);
+      await syncProfile(
+        validation.user,
+        `${reason}.loadProfile`,
+        `${reason}.loadProfile.timeout`,
+      );
+      setLoading(false);
+    }, AUTH_RECOVERY_RETRY_MS);
+  }, [syncProfile, validateSession]);
+
   useEffect(() => {
     let mounted = true;
 
@@ -407,36 +534,8 @@ export function AuthProvider({ children }: PropsWithChildren) {
       let resolvedSession: Session | null = null;
 
       try {
-        // Step 1: Read the cached session to see if this is a returning user.
         const { data: cachedData } = await supabase.auth.getSession();
         resolvedSession = cachedData?.session ?? null;
-
-        // Step 2: If we have a cached session, validate the token server-side.
-        // getUser() hits the Supabase Auth server and triggers a JWT refresh
-        // when the access token is expired (using the refresh token).
-        if (resolvedSession) {
-          try {
-            const userResult = await withTimeout(
-              supabase.auth.getUser(),
-              AUTH_VALIDATE_TIMEOUT_MS,
-              'supabase.auth.getUser',
-            );
-
-            if (userResult.error) {
-              // Validation failed but we have a cached session — keep it.
-              // autoRefreshToken will handle recovery asynchronously.
-              captureException(userResult.error, { flow: 'auth.initialize.validate' });
-            } else if (userResult.data?.user) {
-              // Validation succeeded — re-read the (now-refreshed) session.
-              const { data: freshData } = await supabase.auth.getSession();
-              resolvedSession = freshData?.session ?? resolvedSession;
-            }
-          } catch (validateError) {
-            // Timeout or network error — keep the cached session and let
-            // autoRefreshToken recover in the background.
-            captureException(validateError, { flow: 'auth.initialize.validate.timeout' });
-          }
-        }
       } catch (error) {
         captureException(error, { flow: 'auth.initialize.timeout' });
       }
@@ -445,9 +544,39 @@ export function AuthProvider({ children }: PropsWithChildren) {
         return;
       }
 
-      setSession(resolvedSession);
-      setUser(resolvedSession?.user ?? null);
-      await syncProfile(resolvedSession?.user ?? null, 'auth.loadProfile', 'auth.loadProfile.timeout');
+      const validation = await validateSession(
+        resolvedSession,
+        'auth.initialize.validate',
+      );
+
+      if (!mounted) {
+        return;
+      }
+
+      if (validation.kind === 'none') {
+        setSession(null);
+        setUser(null);
+        setProfile(null);
+        setProfileError(null);
+        setLoading(false);
+        return;
+      }
+
+      setSession(validation.session);
+      setUser(validation.user);
+
+      if (validation.kind === 'deferred') {
+        setProfileError(null);
+        setLoading(true);
+        scheduleAuthRecovery('auth.initialize.recovery');
+        return;
+      }
+
+      await syncProfile(
+        validation.user,
+        'auth.loadProfile',
+        'auth.loadProfile.timeout',
+      );
 
       if (mounted) {
         setLoading(false);
@@ -471,6 +600,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
 
       // SIGNED_OUT — clear everything immediately, no DB call needed.
       if (event === 'SIGNED_OUT') {
+        clearAuthRecovery();
         setSession(null);
         setUser(null);
         setProfile(null);
@@ -486,11 +616,24 @@ export function AuthProvider({ children }: PropsWithChildren) {
       if (event === 'TOKEN_REFRESHED') {
         setSession(changedSession);
         setUser(changedSession?.user ?? null);
+        clearAuthRecovery();
+
+        if (changedSession?.user) {
+          await syncProfile(
+            changedSession.user,
+            'auth.tokenRefreshed.loadProfile',
+            'auth.tokenRefreshed.timeout',
+          );
+        }
+
+        setLoading(false);
         return;
       }
 
       // SIGNED_IN, USER_UPDATED, PASSWORD_RECOVERY, MFA_CHALLENGE_VERIFIED
       // — these require a profile re-sync.
+      clearAuthRecovery();
+      setLoading(true);
       setSession(changedSession);
       setUser(changedSession?.user ?? null);
       await syncProfile(
@@ -504,9 +647,10 @@ export function AuthProvider({ children }: PropsWithChildren) {
 
     return () => {
       mounted = false;
+      clearAuthRecovery();
       subscription.unsubscribe();
     };
-  }, [syncProfile]);
+  }, [clearAuthRecovery, scheduleAuthRecovery, syncProfile, validateSession]);
 
   const signInWithPassword = useCallback(async (email: string, password: string) => {
     if (!supabase) {
@@ -656,6 +800,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
       }
     }
 
+    clearAuthRecovery();
     setSession(null);
     setUser(null);
     setProfile(null);
@@ -663,30 +808,47 @@ export function AuthProvider({ children }: PropsWithChildren) {
     setLoading(false);
     setNextMode(null);
     setTelemetryUser(null);
-  }, []);
+  }, [clearAuthRecovery]);
 
   const refreshProfile = useCallback(async () => {
-    // Read the current user fresh from Supabase instead of relying on
-    // the `user` state variable, which may be stale when this callback
-    // is invoked (e.g. from the session-error retry button).
-    let currentUser: User | null = session?.user ?? user ?? null;
-    if (supabase) {
-      try {
-        const { data, error } = await supabase.auth.getUser();
-        if (error) {
-          captureException(error, { flow: 'auth.refreshProfile.getUser' });
-        }
-
-        currentUser = data?.user ?? currentUser;
-        if (currentUser) {
-          setUser(currentUser);
-        }
-      } catch {
-        // Fall through — keep the last known user if the auth server is briefly unavailable.
-      }
+    if (!supabase) {
+      await syncProfile(user, 'auth.refreshProfile', 'auth.refreshProfile.timeout');
+      return;
     }
-    await syncProfile(currentUser, 'auth.refreshProfile', 'auth.refreshProfile.timeout');
-  }, [session, syncProfile, user]);
+
+    setLoading(true);
+    clearAuthRecovery();
+
+    const validation = await validateSession(
+      session,
+      'auth.refreshProfile.validate',
+    );
+
+    if (validation.kind === 'none') {
+      setSession(null);
+      setUser(null);
+      setProfile(null);
+      setProfileError(null);
+      setLoading(false);
+      return;
+    }
+
+    setSession(validation.session);
+    setUser(validation.user);
+
+    if (validation.kind === 'deferred') {
+      setProfileError(null);
+      scheduleAuthRecovery('auth.refreshProfile.recovery');
+      return;
+    }
+
+    await syncProfile(
+      validation.user,
+      'auth.refreshProfile',
+      'auth.refreshProfile.timeout',
+    );
+    setLoading(false);
+  }, [clearAuthRecovery, scheduleAuthRecovery, session, syncProfile, user, validateSession]);
 
   const switchMode = useCallback(
     async (mode: AppMode) => {

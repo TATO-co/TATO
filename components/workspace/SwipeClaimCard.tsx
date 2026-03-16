@@ -95,7 +95,7 @@ function SwipeClaimCardInner({
                 <View className="flex-row items-center justify-between">
                   <View className="rounded-full bg-tato-accent px-3 py-2">
                     <Text className="font-mono text-xs font-semibold text-white">
-                      +{formatMoney(item.potentialProfitCents, item.currencyCode, 2)} PROFIT
+                      +{formatMoney(item.estimatedBrokerPayoutCents, item.currencyCode, 2)} PAYOUT
                     </Text>
                   </View>
 

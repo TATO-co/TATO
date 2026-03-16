@@ -5,12 +5,12 @@ import Animated, { FadeIn, FadeOut, SlideInRight, SlideOutRight } from 'react-na
 import { formatUSD } from '@/lib/models';
 
 export type BrokerDesktopControlEntry = 'search' | 'filters';
-export type BrokerDesktopFocus = 'Nearby' | 'High Profit' | 'Electronics' | 'Shippable';
-export type BrokerDesktopSort = 'Newest' | 'Best Profit' | 'Best AI';
+export type BrokerDesktopFocus = 'Nearby' | 'Best Payout' | 'Electronics' | 'Shippable';
+export type BrokerDesktopSort = 'Newest' | 'Best Payout' | 'Best AI';
 export type BrokerShippingMode = 'all' | 'local' | 'shippable';
 
-export const brokerDesktopFocusOrder: BrokerDesktopFocus[] = ['Nearby', 'High Profit', 'Electronics', 'Shippable'];
-export const brokerDesktopSortOrder: BrokerDesktopSort[] = ['Newest', 'Best Profit', 'Best AI'];
+export const brokerDesktopFocusOrder: BrokerDesktopFocus[] = ['Nearby', 'Best Payout', 'Electronics', 'Shippable'];
+export const brokerDesktopSortOrder: BrokerDesktopSort[] = ['Newest', 'Best Payout', 'Best AI'];
 export const brokerProfitThresholds = [0, 4000, 6000, 8000] as const;
 export const brokerAiThresholds = [0, 0.9, 0.95] as const;
 
@@ -77,7 +77,7 @@ type BrokerDesktopControlsDrawerProps = {
   cityOptions: Array<{ city: string; count: number }>;
   focusFilters: Record<BrokerDesktopFocus, boolean>;
   shippingMode: BrokerShippingMode;
-  minProfitCents: number;
+  minBrokerPayoutCents: number;
   minAiConfidence: number;
   sort: BrokerDesktopSort;
   resultCount: number;
@@ -85,7 +85,7 @@ type BrokerDesktopControlsDrawerProps = {
   onToggleCity: (city: string) => void;
   onToggleFocusFilter: (filter: BrokerDesktopFocus) => void;
   onSetShippingMode: (mode: BrokerShippingMode) => void;
-  onSetMinProfitCents: (value: number) => void;
+  onSetMinBrokerPayoutCents: (value: number) => void;
   onSetMinAiConfidence: (value: number) => void;
   onSetSort: (sort: BrokerDesktopSort) => void;
   onClear: () => void;
@@ -101,7 +101,7 @@ export function BrokerDesktopControlsDrawer({
   cityOptions,
   focusFilters,
   shippingMode,
-  minProfitCents,
+  minBrokerPayoutCents,
   minAiConfidence,
   sort,
   resultCount,
@@ -109,7 +109,7 @@ export function BrokerDesktopControlsDrawer({
   onToggleCity,
   onToggleFocusFilter,
   onSetShippingMode,
-  onSetMinProfitCents,
+  onSetMinBrokerPayoutCents,
   onSetMinAiConfidence,
   onSetSort,
   onClear,
@@ -223,21 +223,21 @@ export function BrokerDesktopControlsDrawer({
             </View>
 
             <View>
-              <SectionLabel label="Minimum Profit" detail="Ignore deals that do not clear your personal margin threshold." />
+              <SectionLabel label="Minimum Payout" detail="Ignore deals that do not clear your broker payout threshold." />
               <View className="mt-3 flex-row flex-wrap gap-2">
                 {brokerProfitThresholds.map((value) => (
                   <ChoicePill
-                    active={minProfitCents === value}
+                    active={minBrokerPayoutCents === value}
                     key={value}
                     label={value === 0 ? 'Any' : `${formatUSD(value, 0)}+`}
-                    onPress={() => onSetMinProfitCents(value)}
+                    onPress={() => onSetMinBrokerPayoutCents(value)}
                   />
                 ))}
               </View>
             </View>
 
             <View>
-              <SectionLabel label="AI Confidence" detail="Trim out weak ingestion reads before you spend claim fees." />
+              <SectionLabel label="AI Confidence" detail="Trim out weak ingestion reads before you post a claim deposit." />
               <View className="mt-3 flex-row flex-wrap gap-2">
                 {brokerAiThresholds.map((value) => (
                   <ChoicePill

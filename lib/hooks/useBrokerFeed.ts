@@ -95,7 +95,7 @@ export function useBrokerFeed() {
         return;
       }
 
-      trackEvent('claim_attempt', { itemId: item.id, hubId: item.hubId, claimFeeCents: item.claimFeeCents });
+      trackEvent('claim_attempt', { itemId: item.id, hubId: item.hubId, claimDepositCents: item.claimDepositCents });
       setClaimStateById((current) => ({ ...current, [item.id]: 'pending' }));
       setClaimErrorById((current) => ({ ...current, [item.id]: undefined }));
 
@@ -103,7 +103,7 @@ export function useBrokerFeed() {
         brokerId: user.id,
         itemId: item.id,
         hubId: item.hubId,
-        claimFeeCents: item.claimFeeCents,
+        claimDepositCents: item.claimDepositCents,
       });
 
       if (!result.ok) {

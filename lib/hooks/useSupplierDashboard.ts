@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 
-import { fetchSupplierDashboard } from '@/lib/repositories/tato';
+import { deleteSupplierItem, fetchSupplierDashboard } from '@/lib/repositories/tato';
 import { useAuth } from '@/components/providers/AuthProvider';
 import type { SupplierItem, SupplierMetric } from '@/lib/models';
 import { supabase } from '@/lib/supabase';
@@ -11,6 +11,7 @@ export function useSupplierDashboard() {
   const [items, setItems] = useState<SupplierItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [deletingItemId, setDeletingItemId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(
@@ -85,7 +86,29 @@ export function useSupplierDashboard() {
     items,
     loading,
     refreshing,
+    deletingItemId,
     error,
     refresh: () => load(true),
+    deleteItem: async (itemId: string) => {
+      if (!user?.id) {
+        return {
+          ok: false as const,
+          message: 'You must be signed in as a supplier to delete inventory.',
+        };
+      }
+
+      setDeletingItemId(itemId);
+      const result = await deleteSupplierItem({
+        itemId,
+        supplierId: user.id,
+      });
+      setDeletingItemId((current) => (current === itemId ? null : current));
+
+      if (result.ok) {
+        await load(true);
+      }
+
+      return result;
+    },
   };
 }

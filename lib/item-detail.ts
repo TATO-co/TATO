@@ -14,8 +14,22 @@ export type SupplierItemUpdatePayload = {
   suggestedListPriceCents: number;
 };
 
+export const supplierEditableItemStatuses = ['supplier_draft', 'ready_for_claim'] as const;
+export const supplierDeletableItemStatuses = [
+  'supplier_draft',
+  'ai_ingestion_pending',
+  'ai_ingestion_complete',
+  'ready_for_claim',
+  'claim_expired',
+  'withdrawn',
+] as const;
+
 export function canSupplierEditItem(digitalStatus: string | null | undefined) {
-  return digitalStatus === 'supplier_draft' || digitalStatus === 'ready_for_claim';
+  return supplierEditableItemStatuses.includes((digitalStatus ?? '') as (typeof supplierEditableItemStatuses)[number]);
+}
+
+export function canSupplierDeleteItem(digitalStatus: string | null | undefined) {
+  return supplierDeletableItemStatuses.includes((digitalStatus ?? '') as (typeof supplierDeletableItemStatuses)[number]);
 }
 
 export function formatEditablePriceInput(cents: number) {

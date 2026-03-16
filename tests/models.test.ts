@@ -4,7 +4,13 @@ import {
   buildCrosslistingDescriptions,
   createRequestKey,
   formatMoney,
+  lifecycleFromClaimStatus,
+  normalizeClaimPlatformVariants,
+  normalizeClaimStatus,
+  normalizeExternalListingRefs,
   resolveCurrencyCode,
+  serializeExternalListingRefs,
+  slugifyClaimPlatform,
 } from '@/lib/models';
 
 describe('models helpers', () => {
@@ -27,6 +33,58 @@ describe('models helpers', () => {
 
     expect(descriptions).toHaveLength(3);
     expect(descriptions[0]?.description).toContain('Sony WH-1000XM5');
+  });
+
+  it('normalizes claim statuses and lifecycle safely', () => {
+    expect(normalizeClaimStatus('listing_generated')).toBe('listing_generated');
+    expect(normalizeClaimStatus('totally_unknown')).toBe('active');
+    expect(lifecycleFromClaimStatus('active')).toBe('claimed');
+    expect(lifecycleFromClaimStatus('listed_externally')).toBe('listed');
+    expect(lifecycleFromClaimStatus('cancelled')).toBe('inventoried');
+  });
+
+  it('normalizes and serializes external listing refs', () => {
+    const refs = normalizeExternalListingRefs({
+      ebay: {
+        platform: 'eBay',
+        url: 'https://example.com/ebay/123',
+        external_id: '123',
+        source: 'manual',
+        updated_at: '2026-03-16T20:00:00.000Z',
+      },
+    });
+
+    expect(refs).toEqual([
+      {
+        key: 'ebay',
+        platform: 'eBay',
+        url: 'https://example.com/ebay/123',
+        externalId: '123',
+        source: 'manual',
+        updatedAt: '2026-03-16T20:00:00.000Z',
+      },
+    ]);
+    expect(serializeExternalListingRefs(refs)).toEqual({
+      ebay: {
+        platform: 'eBay',
+        url: 'https://example.com/ebay/123',
+        external_id: '123',
+        source: 'manual',
+        updated_at: '2026-03-16T20:00:00.000Z',
+      },
+    });
+    expect(slugifyClaimPlatform('Facebook Marketplace')).toBe('facebook_marketplace');
+  });
+
+  it('normalizes AI platform variants', () => {
+    expect(
+      normalizeClaimPlatformVariants({
+        ebay: { title: 'Sony XM5', description: 'Noise-canceling headphones' },
+        invalid: { foo: 'bar' },
+      }),
+    ).toEqual({
+      ebay: { title: 'Sony XM5', description: 'Noise-canceling headphones' },
+    });
   });
 
   it('creates unique request keys with the expected prefix', () => {

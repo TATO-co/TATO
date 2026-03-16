@@ -34,7 +34,7 @@ type BrokerFeedPanelProps = {
 
 const defaultDesktopFocusFilters: Record<BrokerDesktopFocus, boolean> = {
   Nearby: true,
-  'High Profit': false,
+  'Best Payout': false,
   Electronics: false,
   Shippable: false,
 };
@@ -44,8 +44,8 @@ function matchesCategory(category: BrokerCategory, item: BrokerFeedStateItem) {
     return item.city === 'St. Louis' || item.city === 'Chicago';
   }
 
-  if (category === 'High Profit') {
-    return item.potentialProfitCents >= 5000;
+  if (category === 'Best Payout') {
+    return item.estimatedBrokerPayoutCents >= 5000;
   }
 
   if (category === 'Electronics') {
@@ -65,8 +65,8 @@ function matchesDesktopPresetFilter(filter: BrokerDesktopFocus, item: BrokerFeed
     return item.city === 'St. Louis' || item.city === 'Chicago';
   }
 
-  if (filter === 'High Profit') {
-    return item.potentialProfitCents >= 5000;
+  if (filter === 'Best Payout') {
+    return item.estimatedBrokerPayoutCents >= 5000;
   }
 
   if (filter === 'Electronics') {
@@ -127,7 +127,7 @@ export function BrokerFeedPanel({
   }));
   const [desktopSort, setDesktopSort] = useState<BrokerDesktopSort>('Newest');
   const [shippingMode, setShippingMode] = useState<BrokerShippingMode>('all');
-  const [minProfitCents, setMinProfitCents] = useState(0);
+  const [minBrokerPayoutCents, setMinBrokerPayoutCents] = useState(0);
   const [minAiConfidence, setMinAiConfidence] = useState(0);
   const { items, loading, error, claimStateById, claimErrorById, claimedCount, refresh, claimItem } = useBrokerFeed();
   const { flips } = useRecentFlips();
@@ -178,7 +178,7 @@ export function BrokerFeedPanel({
           return false;
         }
 
-        if (item.potentialProfitCents < minProfitCents) {
+        if (item.estimatedBrokerPayoutCents < minBrokerPayoutCents) {
           return false;
         }
 
@@ -189,8 +189,8 @@ export function BrokerFeedPanel({
         return true;
       });
 
-      if (desktopSort === 'Best Profit') {
-        sorted.sort((left, right) => right.potentialProfitCents - left.potentialProfitCents);
+      if (desktopSort === 'Best Payout') {
+        sorted.sort((left, right) => right.estimatedBrokerPayoutCents - left.estimatedBrokerPayoutCents);
       } else if (desktopSort === 'Best AI') {
         sorted.sort((left, right) => right.aiIngestionConfidence - left.aiIngestionConfidence);
       }
@@ -205,7 +205,7 @@ export function BrokerFeedPanel({
     desktopSort,
     items,
     minAiConfidence,
-    minProfitCents,
+    minBrokerPayoutCents,
     normalizedSearchQuery,
     resolvedDesktop,
     selectedCities,
@@ -213,12 +213,12 @@ export function BrokerFeedPanel({
   ]);
 
   const totalPotential = useMemo(
-    () => activeItems.reduce((sum, item) => sum + item.potentialProfitCents, 0),
+    () => activeItems.reduce((sum, item) => sum + item.estimatedBrokerPayoutCents, 0),
     [activeItems],
   );
   const reportingCurrency = activeItems[0]?.currencyCode ?? 'USD';
   const averageClaimFee = useMemo(
-    () => (activeItems.length ? Math.round(activeItems.reduce((sum, item) => sum + item.claimFeeCents, 0) / activeItems.length) : 0),
+    () => (activeItems.length ? Math.round(activeItems.reduce((sum, item) => sum + item.claimDepositCents, 0) / activeItems.length) : 0),
     [activeItems],
   );
   const shippableCount = useMemo(() => activeItems.filter((item) => item.shippable).length, [activeItems]);
@@ -234,7 +234,7 @@ export function BrokerFeedPanel({
       ...brokerDesktopFocusOrder.filter((filter) => desktopFocusFilters[filter]),
       ...selectedCities,
       shippingMode === 'local' ? 'Pickup only' : shippingMode === 'shippable' ? 'Shippable only' : null,
-      minProfitCents ? `${formatMoney(minProfitCents, reportingCurrency, 0)}+ profit` : null,
+      minBrokerPayoutCents ? `${formatMoney(minBrokerPayoutCents, reportingCurrency, 0)}+ payout` : null,
       minAiConfidence ? `${Math.round(minAiConfidence * 100)}%+ AI` : null,
       desktopSort !== 'Newest' ? desktopSort : null,
     ].filter(Boolean) as string[];
@@ -244,7 +244,7 @@ export function BrokerFeedPanel({
     desktopFocusFilters,
     desktopSort,
     minAiConfidence,
-    minProfitCents,
+    minBrokerPayoutCents,
     normalizedSearchQuery,
     useAdvancedFeedMode,
     reportingCurrency,
@@ -259,7 +259,7 @@ export function BrokerFeedPanel({
     setDesktopFocusFilters({ ...defaultDesktopFocusFilters });
     setDesktopSort('Newest');
     setShippingMode('all');
-    setMinProfitCents(0);
+    setMinBrokerPayoutCents(0);
     setMinAiConfidence(0);
   };
 
@@ -276,7 +276,7 @@ export function BrokerFeedPanel({
     }));
   };
 
-  const gridCardWidth = desktopGridColumns === 1 ? '100%' : desktopGridColumns === 2 ? '48.8%' : '32.1%';
+  const gridCardWidth = desktopGridColumns === 1 ? '100%' : desktopGridColumns === 2 ? '47.5%' : '31.5%';
 
   if (loading) {
     if (useAdvancedFeedMode) {
@@ -286,7 +286,7 @@ export function BrokerFeedPanel({
           <SkeletonCard borderRadius={28} height={isTablet ? 300 : stackHero ? 360 : 250} />
           <SkeletonCard borderRadius={22} height={88} />
           <View className={showRailBesideFeed ? 'flex-row gap-6' : 'gap-5'}>
-            <View className="flex-1 flex-row flex-wrap justify-between gap-y-5">
+            <View className="flex-1 flex-row flex-wrap gap-5">
               {[1, 2, 3].slice(0, desktopGridColumns === 1 ? 1 : desktopGridColumns === 2 ? 2 : 3).map((i) => (
                 <View key={i} style={{ width: gridCardWidth }}>
                   <SkeletonCard borderRadius={24} height={560} />
@@ -380,9 +380,9 @@ export function BrokerFeedPanel({
                 </Text>
 
                 <View className="mt-6 flex-row flex-wrap gap-4">
-                  <SnapshotMetric label="Potential Spread" tone="profit" value={formatMoney(totalPotential, reportingCurrency, 0)} />
+                  <SnapshotMetric label="Projected Broker Payout" tone="profit" value={formatMoney(totalPotential, reportingCurrency, 0)} />
                   <SnapshotMetric label="Open Claims" tone="accent" value={`${claimedCount}`} />
-                  <SnapshotMetric label="Avg. Claim Fee" value={formatMoney(averageClaimFee, reportingCurrency, 2)} />
+                  <SnapshotMetric label="Avg. Claim Deposit" value={formatMoney(averageClaimFee, reportingCurrency, 2)} />
                 </View>
               </View>
 
@@ -395,12 +395,12 @@ export function BrokerFeedPanel({
 
                     <View className="mt-4 gap-2">
                       <View className="flex-row items-center justify-between rounded-2xl bg-white/5 px-4 py-3">
-                        <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-dim">Profit</Text>
-                        <Text className="text-sm font-bold text-tato-profit">{formatMoney(featuredItem.potentialProfitCents, featuredItem.currencyCode, 0)}</Text>
+                        <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-dim">Broker Payout</Text>
+                        <Text className="text-sm font-bold text-tato-profit">{formatMoney(featuredItem.estimatedBrokerPayoutCents, featuredItem.currencyCode, 0)}</Text>
                       </View>
                       <View className="flex-row items-center justify-between rounded-2xl bg-white/5 px-4 py-3">
-                        <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-dim">Claim Fee</Text>
-                        <Text className="text-sm font-bold text-tato-accent">{formatMoney(featuredItem.claimFeeCents, featuredItem.currencyCode, 2)}</Text>
+                        <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-dim">Claim Deposit</Text>
+                        <Text className="text-sm font-bold text-tato-accent">{formatMoney(featuredItem.claimDepositCents, featuredItem.currencyCode, 2)}</Text>
                       </View>
                       <View className="flex-row items-center justify-between rounded-2xl bg-white/5 px-4 py-3">
                         <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-dim">AI Confidence</Text>
@@ -464,7 +464,7 @@ export function BrokerFeedPanel({
                 {hasError || isEmpty ? (
                   <FeedState error={error} empty={isEmpty} emptyLabel="No items match this filter set yet." onRetry={refresh} />
                 ) : (
-                  <View className="flex-row flex-wrap justify-between gap-y-5">
+                  <View className="flex-row flex-wrap gap-5">
                     {activeItems.map((item) => {
                       const claimState = claimStateById[item.id] ?? 'idle';
                       return (
@@ -495,7 +495,7 @@ export function BrokerFeedPanel({
               {hasError || isEmpty ? (
                 <FeedState error={error} empty={isEmpty} emptyLabel="No items match this filter set yet." onRetry={refresh} />
               ) : (
-                <View className="flex-row flex-wrap justify-between gap-y-5">
+                <View className="flex-row flex-wrap gap-5">
                   {activeItems.map((item) => {
                     const claimState = claimStateById[item.id] ?? 'idle';
                     return (
@@ -526,12 +526,12 @@ export function BrokerFeedPanel({
           entry={desktopControlsEntry}
           focusFilters={desktopFocusFilters}
           minAiConfidence={minAiConfidence}
-          minProfitCents={minProfitCents}
+          minBrokerPayoutCents={minBrokerPayoutCents}
           onChangeSearchQuery={setSearchQuery}
           onClear={clearDesktopControls}
           onClose={onCloseDesktopControls ?? (() => undefined)}
           onSetMinAiConfidence={setMinAiConfidence}
-          onSetMinProfitCents={setMinProfitCents}
+          onSetMinBrokerPayoutCents={setMinBrokerPayoutCents}
           onSetShippingMode={setShippingMode}
           onSetSort={setDesktopSort}
           onToggleCity={toggleCity}
@@ -567,9 +567,9 @@ export function BrokerFeedPanel({
               </View>
 
               <View className="flex-row flex-wrap gap-4">
-                <SnapshotMetric label="Potential Spread" tone="profit" value={formatMoney(totalPotential, reportingCurrency, 0)} />
+                <SnapshotMetric label="Projected Broker Payout" tone="profit" value={formatMoney(totalPotential, reportingCurrency, 0)} />
                 <SnapshotMetric label="Open Claims" tone="accent" value={`${claimedCount}`} />
-                <SnapshotMetric label="Avg. Claim Fee" value={formatMoney(averageClaimFee, reportingCurrency, 2)} />
+                <SnapshotMetric label="Avg. Claim Deposit" value={formatMoney(averageClaimFee, reportingCurrency, 2)} />
               </View>
 
               <View className="rounded-[24px] border border-white/10 bg-[#08162b]/80 p-5">
@@ -580,9 +580,9 @@ export function BrokerFeedPanel({
                     <Text className="mt-1 text-sm leading-6 text-tato-muted">{featuredItem.subtitle}</Text>
                     <View className="mt-4 flex-row gap-3">
                       <View className="flex-1 rounded-2xl bg-white/5 px-4 py-3">
-                        <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-dim">Profit</Text>
+                        <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-dim">Broker Payout</Text>
                         <Text className="mt-1 text-sm font-bold text-tato-profit">
-                          {formatMoney(featuredItem.potentialProfitCents, featuredItem.currencyCode, 0)}
+                          {formatMoney(featuredItem.estimatedBrokerPayoutCents, featuredItem.currencyCode, 0)}
                         </Text>
                       </View>
                       <View className="flex-1 rounded-2xl bg-white/5 px-4 py-3">
@@ -650,7 +650,7 @@ export function BrokerFeedPanel({
             {hasError || isEmpty ? (
               <FeedState error={error} empty={isEmpty} emptyLabel="No items match this filter set yet." onRetry={refresh} />
             ) : (
-              <View className="flex-row flex-wrap justify-between gap-y-5">
+              <View className="flex-row flex-wrap gap-5">
                 {activeItems.map((item) => {
                   const claimState = claimStateById[item.id] ?? 'idle';
                   return (
@@ -680,12 +680,12 @@ export function BrokerFeedPanel({
           entry={desktopControlsEntry}
           focusFilters={desktopFocusFilters}
           minAiConfidence={minAiConfidence}
-          minProfitCents={minProfitCents}
+          minBrokerPayoutCents={minBrokerPayoutCents}
           onChangeSearchQuery={setSearchQuery}
           onClear={clearDesktopControls}
           onClose={onCloseDesktopControls ?? (() => undefined)}
           onSetMinAiConfidence={setMinAiConfidence}
-          onSetMinProfitCents={setMinProfitCents}
+          onSetMinBrokerPayoutCents={setMinBrokerPayoutCents}
           onSetShippingMode={setShippingMode}
           onSetSort={setDesktopSort}
           onToggleCity={toggleCity}

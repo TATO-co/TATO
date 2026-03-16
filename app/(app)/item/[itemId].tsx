@@ -1,3 +1,4 @@
+import * as ImagePicker from 'expo-image-picker';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { SymbolView } from 'expo-symbols';
 import { useEffect, useMemo, useState } from 'react';
@@ -25,7 +26,13 @@ import {
 } from '@/lib/item-detail';
 import { getLiveIntakeCompletionCopy } from '@/lib/liveIntake/platform';
 import { formatMoney } from '@/lib/models';
-import { updateSupplierItemDraft } from '@/lib/repositories/tato';
+import {
+  appendSupplierItemPhoto,
+  removeSupplierItemPhoto,
+  replaceSupplierItemPhoto,
+  updateSupplierItemDraft,
+} from '@/lib/repositories/tato';
+import { confirmDestructiveAction } from '@/lib/ui';
 
 function humanizeStatus(value: string) {
   return value.replace(/_/g, ' ').replace(/\b\w/g, (match) => match.toUpperCase());
@@ -111,6 +118,10 @@ export default function ItemDetailsScreen() {
   const [savingSupplierDraft, setSavingSupplierDraft] = useState(false);
   const [supplierSaveError, setSupplierSaveError] = useState<string | null>(null);
   const [supplierSaveSuccess, setSupplierSaveSuccess] = useState<string | null>(null);
+  const [selectedPhotoIndex, setSelectedPhotoIndex] = useState(0);
+  const [photoActionKey, setPhotoActionKey] = useState<string | null>(null);
+  const [photoActionError, setPhotoActionError] = useState<string | null>(null);
+  const [photoActionSuccess, setPhotoActionSuccess] = useState<string | null>(null);
 
   useEffect(() => {
     if (!detail) {
@@ -124,6 +135,15 @@ export default function ItemDetailsScreen() {
       floorPriceInput: formatEditablePriceInput(detail.floorPriceCents),
       suggestedListPriceInput: formatEditablePriceInput(detail.suggestedListPriceCents),
     });
+    setSelectedPhotoIndex((current) => {
+      if (!detail.photoUrls.length) {
+        return 0;
+      }
+
+      return Math.min(current, detail.photoUrls.length - 1);
+    });
+    setPhotoActionError(null);
+    setPhotoActionSuccess(null);
     setSupplierSaveError(null);
     setSupplierSaveSuccess(null);
   }, [detail]);
@@ -150,13 +170,14 @@ export default function ItemDetailsScreen() {
 
     return JSON.stringify(supplierDraft) !== JSON.stringify(supplierEditBaseline);
   }, [supplierDraft, supplierEditBaseline]);
+  const activePhotoUrl = detail?.photoUrls[selectedPhotoIndex] ?? detail?.imageUrl ?? null;
 
   const handleShare = async () => {
     if (!detail) {
       return;
     }
 
-    const payload = `${detail.title}\n${detail.description}\nClaim fee: ${formatMoney(detail.claimFeeCents, detail.currencyCode, 2)}`;
+    const payload = `${detail.title}\n${detail.description}\nClaim deposit: ${formatMoney(detail.claimDepositCents, detail.currencyCode, 2)}`;
     try {
       await Share.share({ message: payload });
     } catch {
@@ -204,6 +225,127 @@ export default function ItemDetailsScreen() {
 
     await refresh();
     setSupplierSaveSuccess('Supplier review saved.');
+  };
+
+  const pickPhotoAsset = async () => {
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: true,
+      quality: 0.92,
+    });
+
+    if (result.canceled || !result.assets?.length) {
+      return null;
+    }
+
+    return {
+      uri: result.assets[0].uri,
+      mimeType: result.assets[0].mimeType ?? undefined,
+    };
+  };
+
+  const handleAppendPhoto = async () => {
+    if (!detail || !supplierCanEdit || !user?.id) {
+      return;
+    }
+
+    const asset = await pickPhotoAsset();
+    if (!asset) {
+      return;
+    }
+
+    setPhotoActionKey('append');
+    setPhotoActionError(null);
+    setPhotoActionSuccess(null);
+
+    const result = await appendSupplierItemPhoto({
+      itemId: detail.id,
+      supplierId: user.id,
+      imageUri: asset.uri,
+      mimeType: asset.mimeType,
+    });
+
+    setPhotoActionKey(null);
+
+    if (!result.ok) {
+      setPhotoActionError(result.message);
+      return;
+    }
+
+    setSelectedPhotoIndex(Math.max(0, result.detail.photoUrls.length - 1));
+    await refresh();
+    setPhotoActionSuccess('Item photos updated.');
+  };
+
+  const handleReplacePhoto = async (photoIndex: number) => {
+    if (!detail || !supplierCanEdit || !user?.id) {
+      return;
+    }
+
+    const asset = await pickPhotoAsset();
+    if (!asset) {
+      return;
+    }
+
+    setPhotoActionKey(`replace:${photoIndex}`);
+    setPhotoActionError(null);
+    setPhotoActionSuccess(null);
+
+    const result = await replaceSupplierItemPhoto({
+      itemId: detail.id,
+      supplierId: user.id,
+      photoIndex,
+      imageUri: asset.uri,
+      mimeType: asset.mimeType,
+    });
+
+    setPhotoActionKey(null);
+
+    if (!result.ok) {
+      setPhotoActionError(result.message);
+      return;
+    }
+
+    setSelectedPhotoIndex(photoIndex);
+    await refresh();
+    setPhotoActionSuccess('Item photos updated.');
+  };
+
+  const handleRemovePhoto = async (photoIndex: number) => {
+    if (!detail || !supplierCanEdit || !user?.id) {
+      return;
+    }
+
+    const confirmed = await confirmDestructiveAction({
+      title: 'Remove photo?',
+      message: 'This photo will be removed from the item detail.',
+      confirmLabel: 'Remove Photo',
+    });
+
+    if (!confirmed) {
+      return;
+    }
+
+    setPhotoActionKey(`remove:${photoIndex}`);
+    setPhotoActionError(null);
+    setPhotoActionSuccess(null);
+
+    const result = await removeSupplierItemPhoto({
+      itemId: detail.id,
+      supplierId: user.id,
+      photoIndex,
+    });
+
+    setPhotoActionKey(null);
+
+    if (!result.ok) {
+      setPhotoActionError(result.message);
+      return;
+    }
+
+    setSelectedPhotoIndex((current) => Math.min(current, Math.max(0, result.detail.photoUrls.length - 1)));
+    await refresh();
+    setPhotoActionSuccess('Item photos updated.');
   };
 
   return (
@@ -259,7 +401,7 @@ export default function ItemDetailsScreen() {
             ) : null}
 
             <View className="overflow-hidden rounded-[24px] border border-tato-line bg-tato-panel">
-              <Image className="h-[320px] w-full" resizeMode="cover" source={{ uri: detail.imageUrl }} />
+              <Image className="h-[320px] w-full" resizeMode="cover" source={{ uri: activePhotoUrl ?? detail.imageUrl }} />
               <View className="p-5">
                 <View className="flex-row flex-wrap gap-2">
                   {fromLiveIntake ? (
@@ -288,6 +430,42 @@ export default function ItemDetailsScreen() {
 
                 <Text className="mt-4 text-3xl font-bold text-tato-text">{detail.title}</Text>
                 <Text className="mt-3 text-sm leading-7 text-tato-muted">{detail.description}</Text>
+
+                {detail.photoUrls.length ? (
+                  <View className="mt-5">
+                    <View className="flex-row items-center justify-between">
+                      <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-dim">Photo Set</Text>
+                      <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-muted">
+                        {detail.photoUrls.length} saved
+                      </Text>
+                    </View>
+
+                    <ScrollView
+                      className="mt-3"
+                      contentContainerClassName="gap-3"
+                      horizontal
+                      showsHorizontalScrollIndicator={false}>
+                      {detail.photoUrls.map((photoUrl, index) => (
+                        <Pressable
+                          className={`overflow-hidden rounded-[18px] border ${
+                            index === selectedPhotoIndex
+                              ? 'border-tato-accent bg-tato-accent/10'
+                              : 'border-tato-line bg-tato-panelSoft'
+                          }`}
+                          key={`${photoUrl}-${index}`}
+                          onPress={() => setSelectedPhotoIndex(index)}>
+                          <Image className="h-20 w-20" resizeMode="cover" source={{ uri: photoUrl }} />
+                        </Pressable>
+                      ))}
+                    </ScrollView>
+                  </View>
+                ) : (
+                  <View className="mt-5 rounded-[18px] border border-tato-line bg-tato-panelSoft p-4">
+                    <Text className="text-sm text-tato-muted">
+                      No supplier photos are saved on this item yet.
+                    </Text>
+                  </View>
+                )}
               </View>
             </View>
 
@@ -322,6 +500,104 @@ export default function ItemDetailsScreen() {
                       {supplierCanEdit ? 'Open' : 'Locked'}
                     </Text>
                   </View>
+                </View>
+
+                <View className="mt-5 rounded-[20px] border border-tato-line bg-tato-panelSoft p-4">
+                  <View className={`gap-3 ${!isPhone ? 'flex-row items-center justify-between' : ''}`}>
+                    <View className="flex-1">
+                      <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-dim">Supplier Photos</Text>
+                      <Text className="mt-2 text-base font-semibold text-tato-text">
+                        {supplierCanEdit
+                          ? 'Replace weak images, remove extras, or add fresh ones here.'
+                          : 'Photo edits are locked because downstream broker work has already started.'}
+                      </Text>
+                    </View>
+                    {supplierCanEdit ? (
+                      <Pressable
+                        className="rounded-full bg-tato-accent px-4 py-2.5"
+                        disabled={Boolean(photoActionKey)}
+                        onPress={handleAppendPhoto}>
+                        {photoActionKey === 'append' ? (
+                          <ActivityIndicator color="#fff" />
+                        ) : (
+                          <Text className="font-mono text-[11px] font-semibold uppercase tracking-[1px] text-white">
+                            Upload New Photo
+                          </Text>
+                        )}
+                      </Pressable>
+                    ) : null}
+                  </View>
+
+                  {photoActionError ? (
+                    <View className="mt-4 rounded-[16px] border border-tato-error/30 bg-tato-error/10 p-3">
+                      <Text className="text-sm text-tato-error">{photoActionError}</Text>
+                    </View>
+                  ) : null}
+
+                  {photoActionSuccess ? (
+                    <View className="mt-4 rounded-[16px] border border-tato-profit/30 bg-tato-profit/10 p-3">
+                      <Text className="text-sm text-tato-profit">{photoActionSuccess}</Text>
+                    </View>
+                  ) : null}
+
+                  {detail.photoUrls.length ? (
+                    <View className="mt-4 gap-3">
+                      {detail.photoUrls.map((photoUrl, index) => (
+                        <View
+                          className={`rounded-[18px] border p-3 ${
+                            index === selectedPhotoIndex
+                              ? 'border-tato-accent bg-tato-accent/10'
+                              : 'border-tato-line bg-tato-panel'
+                          }`}
+                          key={`${photoUrl}-${index}`}>
+                          <View className={`gap-3 ${!isPhone ? 'flex-row items-center' : ''}`}>
+                            <Pressable className={!isPhone ? 'w-[124px]' : ''} onPress={() => setSelectedPhotoIndex(index)}>
+                              <Image className="h-24 w-full rounded-[16px]" resizeMode="cover" source={{ uri: photoUrl }} />
+                            </Pressable>
+                            <View className="flex-1">
+                              <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-dim">
+                                Photo {index + 1}
+                              </Text>
+                              <Text className="mt-2 text-sm leading-6 text-tato-muted">
+                                {index === 0
+                                  ? 'This image is currently being used as the cover photo.'
+                                  : 'Tap the thumbnail to make this the active preview while you review the item.'}
+                              </Text>
+                            </View>
+                          </View>
+
+                          {supplierCanEdit ? (
+                            <View className={`mt-4 gap-3 ${!isPhone ? 'flex-row' : ''}`}>
+                              <Pressable
+                                className="flex-1 rounded-full border border-tato-line bg-tato-panelSoft px-4 py-2.5"
+                                disabled={photoActionKey === `replace:${index}` || Boolean(photoActionKey)}
+                                onPress={() => handleReplacePhoto(index)}>
+                                {photoActionKey === `replace:${index}` ? (
+                                  <ActivityIndicator color="#edf4ff" />
+                                ) : (
+                                  <Text className="text-center font-mono text-[11px] font-semibold uppercase tracking-[1px] text-tato-text">
+                                    Replace
+                                  </Text>
+                                )}
+                              </Pressable>
+                              <Pressable
+                                className="flex-1 rounded-full border border-tato-error/40 bg-tato-error/10 px-4 py-2.5"
+                                disabled={detail.photoUrls.length === 1 || photoActionKey === `remove:${index}` || Boolean(photoActionKey)}
+                                onPress={() => handleRemovePhoto(index)}>
+                                {photoActionKey === `remove:${index}` ? (
+                                  <ActivityIndicator color="#ff8f8f" />
+                                ) : (
+                                  <Text className="text-center font-mono text-[11px] font-semibold uppercase tracking-[1px] text-tato-error">
+                                    Remove
+                                  </Text>
+                                )}
+                              </Pressable>
+                            </View>
+                          ) : null}
+                        </View>
+                      ))}
+                    </View>
+                  ) : null}
                 </View>
 
                 {supplierCanEdit ? (
@@ -409,7 +685,7 @@ export default function ItemDetailsScreen() {
                     </View>
 
                     <Text className="mt-4 text-sm leading-7 text-tato-muted">
-                      Save lightweight corrections here. If the item needs materially better photos or a fresh AI pass, reopen intake instead of trying to rewrite around a bad capture.
+                      Save lightweight corrections here. You can also refresh the photo set above if the original capture needs better images.
                     </Text>
 
                     {supplierSaveError ? (
@@ -465,15 +741,15 @@ export default function ItemDetailsScreen() {
 
             <View className={`gap-4 ${!isPhone ? 'flex-row flex-wrap' : ''}`}>
               <View className="flex-1 rounded-[24px] border border-tato-line bg-tato-panel p-5">
-                <Text className="text-xs uppercase tracking-[1px] text-tato-dim">Estimated Profit</Text>
+                <Text className="text-xs uppercase tracking-[1px] text-tato-dim">Broker Payout At Suggested</Text>
                 <Text className="mt-2 text-3xl font-bold text-tato-profit">
-                  {formatMoney(detail.estimatedProfitCents, detail.currencyCode, 2)}
+                  {formatMoney(detail.estimatedBrokerPayoutCents, detail.currencyCode, 2)}
                 </Text>
               </View>
               <View className="flex-1 rounded-[24px] border border-tato-line bg-tato-panel p-5">
-                <Text className="text-xs uppercase tracking-[1px] text-tato-dim">Claim Fee</Text>
+                <Text className="text-xs uppercase tracking-[1px] text-tato-dim">Claim Deposit</Text>
                 <Text className="mt-2 text-3xl font-bold text-tato-accent">
-                  {formatMoney(detail.claimFeeCents, detail.currencyCode, 2)}
+                  {formatMoney(detail.claimDepositCents, detail.currencyCode, 2)}
                 </Text>
               </View>
               <View className="flex-1 rounded-[24px] border border-tato-line bg-tato-panel p-5">

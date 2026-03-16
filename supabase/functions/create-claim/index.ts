@@ -3,6 +3,12 @@ import Stripe from 'npm:stripe@15.12.0';
 
 import { claimMutationRequest, completeMutationRequest, failMutationRequest, writeAuditEvent } from '../_shared/audit.ts';
 import { corsHeaders } from '../_shared/cors.ts';
+import {
+  DEFAULT_BROKER_UPSIDE_BPS,
+  DEFAULT_PLATFORM_UPSIDE_BPS,
+  DEFAULT_SUPPLIER_UPSIDE_BPS,
+  resolveClaimDepositCents,
+} from '../_shared/domain.ts';
 import { createCorrelationId, failure, success } from '../_shared/responses.ts';
 import { createSupabaseClients, requireAuthedUser } from '../_shared/supabase.ts';
 
@@ -67,13 +73,14 @@ serve(async (req) => {
 
     const { data: item } = await admin
       .from('items')
-      .select('id,hub_id,supplier_id,floor_price_cents,currency_code,digital_status')
+      .select('id,hub_id,supplier_id,floor_price_cents,suggested_list_price_cents,currency_code,digital_status')
       .eq('id', payload.itemId)
       .maybeSingle<{
         id: string;
         hub_id: string;
         supplier_id: string;
         floor_price_cents: number | null;
+        suggested_list_price_cents: number | null;
         currency_code: string;
         digital_status: string;
       }>();
@@ -102,7 +109,12 @@ serve(async (req) => {
       return failure(correlationId, 'supplier_inactive', 'The supplier account is not active.', 409);
     }
 
-    const claimFeeCents = Math.max(200, Math.round(Math.max(item.floor_price_cents ?? 0, 5000) * 0.03));
+    const lockedFloorPriceCents = Math.max(0, Math.round(item.floor_price_cents ?? 0));
+    const lockedSuggestedListPriceCents = Math.max(
+      lockedFloorPriceCents,
+      Math.round(item.suggested_list_price_cents ?? Math.round(lockedFloorPriceCents * 1.2)),
+    );
+    const claimDepositCents = resolveClaimDepositCents(lockedFloorPriceCents);
 
     const { data: insertedClaim, error: claimError } = await admin
       .from('claims')
@@ -110,7 +122,14 @@ serve(async (req) => {
         broker_id: authedUser.user.id,
         item_id: item.id,
         hub_id: item.hub_id,
-        claim_fee_cents: claimFeeCents,
+        claim_fee_cents: claimDepositCents,
+        claim_deposit_cents: claimDepositCents,
+        locked_floor_price_cents: lockedFloorPriceCents,
+        locked_suggested_list_price_cents: lockedSuggestedListPriceCents,
+        supplier_upside_bps: DEFAULT_SUPPLIER_UPSIDE_BPS,
+        broker_upside_bps: DEFAULT_BROKER_UPSIDE_BPS,
+        platform_upside_bps: DEFAULT_PLATFORM_UPSIDE_BPS,
+        economics_version: 'floor_v1',
         expires_at: expiresAt,
         status: 'active',
         currency_code: item.currency_code,
@@ -133,21 +152,21 @@ serve(async (req) => {
 
     const intent = await stripe.paymentIntents.create(
       {
-        amount: claimFeeCents,
+        amount: claimDepositCents,
         currency: item.currency_code.toLowerCase(),
         automatic_payment_methods: { enabled: true },
         metadata: {
-          kind: 'claim_fee',
+          kind: 'claim_deposit',
           claim_id: insertedClaim.id,
           item_id: item.id,
           broker_id: authedUser.user.id,
           supplier_id: item.supplier_id,
           correlation_id: correlationId,
         },
-        description: `TATO claim fee for claim ${insertedClaim.id}`,
+        description: `TATO claim deposit for claim ${insertedClaim.id}`,
       },
       {
-        idempotencyKey: `claim_fee:${payload.requestKey}`,
+        idempotencyKey: `claim_deposit:${payload.requestKey}`,
       },
     );
 
@@ -159,18 +178,19 @@ serve(async (req) => {
         hub_id: item.hub_id,
         supplier_id: item.supplier_id,
         broker_id: authedUser.user.id,
-        transaction_type: 'claim_fee',
+        transaction_type: 'claim_deposit',
         status: 'pending',
         currency_code: item.currency_code,
-        gross_amount_cents: claimFeeCents,
+        gross_amount_cents: claimDepositCents,
         supplier_amount_cents: 0,
         broker_amount_cents: 0,
-        platform_amount_cents: claimFeeCents,
+        platform_amount_cents: 0,
         stripe_payment_intent_id: intent.id,
         stripe_transfer_group: intent.transfer_group ?? null,
         metadata: {
           source: 'create-claim',
           correlation_id: correlationId,
+          deposit_policy: 'refundable_on_completion',
         },
       })
       .select('id')
@@ -180,7 +200,7 @@ serve(async (req) => {
       await admin.from('claims').delete().eq('id', insertedClaim.id);
       const responsePayload = {
         code: 'transaction_creation_failed',
-        message: txError?.message ?? 'Unable to create claim fee transaction.',
+        message: txError?.message ?? 'Unable to create claim deposit transaction.',
       };
       await failMutationRequest(admin, requestRecord.id, responsePayload);
       return failure(correlationId, 'transaction_creation_failed', responsePayload.message, 500);
@@ -205,7 +225,9 @@ serve(async (req) => {
       transactionId: transaction.id,
       metadata: {
         currencyCode: item.currency_code,
-        claimFeeCents,
+        claimDepositCents,
+        lockedFloorPriceCents,
+        lockedSuggestedListPriceCents,
       },
     });
 

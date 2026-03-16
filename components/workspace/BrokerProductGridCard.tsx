@@ -43,14 +43,8 @@ export function BrokerProductGridCard({
   const isPending = claimState === 'pending';
   const canClaim = claimState === 'idle' || claimState === 'error';
 
-  const projectedListPriceCents = useMemo(
-    () => item.floorPriceCents + item.potentialProfitCents,
-    [item.floorPriceCents, item.potentialProfitCents],
-  );
-  const netAfterFeeCents = useMemo(
-    () => Math.max(item.potentialProfitCents - item.claimFeeCents, 0),
-    [item.claimFeeCents, item.potentialProfitCents],
-  );
+  const projectedListPriceCents = useMemo(() => item.estimatedSalePriceCents, [item.estimatedSalePriceCents]);
+  const brokerPayoutCents = useMemo(() => item.estimatedBrokerPayoutCents, [item.estimatedBrokerPayoutCents]);
   const summaryTone = item.shippable ? 'National listing candidate' : `Pickup-first play in ${item.city}`;
 
   return (
@@ -69,8 +63,8 @@ export function BrokerProductGridCard({
         />
         <View className="absolute left-4 right-4 top-4 z-10 flex-row items-center justify-between">
           <View className="rounded-full bg-tato-accent px-3 py-1.5">
-              <Text className="font-mono text-[11px] font-bold uppercase tracking-[1px] text-white">
-              +{formatMoney(item.potentialProfitCents, item.currencyCode, 0)}
+            <Text className="font-mono text-[11px] font-bold uppercase tracking-[1px] text-white">
+              +{formatMoney(item.estimatedBrokerPayoutCents, item.currencyCode, 0)}
             </Text>
           </View>
           <View className="rounded-full border border-white/20 bg-white/10 px-3 py-1.5">
@@ -105,12 +99,12 @@ export function BrokerProductGridCard({
                 <Text className="text-sm font-bold text-white">{formatMoney(item.floorPriceCents, item.currencyCode, 0)}</Text>
               </View>
               <View className="flex-row items-center justify-between rounded-2xl bg-white/5 px-3 py-2.5">
-                <Text className="font-mono text-[10px] uppercase tracking-[1px] text-[#93a7c7]">Claim fee</Text>
-                <Text className="text-sm font-bold text-tato-accent">{formatMoney(item.claimFeeCents, item.currencyCode, 2)}</Text>
+                <Text className="font-mono text-[10px] uppercase tracking-[1px] text-[#93a7c7]">Claim deposit</Text>
+                <Text className="text-sm font-bold text-tato-accent">{formatMoney(item.claimDepositCents, item.currencyCode, 2)}</Text>
               </View>
               <View className="flex-row items-center justify-between rounded-2xl bg-white/5 px-3 py-2.5">
-                <Text className="font-mono text-[10px] uppercase tracking-[1px] text-[#93a7c7]">Net after fee</Text>
-                <Text className="text-sm font-bold text-tato-profit">{formatMoney(netAfterFeeCents, item.currencyCode, 0)}</Text>
+                <Text className="font-mono text-[10px] uppercase tracking-[1px] text-[#93a7c7]">Broker payout</Text>
+                <Text className="text-sm font-bold text-tato-profit">{formatMoney(brokerPayoutCents, item.currencyCode, 0)}</Text>
               </View>
             </View>
 
@@ -140,7 +134,7 @@ export function BrokerProductGridCard({
         <View className="mt-4 flex-row flex-wrap gap-2">
           <View className="rounded-full bg-[#102443] px-3 py-1.5">
             <Text className="font-mono text-[10px] uppercase tracking-[1px] text-tato-accent">
-              Fee {formatMoney(item.claimFeeCents, item.currencyCode, 2)}
+              Deposit {formatMoney(item.claimDepositCents, item.currencyCode, 2)}
             </Text>
           </View>
           <View className="rounded-full bg-[#102443] px-3 py-1.5">

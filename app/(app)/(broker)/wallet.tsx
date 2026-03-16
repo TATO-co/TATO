@@ -93,12 +93,12 @@ export default function WalletScreen() {
               </View>
 
               <View className="mt-5 rounded-[24px] border border-[#17355f] bg-[#091a31] p-4">
-                <PhoneEyebrow>Split Template</PhoneEyebrow>
+                <PhoneEyebrow>Claim Economics</PhoneEyebrow>
                 <Text className="mt-2 text-[24px] font-sans-bold leading-[30px] text-tato-text">
-                  Supplier 70% • Broker 20% • TATO 10%
+                  Floor guarantee • Supplier 25% • Broker 60% • TATO 15% of upside
                 </Text>
                 <Text className="mt-2 text-sm leading-7 text-tato-muted">
-                  Used for finalized hub payments tied to successful QR checkout.
+                  Brokers post a refundable claim deposit, then payouts settle from upside above the locked floor.
                 </Text>
               </View>
             </PhonePanel>
@@ -194,10 +194,10 @@ export default function WalletScreen() {
 
             <Animated.View className="rounded-[24px] border border-tato-line bg-tato-panel p-5" entering={FadeInUp.duration(TIMING.base)}>
               <Text className="text-xs uppercase tracking-[1px] text-tato-muted" style={{ fontFamily: 'SpaceMono' }}>
-                Split Template
+                Claim Economics
               </Text>
-              <Text className="mt-2 text-2xl font-bold text-tato-text">Supplier 70% • Broker 20% • TATO 10%</Text>
-              <Text className="mt-2 text-sm text-tato-muted">Used for finalized hub payments tied to successful QR checkout.</Text>
+              <Text className="mt-2 text-2xl font-bold text-tato-text">Floor guarantee • Supplier 25% • Broker 60% • TATO 15% of upside</Text>
+              <Text className="mt-2 text-sm text-tato-muted">Claim deposits are refundable on completion and upside settles after the locked supplier floor.</Text>
             </Animated.View>
           </ResponsiveKpiGrid>
 

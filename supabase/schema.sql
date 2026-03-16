@@ -47,6 +47,7 @@ create type public.claim_status as enum (
 
 create type public.transaction_type as enum (
   'claim_fee',
+  'claim_deposit',
   'sale_payment',
   'refund',
   'supplier_payout',
@@ -185,6 +186,15 @@ create table public.claims (
 
   status public.claim_status not null default 'active',
   claim_fee_cents integer not null check (claim_fee_cents >= 0),
+  claim_deposit_cents integer check (claim_deposit_cents >= 0),
+  locked_floor_price_cents integer check (locked_floor_price_cents >= 0),
+  locked_suggested_list_price_cents integer check (locked_suggested_list_price_cents >= 0),
+  supplier_upside_bps integer check (supplier_upside_bps >= 0),
+  broker_upside_bps integer check (broker_upside_bps >= 0),
+  platform_upside_bps integer check (platform_upside_bps >= 0),
+  economics_version text,
+  claim_deposit_captured_at timestamptz,
+  claim_deposit_refunded_at timestamptz,
 
   claimed_at timestamptz not null default now(),
   expires_at timestamptz not null,

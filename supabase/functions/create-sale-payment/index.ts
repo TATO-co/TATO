@@ -71,7 +71,7 @@ serve(async (req) => {
 
     const { data: claim } = await admin
       .from('claims')
-      .select('id,item_id,hub_id,broker_id,currency_code,items!inner(supplier_id)')
+      .select('id,item_id,hub_id,broker_id,currency_code,locked_floor_price_cents,items!inner(supplier_id,floor_price_cents)')
       .eq('id', payload.claimId)
       .maybeSingle<{
         id: string;
@@ -79,7 +79,8 @@ serve(async (req) => {
         hub_id: string;
         broker_id: string;
         currency_code: string;
-        items: { supplier_id: string };
+        locked_floor_price_cents: number | null;
+        items: { supplier_id: string; floor_price_cents: number | null };
       }>();
 
     if (!claim) {
@@ -108,6 +109,19 @@ serve(async (req) => {
       };
       await failMutationRequest(admin, requestRecord.id, responsePayload);
       return failure(correlationId, 'currency_mismatch', responsePayload.message, 409);
+    }
+
+    const lockedFloorPriceCents = Math.max(
+      0,
+      Math.round(claim.locked_floor_price_cents ?? claim.items.floor_price_cents ?? 0),
+    );
+    if (payload.grossAmountCents < lockedFloorPriceCents) {
+      const responsePayload = {
+        code: 'below_locked_floor',
+        message: 'Sale payment must meet or exceed the locked supplier floor.',
+      };
+      await failMutationRequest(admin, requestRecord.id, responsePayload);
+      return failure(correlationId, 'below_locked_floor', responsePayload.message, 409);
     }
 
     const stripe = new Stripe(stripeSecretKey, {

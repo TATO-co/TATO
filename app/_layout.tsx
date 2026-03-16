@@ -4,7 +4,7 @@ import 'react-native-url-polyfill/auto';
 import '../global.css';
 
 import { useFonts } from 'expo-font';
-import { Stack, useRouter, useSegments } from 'expo-router';
+import { Stack, usePathname, useRouter, useSegments } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { useEffect } from 'react';
 import { ActivityIndicator, Text, View } from 'react-native';
@@ -34,6 +34,7 @@ function BootScreen({ label }: { label: string }) {
 }
 
 function RootNavigator() {
+  const pathname = usePathname();
   const router = useRouter();
   const segments = useSegments();
   const { configured, loading, isAuthenticated, preferredRoute, profile, profileError } = useAuth();
@@ -51,40 +52,53 @@ function RootNavigator() {
       return;
     }
 
-    const inAuthGroup = segments[0] === '(auth)';
-    const authScreen = String(segments[1] ?? '');
-    const currentPath = `/${segments.join('/')}`;
+    const segmentList = [...segments] as string[];
+    const inAuthGroup = segmentList[0] === '(auth)';
+    const authScreen = String(segmentList[1] ?? '');
+    const isRootRoute = pathname === '/';
+    const currentPath = segmentList.length ? `/${segmentList.join('/')}` : '/';
+    const onPublicEntry = pathname === '/' || pathname === '/sign-in';
+    const preferredPublicPath = preferredRoute.replace(/\/\([^/]+\)/g, '') || '/';
 
     if (!configured) {
+      if (onPublicEntry) {
+        return;
+      }
+
       if (!inAuthGroup || authScreen !== 'configuration-required') {
         router.replace('/(auth)/configuration-required' as never);
       }
       return;
     }
 
-    if (!isAuthenticated && !inAuthGroup) {
+    if (!isAuthenticated && !inAuthGroup && !isRootRoute) {
       router.replace('/(auth)/sign-in');
       return;
     }
 
     if (isAuthenticated) {
       // Avoid redundant navigation if we're already on the preferred route.
-      if (currentPath === preferredRoute) {
+      if (currentPath === preferredRoute || pathname === preferredPublicPath) {
         return;
       }
 
       // Authenticated user needs an auth screen (session-error, setup, suspended).
       if (preferredRoute.startsWith('/(auth)')) {
-        router.replace(preferredRoute as never);
+        router.replace(preferredPublicPath as never);
+        return;
+      }
+
+      if (onPublicEntry) {
+        router.replace(preferredPublicPath as never);
         return;
       }
 
       // Authenticated user on an auth screen should be routed into the app.
       if (inAuthGroup) {
-        router.replace(preferredRoute as never);
+        router.replace(preferredPublicPath as never);
       }
     }
-  }, [configured, isAuthenticated, settling, preferredRoute, router, segments]);
+  }, [configured, isAuthenticated, pathname, settling, preferredRoute, router, segments]);
 
   if (settling) {
     return <BootScreen label="Initializing session and workspace routes." />;
@@ -92,6 +106,7 @@ function RootNavigator() {
 
   return (
     <Stack screenOptions={{ headerShown: false }}>
+      <Stack.Screen name="index" />
       <Stack.Screen name="(app)" />
       <Stack.Screen name="(auth)" />
       <Stack.Screen name="modal" options={{ presentation: 'transparentModal', animation: 'fade' }} />

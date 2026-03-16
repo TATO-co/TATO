@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { SymbolView } from 'expo-symbols';
 import { Image, Pressable, Text, View } from 'react-native';
 
@@ -9,6 +10,7 @@ type InventoryTableVariant = 'auto' | 'phone' | 'tablet' | 'desktop';
 type InventoryTableProps = {
   items: SupplierItem[];
   onItemPress?: (item: SupplierItem) => void;
+  renderActions?: (item: SupplierItem) => ReactNode;
   variant?: InventoryTableVariant;
 };
 
@@ -41,7 +43,7 @@ function resolveVariant(
   return 'phone';
 }
 
-export function InventoryTable({ items, onItemPress, variant = 'auto' }: InventoryTableProps) {
+export function InventoryTable({ items, onItemPress, renderActions, variant = 'auto' }: InventoryTableProps) {
   const { isDesktop, isPhone, isTablet } = useViewportInfo();
   const resolvedVariant = resolveVariant(variant, { isDesktop, isPhone, isTablet });
 
@@ -50,34 +52,42 @@ export function InventoryTable({ items, onItemPress, variant = 'auto' }: Invento
       <View className="gap-3">
         {items.map((item) => {
           const pill = statusPill(item.status);
+          const actionContent = renderActions?.(item);
+
           return (
-            <Pressable
-              className="rounded-[20px] border border-tato-line bg-tato-panel p-4"
-              key={item.id}
-              onPress={() => onItemPress?.(item)}>
-              <View className="flex-row items-center gap-3">
-                <Image className="h-14 w-14 rounded-xl" source={{ uri: item.thumbUrl }} />
-                <View className="min-w-0 flex-1">
-                  <Text className="text-base font-semibold text-tato-text" numberOfLines={1}>
-                    {item.title}
-                  </Text>
-                  <Text className="mt-1 text-sm text-tato-muted" numberOfLines={1}>
-                    {item.subtitle}
-                  </Text>
-                  <View className="mt-2 flex-row flex-wrap items-center gap-2">
-                    <Text
-                      className="rounded-full border px-2.5 py-1 text-[11px] font-semibold"
-                      style={{ color: pill.color, borderColor: pill.border, backgroundColor: pill.bg }}>
-                      {pill.text}
+            <View className="overflow-hidden rounded-[20px] border border-tato-line bg-tato-panel" key={item.id}>
+              <Pressable
+                className="p-4"
+                onPress={() => onItemPress?.(item)}>
+                <View className="flex-row items-center gap-3">
+                  <Image className="h-14 w-14 rounded-xl" source={{ uri: item.thumbUrl }} />
+                  <View className="min-w-0 flex-1">
+                    <Text className="text-base font-semibold text-tato-text" numberOfLines={1}>
+                      {item.title}
                     </Text>
-                    <Text className="font-mono text-[11px] text-tato-dim">SKU {item.sku}</Text>
+                    <Text className="mt-1 text-sm text-tato-muted" numberOfLines={1}>
+                      {item.subtitle}
+                    </Text>
+                    <View className="mt-2 flex-row flex-wrap items-center gap-2">
+                      <Text
+                        className="rounded-full border px-2.5 py-1 text-[11px] font-semibold"
+                        style={{ color: pill.color, borderColor: pill.border, backgroundColor: pill.bg }}>
+                        {pill.text}
+                      </Text>
+                      <Text className="font-mono text-[11px] text-tato-dim">SKU {item.sku}</Text>
+                    </View>
                   </View>
+                  <Text className="text-base font-semibold text-tato-text">
+                    {formatMoney(item.askPriceCents, item.currencyCode, 2)}
+                  </Text>
                 </View>
-                <Text className="text-base font-semibold text-tato-text">
-                  {formatMoney(item.askPriceCents, item.currencyCode, 2)}
-                </Text>
-              </View>
-            </Pressable>
+              </Pressable>
+              {actionContent ? (
+                <View className="border-t border-tato-line px-4 py-3">
+                  {actionContent}
+                </View>
+              ) : null}
+            </View>
           );
         })}
       </View>
@@ -93,6 +103,47 @@ export function InventoryTable({ items, onItemPress, variant = 'auto' }: Invento
 
         {items.map((item) => {
           const pill = statusPill(item.status);
+          const actionContent = renderActions?.(item);
+
+          if (actionContent) {
+            return (
+              <View className="flex-row items-center gap-4 border-b border-tato-line px-4 py-4" key={item.id}>
+                <Pressable
+                  className="flex-1 flex-row items-center gap-4 hover:bg-tato-hover/30"
+                  onPress={() => onItemPress?.(item)}>
+                  <Image className="h-12 w-12 rounded-xl" source={{ uri: item.thumbUrl }} />
+
+                  <View className="min-w-0 flex-1">
+                    <View className="flex-row items-center justify-between gap-4">
+                      <Text className="flex-1 text-base font-semibold text-tato-text" numberOfLines={1}>
+                        {item.title}
+                      </Text>
+                      <Text className="font-mono text-sm font-semibold text-tato-text">
+                        {formatMoney(item.askPriceCents, item.currencyCode, 2)}
+                      </Text>
+                    </View>
+
+                    <View className="mt-1 flex-row flex-wrap items-center gap-2">
+                      <Text
+                        className="rounded-full border px-2.5 py-1 text-[11px] font-semibold"
+                        style={{ color: pill.color, borderColor: pill.border, backgroundColor: pill.bg }}>
+                        {pill.text}
+                      </Text>
+                      <Text className="font-mono text-[11px] text-tato-dim">SKU {item.sku}</Text>
+                      <Text className="text-sm text-tato-muted" numberOfLines={1}>
+                        {item.subtitle}
+                      </Text>
+                    </View>
+                  </View>
+                </Pressable>
+
+                <View className="min-w-[112px] items-end">
+                  {actionContent}
+                </View>
+              </View>
+            );
+          }
+
           return (
             <Pressable
               className="flex-row items-center gap-4 border-b border-tato-line px-4 py-4 hover:bg-tato-hover/30"
@@ -152,11 +203,55 @@ export function InventoryTable({ items, onItemPress, variant = 'auto' }: Invento
         <Text className="w-[112px] text-right font-mono text-[11px] uppercase tracking-[1px] text-tato-dim">
           Price
         </Text>
-        <View className="w-[44px]" />
+        <Text className={`${renderActions ? 'w-[132px]' : 'w-[44px]'} text-right font-mono text-[11px] uppercase tracking-[1px] text-tato-dim`}>
+          {renderActions ? 'Actions' : ''}
+        </Text>
       </View>
 
       {items.map((item) => {
         const pill = statusPill(item.status);
+        const actionContent = renderActions?.(item);
+
+        if (actionContent) {
+          return (
+            <View
+              className="flex-row items-center border-b border-tato-line px-5 py-3.5"
+              key={item.id}>
+              <Pressable
+                className="flex-1 flex-row items-center"
+                onPress={() => onItemPress?.(item)}>
+                <View className="flex-[2] flex-row items-center gap-3">
+                  <Image className="h-10 w-10 rounded-xl" source={{ uri: item.thumbUrl }} />
+                  <View className="min-w-0 flex-1">
+                    <Text className="text-sm font-semibold text-tato-text" numberOfLines={1}>
+                      {item.title}
+                    </Text>
+                    <Text className="text-sm text-tato-muted" numberOfLines={1}>
+                      {item.subtitle}
+                    </Text>
+                  </View>
+                </View>
+                <View className="w-[128px] items-center">
+                  <Text
+                    className="rounded-full border px-2.5 py-1 text-[11px] font-semibold"
+                    style={{ color: pill.color, borderColor: pill.border, backgroundColor: pill.bg }}>
+                    {pill.text}
+                  </Text>
+                </View>
+                <Text className="w-[112px] text-center font-mono text-sm text-tato-dim">
+                  {item.sku}
+                </Text>
+                <Text className="w-[112px] text-right font-mono text-sm font-semibold text-tato-text">
+                  {formatMoney(item.askPriceCents, item.currencyCode, 2)}
+                </Text>
+              </Pressable>
+              <View className="w-[132px] items-end">
+                {actionContent}
+              </View>
+            </View>
+          );
+        }
+
         return (
           <Pressable
             className="flex-row items-center border-b border-tato-line px-5 py-3.5 hover:bg-tato-hover/30"

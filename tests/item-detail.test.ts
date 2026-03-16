@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  canSupplierDeleteItem,
   canSupplierEditItem,
   formatEditablePriceInput,
   parseEditablePriceInput,
@@ -13,6 +14,15 @@ describe('supplier item detail helpers', () => {
     expect(canSupplierEditItem('ready_for_claim')).toBe(true);
     expect(canSupplierEditItem('claimed')).toBe(false);
     expect(canSupplierEditItem('buyer_committed')).toBe(false);
+  });
+
+  it('only allows supplier deletes while the item is still in the supplier queue', () => {
+    expect(canSupplierDeleteItem('supplier_draft')).toBe(true);
+    expect(canSupplierDeleteItem('ai_ingestion_pending')).toBe(true);
+    expect(canSupplierDeleteItem('ready_for_claim')).toBe(true);
+    expect(canSupplierDeleteItem('claim_expired')).toBe(true);
+    expect(canSupplierDeleteItem('claimed')).toBe(false);
+    expect(canSupplierDeleteItem('awaiting_hub_payment')).toBe(false);
   });
 
   it('formats and parses editable price fields', () => {

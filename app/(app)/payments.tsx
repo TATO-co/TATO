@@ -82,12 +82,12 @@ export default function PaymentsScreen() {
 
             <View className="flex-1 rounded-[24px] border border-tato-line bg-tato-panel p-5">
               <Text className="text-xs uppercase tracking-[1px] text-tato-dim" style={{ fontFamily: 'SpaceMono' }}>
-                Default Split Rule
+                Default Claim Economics
               </Text>
               <View className="mt-3 gap-2">
-                <Row label="Supplier Share" value="70%" />
-                <Row label="Broker Share" value="20%" />
-                <Row label="TATO Platform" value="10%" />
+                <Row label="Supplier Guarantee" value="Floor" />
+                <Row label="Upside Split" value="Supplier 25% • Broker 60% • TATO 15%" />
+                <Row label="Claim Deposit" value="1% of floor • $2 min • $10 max" />
               </View>
               <Pressable
                 accessibilityLabel="Configure Stripe Connect settings"

@@ -22,7 +22,7 @@ const routeExpectations: RouteExpectation[] = [
   {
     name: 'sign-in',
     path: '/sign-in',
-    visibleTexts: ['TATO ACCESS', 'Configuration Error'],
+    visibleTexts: ['TATO ACCESS', 'Access TATO.'],
   },
   {
     name: 'persona-setup',
@@ -47,22 +47,22 @@ const routeExpectations: RouteExpectation[] = [
   {
     name: 'root',
     path: '/',
-    visibleTexts: ['TATO ACCESS', 'Configuration Error'],
+    visibleTexts: ['Turn supplier intake into broker-ready opportunity.', 'Access Workspace'],
   },
   {
     name: 'modal',
     path: '/modal',
-    visibleTexts: ['TATO ACCESS', 'Configuration Error'],
+    visibleTexts: ['TATO ACCESS', 'Access TATO.'],
   },
   {
     name: 'not-found',
     path: '/this-route-does-not-exist',
-    visibleTexts: ['Screen not found', 'TATO ACCESS', 'Configuration Error'],
+    visibleTexts: ['Screen not found', 'TATO ACCESS', 'Access TATO.'],
   },
   {
     name: 'workspace-entry',
     path: '/workspace',
-    visibleTexts: ['TATO ACCESS', 'Configuration Error'],
+    visibleTexts: ['TATO ACCESS', 'Access TATO.'],
   },
 ];
 
