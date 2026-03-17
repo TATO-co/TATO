@@ -4,9 +4,10 @@ import type { CurrencyCode } from '@/lib/models';
 import { launchCurrencies } from '@/lib/models';
 
 export type AppEnvironment = 'development' | 'staging' | 'production';
+export type ResolvedAppEnvironment = AppEnvironment | 'unknown';
 
 type RuntimeConfig = {
-  appEnv: AppEnvironment;
+  appEnv: ResolvedAppEnvironment;
   appVariant: string;
   defaultCurrency: CurrencyCode;
   supportedCurrencies: readonly CurrencyCode[];
@@ -33,18 +34,51 @@ function readValue(name: string) {
   return typeof extraValue === 'string' && extraValue.length > 0 ? extraValue : undefined;
 }
 
-function resolveEnvironment(): AppEnvironment {
-  const raw = readValue('EXPO_PUBLIC_APP_ENV') ?? 'development';
-  if (raw === 'production' || raw === 'staging') {
-    return raw;
-  }
-
-  return 'development';
+function isKnownEnvironment(value: string): value is AppEnvironment {
+  return value === 'development' || value === 'staging' || value === 'production';
 }
 
+function resolveEnvironment(raw: string | undefined): ResolvedAppEnvironment {
+  if (!raw) {
+    return 'unknown';
+  }
+
+  return isKnownEnvironment(raw) ? raw : 'unknown';
+}
+
+function resolveEnvironmentIssue(raw: string | undefined, resolved: ResolvedAppEnvironment) {
+  if (resolved !== 'unknown') {
+    return null;
+  }
+
+  if (!raw) {
+    return 'Missing EXPO_PUBLIC_APP_ENV';
+  }
+
+  return `Invalid EXPO_PUBLIC_APP_ENV: ${raw}`;
+}
+
+function resolveBrowserHostname() {
+  const location = globalThis.location;
+  return typeof location?.hostname === 'string' && location.hostname.length > 0
+    ? location.hostname.toLowerCase()
+    : null;
+}
+
+function isLoopbackHostname(hostname: string) {
+  return hostname === 'localhost'
+    || hostname === '127.0.0.1'
+    || hostname === '::1'
+    || hostname === '[::1]';
+}
+
+const rawAppEnv = readValue('EXPO_PUBLIC_APP_ENV');
+const resolvedAppEnv = resolveEnvironment(rawAppEnv);
+const resolvedAppVariant = readValue('APP_VARIANT') ?? (resolvedAppEnv === 'unknown' ? 'unknown' : resolvedAppEnv);
+
 export const runtimeConfig: RuntimeConfig = {
-  appEnv: resolveEnvironment(),
-  appVariant: readValue('APP_VARIANT') ?? readValue('EXPO_PUBLIC_APP_ENV') ?? 'development',
+  appEnv: resolvedAppEnv,
+  appVariant: resolvedAppVariant,
   defaultCurrency: 'USD',
   supportedCurrencies: launchCurrencies,
   devBypassEmail: readValue('EXPO_PUBLIC_DEV_BYPASS_EMAIL'),
@@ -60,6 +94,11 @@ export const runtimeConfig: RuntimeConfig = {
 
 export const runtimeConfigIssues = (() => {
   const issues: string[] = [];
+  const environmentIssue = resolveEnvironmentIssue(rawAppEnv, resolvedAppEnv);
+
+  if (environmentIssue) {
+    issues.push(environmentIssue);
+  }
 
   if (!runtimeConfig.supabaseUrl) {
     issues.push('Missing EXPO_PUBLIC_SUPABASE_URL');
@@ -86,9 +125,15 @@ export function isProductionLikeEnvironment() {
   return runtimeConfig.appEnv === 'production' || runtimeConfig.appEnv === 'staging';
 }
 
+export function isLocalDevelopmentRuntime() {
+  const hostname = resolveBrowserHostname();
+  return runtimeConfig.appEnv === 'development'
+    && (hostname ? isLoopbackHostname(hostname) : true);
+}
+
 export function isDevelopmentBypassAvailable() {
   return Boolean(
-    runtimeConfig.appEnv === 'development'
+    isLocalDevelopmentRuntime()
       && runtimeConfig.devBypassEmail
       && runtimeConfig.devBypassPassword,
   );

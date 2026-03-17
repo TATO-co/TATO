@@ -1,6 +1,6 @@
 import { LinearGradient } from 'expo-linear-gradient';
 import { SymbolView } from 'expo-symbols';
-import { Pressable, Text, View, type PressableProps } from 'react-native';
+import { Platform, Pressable, Text, View, type PressableProps, type ViewStyle } from 'react-native';
 
 type DockIcon = {
   ios: string;
@@ -23,10 +23,11 @@ type PhoneTabButtonProps = {
   testID?: string;
 };
 
-export function getFloatingDockStyle(bottomInset: number) {
-  const resolvedBottomInset = Math.max(bottomInset, 0);
+const webSafeAreaInsetBottom = 'env(safe-area-inset-bottom, 0px)';
 
-  return {
+export function getFloatingDockStyle(bottomInset: number): ViewStyle {
+  const resolvedBottomInset = Math.max(bottomInset, 0);
+  const baseStyle: ViewStyle = {
     position: 'absolute' as const,
     left: 12,
     right: 12,
@@ -45,8 +46,26 @@ export function getFloatingDockStyle(bottomInset: number) {
     shadowOpacity: 0.3,
     shadowRadius: 26,
     elevation: 24,
+    zIndex: 40,
     overflow: 'visible' as const,
   };
+
+  if (Platform.OS === 'web') {
+    return {
+      ...baseStyle,
+      bottom: `calc(${webSafeAreaInsetBottom} + 14px)` as unknown as number,
+      height: `calc(88px + ${webSafeAreaInsetBottom})` as unknown as number,
+      paddingTop: 10,
+      paddingBottom: `calc(14px + ${webSafeAreaInsetBottom})` as unknown as number,
+      backgroundColor: 'rgba(5, 18, 36, 0.98)',
+      borderColor: '#28508b',
+      shadowOpacity: 0.42,
+      shadowRadius: 30,
+      elevation: 30,
+    } as ViewStyle;
+  }
+
+  return baseStyle;
 }
 
 export function PhoneTabButton({

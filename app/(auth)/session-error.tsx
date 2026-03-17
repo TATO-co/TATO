@@ -3,7 +3,7 @@ import { useState } from 'react';
 import { ActivityIndicator, Pressable, SafeAreaView, ScrollView, Text, View } from 'react-native';
 
 import { useAuth } from '@/components/providers/AuthProvider';
-import { runtimeConfig } from '@/lib/config';
+import { isLocalDevelopmentRuntime } from '@/lib/config';
 
 export default function SessionErrorScreen() {
   const router = useRouter();
@@ -45,7 +45,7 @@ export default function SessionErrorScreen() {
               </View>
             ) : null}
 
-            {runtimeConfig.appEnv === 'development' && profileError ? (
+            {isLocalDevelopmentRuntime() && profileError ? (
               <Text className="mt-4 text-xs leading-6 text-tato-dim">
                 Development note: this is usually a failed profile or hub bootstrap, not an approval decision.
               </Text>

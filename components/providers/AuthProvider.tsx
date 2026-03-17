@@ -14,7 +14,11 @@ import {
   captureException,
   setTelemetryUser,
 } from '@/lib/analytics';
-import { getRuntimeConfigIssueMessage, runtimeConfig } from '@/lib/config';
+import {
+  getRuntimeConfigIssueMessage,
+  isLocalDevelopmentRuntime,
+  runtimeConfig,
+} from '@/lib/config';
 import { createRequestKey } from '@/lib/models';
 import type {
   AppMode,
@@ -78,13 +82,17 @@ type AuthContextValue = {
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
-const developmentApprovalBypassEnabled = runtimeConfig.appEnv === 'development';
+const developmentApprovalBypassEnabled = isLocalDevelopmentRuntime();
 const AUTH_VALIDATE_TIMEOUT_MS = 5000;
 const AUTH_RECOVERY_RETRY_MS = 1500;
+const PROFILE_RECOVERY_RETRY_MS = 1500;
+const PROFILE_RECOVERY_MAX_ATTEMPTS = 3;
 const PROFILE_SYNC_TIMEOUT_MS = 10000;
 const PROFILE_SYNC_ERROR_MESSAGE = 'We could not restore your account access. Retry the sync or sign out.';
 const PERSONA_UPDATE_ERROR_MESSAGE = 'We could not save your workspace access. Retry or sign out.';
 const PROFILE_CACHE_KEY = 'tato:cached_profile';
+
+type RecoveryState = 'idle' | 'auth' | 'profile';
 
 type SessionValidationResult =
   | {
@@ -102,6 +110,11 @@ type SessionValidationResult =
       session: Session;
       user: User;
     };
+
+type SyncProfileOptions = {
+  preserveCurrentProfileOnFailure?: boolean;
+  terminalOnFailure?: boolean;
+};
 
 function resolveSupabaseAuthStorageKey() {
   const url = runtimeConfig.supabaseUrl;
@@ -362,7 +375,8 @@ export function AuthProvider({ children }: PropsWithChildren) {
   const [profile, setProfileRaw] = useState<ProfileRecord | null>(cachedProfile);
   const [profileError, setProfileError] = useState<string | null>(null);
   const [nextMode, setNextMode] = useState<AppMode | null>(null);
-  const authRecoveryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [recoveryState, setRecoveryState] = useState<RecoveryState>('idle');
+  const recoveryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Wrapper that keeps the localStorage cache in sync with React state.
   const setProfile = useCallback((value: ProfileRecord | null) => {
@@ -370,36 +384,47 @@ export function AuthProvider({ children }: PropsWithChildren) {
     cacheProfile(value);
   }, []);
 
-  const clearAuthRecovery = useCallback(() => {
-    if (authRecoveryTimerRef.current) {
-      clearTimeout(authRecoveryTimerRef.current);
-      authRecoveryTimerRef.current = null;
+  const clearRecoveryTimer = useCallback(() => {
+    if (recoveryTimerRef.current) {
+      clearTimeout(recoveryTimerRef.current);
+      recoveryTimerRef.current = null;
     }
   }, []);
 
   const loadProfile = useCallback(
     async (authUser: User | null): Promise<ProfileRecord | null> => {
       if (!configured) {
-        setProfile(null);
         return null;
       }
 
       if (!authUser) {
-        setProfile(null);
-        setTelemetryUser(null);
         return null;
       }
 
-      const resolved = await ensureProfile(authUser);
-      setProfile(resolved);
-      syncTelemetryProfile(authUser, resolved);
-      return resolved;
+      return ensureProfile(authUser);
     },
     [configured],
   );
 
   const syncProfile = useCallback(
-    async (authUser: User | null, label: string, errorFlow: string) => {
+    async (
+      authUser: User | null,
+      label: string,
+      errorFlow: string,
+      options: SyncProfileOptions = {},
+    ) => {
+      const {
+        preserveCurrentProfileOnFailure = false,
+        terminalOnFailure = true,
+      } = options;
+
+      if (!authUser) {
+        setProfile(null);
+        setTelemetryUser(null);
+        setProfileError(null);
+        return null;
+      }
+
       try {
         const resolved = await withTimeout(
           loadProfile(authUser),
@@ -407,17 +432,34 @@ export function AuthProvider({ children }: PropsWithChildren) {
           label,
         );
 
-        setProfileError(authUser && !resolved ? PROFILE_SYNC_ERROR_MESSAGE : null);
+        if (resolved) {
+          setProfile(resolved);
+          syncTelemetryProfile(authUser, resolved);
+          setProfileError(null);
+          setRecoveryState('idle');
+          return resolved;
+        }
+
+        if (!preserveCurrentProfileOnFailure) {
+          setProfile(null);
+          setTelemetryUser(null);
+        }
+
+        setProfileError(terminalOnFailure ? PROFILE_SYNC_ERROR_MESSAGE : null);
         return resolved;
       } catch (error) {
         captureException(error, { flow: errorFlow });
-        setProfile(null);
-        setTelemetryUser(null);
-        setProfileError(authUser ? PROFILE_SYNC_ERROR_MESSAGE : null);
+
+        if (!preserveCurrentProfileOnFailure) {
+          setProfile(null);
+          setTelemetryUser(null);
+        }
+
+        setProfileError(terminalOnFailure ? PROFILE_SYNC_ERROR_MESSAGE : null);
         return null;
       }
     },
-    [loadProfile],
+    [loadProfile, setProfile],
   );
 
   const validateSession = useCallback(
@@ -480,14 +522,20 @@ export function AuthProvider({ children }: PropsWithChildren) {
     [],
   );
 
-  const scheduleAuthRecovery = useCallback((reason: string) => {
+  const scheduleRecovery = useCallback((
+    kind: Exclude<RecoveryState, 'idle'>,
+    reason: string,
+    blockUntilSettled: boolean,
+    attempt = 1,
+  ) => {
     const sb = supabase;
-    if (!sb || authRecoveryTimerRef.current) {
+    if (!sb || recoveryTimerRef.current) {
       return;
     }
 
-    authRecoveryTimerRef.current = setTimeout(async () => {
-      authRecoveryTimerRef.current = null;
+    setRecoveryState(kind);
+    recoveryTimerRef.current = setTimeout(async () => {
+      recoveryTimerRef.current = null;
 
       const { data } = await sb.auth.getSession();
       const validation = await validateSession(
@@ -496,29 +544,53 @@ export function AuthProvider({ children }: PropsWithChildren) {
       );
 
       if (validation.kind === 'none') {
+        setRecoveryState('idle');
         setSession(null);
         setUser(null);
         setProfile(null);
         setProfileError(null);
-        setLoading(false);
+        if (blockUntilSettled) {
+          setLoading(false);
+        }
         return;
       }
 
       if (validation.kind === 'deferred') {
-        scheduleAuthRecovery(reason);
+        scheduleRecovery('auth', reason, blockUntilSettled, attempt);
         return;
       }
 
       setSession(validation.session);
       setUser(validation.user);
-      await syncProfile(
+      const resolved = await syncProfile(
         validation.user,
         `${reason}.loadProfile`,
         `${reason}.loadProfile.timeout`,
+        {
+          preserveCurrentProfileOnFailure: true,
+          terminalOnFailure: kind === 'profile' && attempt >= PROFILE_RECOVERY_MAX_ATTEMPTS,
+        },
       );
-      setLoading(false);
-    }, AUTH_RECOVERY_RETRY_MS);
-  }, [syncProfile, validateSession]);
+
+      if (resolved) {
+        setRecoveryState('idle');
+        if (blockUntilSettled) {
+          setLoading(false);
+        }
+        return;
+      }
+
+      if (attempt < PROFILE_RECOVERY_MAX_ATTEMPTS) {
+        scheduleRecovery('profile', reason, blockUntilSettled, attempt + 1);
+        return;
+      }
+
+      setRecoveryState('idle');
+      if (blockUntilSettled) {
+        setLoading(false);
+      }
+    }, kind === 'auth' ? AUTH_RECOVERY_RETRY_MS : PROFILE_RECOVERY_RETRY_MS);
+  }, [setProfile, syncProfile, validateSession]);
 
   useEffect(() => {
     let mounted = true;
@@ -568,17 +640,29 @@ export function AuthProvider({ children }: PropsWithChildren) {
       if (validation.kind === 'deferred') {
         setProfileError(null);
         setLoading(true);
-        scheduleAuthRecovery('auth.initialize.recovery');
+        scheduleRecovery('auth', 'auth.initialize.recovery', true);
         return;
       }
 
-      await syncProfile(
+      const resolvedProfile = await syncProfile(
         validation.user,
         'auth.loadProfile',
         'auth.loadProfile.timeout',
+        {
+          preserveCurrentProfileOnFailure: true,
+          terminalOnFailure: false,
+        },
       );
 
+      if (!resolvedProfile) {
+        setProfileError(null);
+        setLoading(true);
+        scheduleRecovery('profile', 'auth.initialize.recovery', true);
+        return;
+      }
+
       if (mounted) {
+        setRecoveryState('idle');
         setLoading(false);
       }
     }
@@ -600,7 +684,8 @@ export function AuthProvider({ children }: PropsWithChildren) {
 
       // SIGNED_OUT — clear everything immediately, no DB call needed.
       if (event === 'SIGNED_OUT') {
-        clearAuthRecovery();
+        clearRecoveryTimer();
+        setRecoveryState('idle');
         setSession(null);
         setUser(null);
         setProfile(null);
@@ -616,14 +701,24 @@ export function AuthProvider({ children }: PropsWithChildren) {
       if (event === 'TOKEN_REFRESHED') {
         setSession(changedSession);
         setUser(changedSession?.user ?? null);
-        clearAuthRecovery();
+        clearRecoveryTimer();
+        setRecoveryState('idle');
 
         if (changedSession?.user) {
-          await syncProfile(
+          const resolvedProfile = await syncProfile(
             changedSession.user,
             'auth.tokenRefreshed.loadProfile',
             'auth.tokenRefreshed.timeout',
+            {
+              preserveCurrentProfileOnFailure: true,
+              terminalOnFailure: false,
+            },
           );
+
+          if (!resolvedProfile) {
+            scheduleRecovery('profile', 'auth.tokenRefreshed.recovery', false);
+            return;
+          }
         }
 
         setLoading(false);
@@ -632,25 +727,36 @@ export function AuthProvider({ children }: PropsWithChildren) {
 
       // SIGNED_IN, USER_UPDATED, PASSWORD_RECOVERY, MFA_CHALLENGE_VERIFIED
       // — these require a profile re-sync.
-      clearAuthRecovery();
+      clearRecoveryTimer();
+      setRecoveryState('idle');
       setLoading(true);
       setSession(changedSession);
       setUser(changedSession?.user ?? null);
-      await syncProfile(
+      const resolvedProfile = await syncProfile(
         changedSession?.user ?? null,
         'auth.onAuthStateChange.loadProfile',
         'auth.onAuthStateChange.timeout',
+        {
+          preserveCurrentProfileOnFailure: true,
+          terminalOnFailure: false,
+        },
       );
 
+      if (!resolvedProfile && changedSession?.user) {
+        scheduleRecovery('profile', 'auth.onAuthStateChange.recovery', true);
+        return;
+      }
+
+      setRecoveryState('idle');
       setLoading(false);
     });
 
     return () => {
       mounted = false;
-      clearAuthRecovery();
+      clearRecoveryTimer();
       subscription.unsubscribe();
     };
-  }, [clearAuthRecovery, scheduleAuthRecovery, syncProfile, validateSession]);
+  }, [clearRecoveryTimer, scheduleRecovery, syncProfile, validateSession]);
 
   const signInWithPassword = useCallback(async (email: string, password: string) => {
     if (!supabase) {
@@ -800,7 +906,8 @@ export function AuthProvider({ children }: PropsWithChildren) {
       }
     }
 
-    clearAuthRecovery();
+    clearRecoveryTimer();
+    setRecoveryState('idle');
     setSession(null);
     setUser(null);
     setProfile(null);
@@ -808,7 +915,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
     setLoading(false);
     setNextMode(null);
     setTelemetryUser(null);
-  }, [clearAuthRecovery]);
+  }, [clearRecoveryTimer]);
 
   const refreshProfile = useCallback(async () => {
     if (!supabase) {
@@ -817,7 +924,8 @@ export function AuthProvider({ children }: PropsWithChildren) {
     }
 
     setLoading(true);
-    clearAuthRecovery();
+    clearRecoveryTimer();
+    setRecoveryState('idle');
 
     const validation = await validateSession(
       session,
@@ -838,17 +946,29 @@ export function AuthProvider({ children }: PropsWithChildren) {
 
     if (validation.kind === 'deferred') {
       setProfileError(null);
-      scheduleAuthRecovery('auth.refreshProfile.recovery');
+      scheduleRecovery('auth', 'auth.refreshProfile.recovery', true);
       return;
     }
 
-    await syncProfile(
+    const resolvedProfile = await syncProfile(
       validation.user,
       'auth.refreshProfile',
       'auth.refreshProfile.timeout',
+      {
+        preserveCurrentProfileOnFailure: true,
+        terminalOnFailure: false,
+      },
     );
+
+    if (!resolvedProfile) {
+      setProfileError(null);
+      scheduleRecovery('profile', 'auth.refreshProfile.recovery', true);
+      return;
+    }
+
+    setRecoveryState('idle');
     setLoading(false);
-  }, [clearAuthRecovery, scheduleAuthRecovery, session, syncProfile, user, validateSession]);
+  }, [clearRecoveryTimer, scheduleRecovery, session, syncProfile, user, validateSession]);
 
   const switchMode = useCallback(
     async (mode: AppMode) => {

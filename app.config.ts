@@ -2,13 +2,25 @@ import type { ExpoConfig } from 'expo/config';
 
 type AppVariant = 'development' | 'staging' | 'production';
 
+function isKnownVariant(value: string): value is AppVariant {
+  return value === 'development' || value === 'staging' || value === 'production';
+}
+
 function resolveVariant(): AppVariant {
-  const raw = process.env.APP_VARIANT ?? process.env.EXPO_PUBLIC_APP_ENV ?? 'development';
-  if (raw === 'production' || raw === 'staging') {
-    return raw;
+  const raw = process.env.APP_VARIANT ?? process.env.EXPO_PUBLIC_APP_ENV;
+  if (!raw) {
+    throw new Error(
+      'Missing APP_VARIANT or EXPO_PUBLIC_APP_ENV. Refusing to build an ambiguous runtime.',
+    );
   }
 
-  return 'development';
+  if (!isKnownVariant(raw)) {
+    throw new Error(
+      `Invalid APP_VARIANT/EXPO_PUBLIC_APP_ENV value "${raw}". Expected development, staging, or production.`,
+    );
+  }
+
+  return raw;
 }
 
 const variant = resolveVariant();

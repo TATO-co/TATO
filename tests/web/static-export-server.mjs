@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { createReadStream, existsSync, statSync } from 'node:fs';
+import { createReadStream, existsSync, readFileSync, statSync } from 'node:fs';
 import { createServer } from 'node:http';
 import path from 'node:path';
 import process from 'node:process';
@@ -25,6 +25,34 @@ const mimeTypes = {
   '.woff': 'font/woff',
   '.woff2': 'font/woff2',
 };
+
+function hydrateEnvFile(filename) {
+  const filePath = path.join(projectRoot, filename);
+  if (!existsSync(filePath)) {
+    return;
+  }
+
+  const contents = readFileSync(filePath, 'utf8');
+  for (const line of contents.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) {
+      continue;
+    }
+
+    const separatorIndex = trimmed.indexOf('=');
+    if (separatorIndex <= 0) {
+      continue;
+    }
+
+    const key = trimmed.slice(0, separatorIndex).trim();
+    if (!key || key in process.env) {
+      continue;
+    }
+
+    const value = trimmed.slice(separatorIndex + 1).trim();
+    process.env[key] = value.replace(/^['"]|['"]$/g, '');
+  }
+}
 
 function runExport() {
   const npxCommand = process.platform === 'win32' ? 'npx.cmd' : 'npx';
@@ -72,6 +100,8 @@ function tryResolveFile(requestPath) {
   return path.join(outputDir, '+not-found.html');
 }
 
+hydrateEnvFile('.env.local');
+hydrateEnvFile('.env');
 runExport();
 
 const server = createServer((request, response) => {

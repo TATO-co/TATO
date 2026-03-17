@@ -8,7 +8,7 @@ export default function Root({ children }: { children: React.ReactNode }) {
       <head>
         <meta charSet="utf-8" />
         <meta httpEquiv="X-UA-Compatible" content="IE=edge" />
-        <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no" />
+        <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no, viewport-fit=cover" />
         <title>TATO</title>
         <meta
           name="description"
@@ -32,15 +32,29 @@ html, body, #root {
   width: 100%;
 }
 
+html {
+  background: #050d1b;
+}
+
 body {
   margin: 0;
   display: flex;
   background: radial-gradient(circle at top, #0b1f3e 0%, #050d1b 55%, #030a16 100%);
   overflow-y: auto;
+  min-height: 100vh;
+  min-height: 100dvh;
 }
 
 #root {
   display: flex;
   flex: 1 1 auto;
   min-height: 100vh;
+  min-height: 100dvh;
+}
+
+@supports (min-height: 100svh) {
+  body,
+  #root {
+    min-height: 100svh;
+  }
 }`;

@@ -47,7 +47,7 @@ const routeExpectations: RouteExpectation[] = [
   {
     name: 'root',
     path: '/',
-    visibleTexts: ['Turn supplier intake into broker-ready opportunity.', 'Access Workspace'],
+    visibleTexts: ['Where raw intake becomes broker conviction.', 'Enter Workspace'],
   },
   {
     name: 'modal',

@@ -40,4 +40,13 @@ describe('app config', () => {
     expect(config.extra?.appEnv).toBe('production');
     expect(config.extra?.appVariant).toBe('production');
   });
+
+  it('fails the build when APP_VARIANT and EXPO_PUBLIC_APP_ENV are both missing', async () => {
+    delete process.env.APP_VARIANT;
+    delete process.env.EXPO_PUBLIC_APP_ENV;
+
+    await expect(import('../app.config')).rejects.toThrow(
+      'Missing APP_VARIANT or EXPO_PUBLIC_APP_ENV. Refusing to build an ambiguous runtime.',
+    );
+  });
 });

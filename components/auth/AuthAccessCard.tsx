@@ -5,7 +5,11 @@ import { ActivityIndicator, Pressable, Text, TextInput, View } from 'react-nativ
 import { useAuth } from '@/components/providers/AuthProvider';
 import { PressableScale } from '@/components/ui/PressableScale';
 import { trackEvent } from '@/lib/analytics';
-import { isDevelopmentBypassAvailable, runtimeConfig } from '@/lib/config';
+import {
+  isDevelopmentBypassAvailable,
+  isLocalDevelopmentRuntime,
+  runtimeConfig,
+} from '@/lib/config';
 
 type AuthStep = 'email' | 'code';
 type AuthAccessCardVariant = 'welcome' | 'signIn';
@@ -221,7 +225,7 @@ export function AuthAccessCard({
               </Text>
             </View>
 
-            {step === 'email' && runtimeConfig.appEnv === 'development' && !devBypassAvailable ? (
+            {step === 'email' && isLocalDevelopmentRuntime() && !devBypassAvailable ? (
               <Text className="mt-1 text-center text-[11px] text-tato-dim">
                 Set `EXPO_PUBLIC_DEV_BYPASS_EMAIL` and `EXPO_PUBLIC_DEV_BYPASS_PASSWORD` to enable one-click dev sign-in.
               </Text>
@@ -262,7 +266,7 @@ export function AuthAccessCard({
             <Text className="text-sm leading-6 text-tato-muted">
               {configurationError ?? 'Supabase is not configured for this build.'}
             </Text>
-            {runtimeConfig.appEnv === 'development' ? (
+            {isLocalDevelopmentRuntime() ? (
               <Text className="text-xs leading-5 text-tato-dim">
                 Set `EXPO_PUBLIC_DEV_BYPASS_EMAIL` and `EXPO_PUBLIC_DEV_BYPASS_PASSWORD` to enable one-click dev sign-in.
               </Text>

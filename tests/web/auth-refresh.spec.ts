@@ -40,7 +40,7 @@ test('signed-out visitors can stay on the welcome root', async ({ page }) => {
   await page.goto('/', { waitUntil: 'networkidle' });
 
   await expect(page).toHaveURL(/\/$/);
-  await expect(page.getByText('Turn supplier intake into broker-ready opportunity.', { exact: false })).toBeVisible();
+  await expect(page.getByText('Where raw intake becomes broker conviction.', { exact: false })).toBeVisible();
 });
 
 test('signed-out protected routes still redirect to direct sign-in', async ({ page }) => {
@@ -74,7 +74,7 @@ test('authenticated refresh stays out of auth recovery screens', async ({ page }
   expect(samples.some((sample) => sample.text.includes('Session Recovery'))).toBeFalsy();
   expect(samples.some((sample) => sample.text.includes('We couldn\'t restore your workspace.'))).toBeFalsy();
   expect(samples.some((sample) => sample.text.includes('TATO ACCESS'))).toBeFalsy();
-  expect(samples.some((sample) => sample.text.includes('Turn supplier intake into broker-ready opportunity.'))).toBeFalsy();
+  expect(samples.some((sample) => sample.text.includes('Where raw intake becomes broker conviction.'))).toBeFalsy();
 
   await expect(page).toHaveURL(/\/workspace$/);
 });
