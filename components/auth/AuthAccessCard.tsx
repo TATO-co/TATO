@@ -184,7 +184,7 @@ export function AuthAccessCard({
                     keyboardType="number-pad"
                     className="rounded-[20px] border border-tato-line bg-[#0d1b31]/92 px-4 py-4 text-base text-tato-text focus:border-tato-accent"
                     onChangeText={setToken}
-                    placeholder="Enter 6-digit code"
+                    placeholder="Enter 8-digit code"
                     placeholderTextColor="#64779c"
                     value={token}
                   />
