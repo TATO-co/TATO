@@ -1,6 +1,7 @@
 import { captureException } from '@/lib/analytics';
 import { runtimeConfig } from '@/lib/config';
 import { classifyLiveWorkflowError } from '@/lib/liveIntake/errors';
+import { readTrimmedString, readTrimmedStringArray } from '@/lib/liveIntake/normalize';
 import {
   buildLiveDraftPersistencePayload,
   createEmptyLiveDraftState,
@@ -134,9 +135,9 @@ async function getAccessToken() {
 }
 
 function toBootstrap(payload: LiveAgentBootstrapPayload): LiveIntakeBootstrap | null {
-  const tokenValue = payload.ephemeralToken?.value?.trim();
-  const sessionId = payload.sessionId?.trim();
-  const model = payload.model?.trim();
+  const tokenValue = readTrimmedString(payload.ephemeralToken?.value);
+  const sessionId = readTrimmedString(payload.sessionId);
+  const model = readTrimmedString(payload.model);
 
   if (!tokenValue || !sessionId || !model) {
     return null;
@@ -146,18 +147,21 @@ function toBootstrap(payload: LiveAgentBootstrapPayload): LiveIntakeBootstrap | 
     sessionId,
     model,
     ephemeralToken: {
-      name: payload.ephemeralToken?.name?.trim() || null,
+      name: readTrimmedString(payload.ephemeralToken?.name),
       value: tokenValue,
       expireTime: payload.ephemeralToken?.expireTime ?? null,
       newSessionExpireTime: payload.ephemeralToken?.newSessionExpireTime ?? null,
     },
-    responseModalities: (payload.responseModalities ?? []).filter(Boolean),
-    mediaResolution: payload.mediaResolution ?? null,
-    instructions: payload.instructions ?? null,
-    googleCloudRegion: payload.googleCloudRegion ?? null,
-    agentName: payload.agentName ?? null,
-    serviceUrl: payload.serviceUrl ?? null,
-    metadata: payload.metadata ?? {},
+    responseModalities: readTrimmedStringArray(payload.responseModalities),
+    mediaResolution: readTrimmedString(payload.mediaResolution),
+    instructions: readTrimmedString(payload.instructions),
+    googleCloudRegion: readTrimmedString(payload.googleCloudRegion),
+    agentName: readTrimmedString(payload.agentName),
+    serviceUrl: readTrimmedString(payload.serviceUrl),
+    metadata:
+      payload.metadata && typeof payload.metadata === 'object' && !Array.isArray(payload.metadata)
+        ? payload.metadata
+        : {},
   };
 }
 

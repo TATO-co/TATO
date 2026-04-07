@@ -82,6 +82,7 @@ export default function SupplierIntakeScreen() {
     checking: liveAvailabilityLoading,
   });
   const liveReady = liveEntryState.enabled;
+  const liveMissingHub = liveAvailability?.code === 'missing_hub';
 
   useEffect(() => {
     let cancelled = false;
@@ -161,13 +162,31 @@ export default function SupplierIntakeScreen() {
             <View className="mt-6 flex-row gap-3">
               <PhoneActionButton
                 className="flex-1"
-                label={liveReady ? 'Start Live Intake' : 'Open Camera Capture'}
-                onPress={() => openWorkflow(liveReady ? liveWorkflow : cameraWorkflow)}
+                label={
+                  liveReady
+                    ? 'Start Live Intake'
+                    : liveMissingHub
+                      ? 'Set Up Supplier Hub'
+                      : 'Open Camera Capture'
+                }
+                onPress={() => {
+                  if (liveReady) {
+                    openWorkflow(liveWorkflow);
+                    return;
+                  }
+
+                  if (liveMissingHub) {
+                    router.push('/(app)/(supplier)/profile' as never);
+                    return;
+                  }
+
+                  openWorkflow(cameraWorkflow);
+                }}
               />
               <PhoneActionButton
                 className="flex-1"
-                label={liveReady ? 'Photo Capture' : 'Upload Photos'}
-                onPress={() => openWorkflow(liveReady ? cameraWorkflow : uploadWorkflow)}
+                label={liveReady ? 'Photo Capture' : 'Open Camera Capture'}
+                onPress={() => openWorkflow(cameraWorkflow)}
                 variant="secondary"
               />
             </View>
@@ -243,7 +262,9 @@ export default function SupplierIntakeScreen() {
               const actionLabel = isLiveWorkflow
                 ? liveReady
                   ? workflow.actionLabel
-                  : 'Open Camera Capture'
+                  : liveMissingHub
+                    ? 'Set Up Supplier Hub'
+                    : 'Open Camera Capture'
                 : workflow.actionLabel;
               const description = isLiveWorkflow && !liveReady
                 ? liveEntryState.message
@@ -254,7 +275,24 @@ export default function SupplierIntakeScreen() {
                   activeScale={0.985}
                   className={`rounded-[26px] border p-5 ${workflow.accentClassName}`}
                   key={workflow.id}
-                  onPress={() => openWorkflow(workflow)}>
+                  onPress={() => {
+                    if (!isLiveWorkflow) {
+                      openWorkflow(workflow);
+                      return;
+                    }
+
+                    if (liveReady) {
+                      openWorkflow(workflow);
+                      return;
+                    }
+
+                    if (liveMissingHub) {
+                      router.push('/(app)/(supplier)/profile' as never);
+                      return;
+                    }
+
+                    openWorkflow(cameraWorkflow);
+                  }}>
                   <View className="flex-row items-center justify-between gap-4">
                     <View className="h-12 w-12 items-center justify-center rounded-full bg-black/25">
                       <PlatformIcon name={workflow.icon} size={20} color="#edf4ff" />

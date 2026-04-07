@@ -32,6 +32,8 @@ Use your preferred migration flow, or run the SQL directly in the Supabase SQL e
   - Allows a supplier or admin to complete a claim after a succeeded sale payment exists.
 - `set-user-personas`
   - Lets the authenticated user self-configure Broker, Supplier, or Both and persist the default entry mode.
+- `create-supplier-hub`
+  - Creates an active supplier hub for the authenticated supplier with idempotent request handling.
 - `approve-user`
   - Legacy admin-only grant flow retained temporarily for compatibility; the client no longer depends on it.
 - `suspend-user`
@@ -63,3 +65,7 @@ Optional split overrides:
 - `SUPPLIER_SPLIT_BPS` (default `7000`)
 - `BROKER_SPLIT_BPS` (default `2000`)
 - `PLATFORM_SPLIT_BPS` (default `1000`)
+
+## Function Auth Deployment Note
+- TATO functions authenticate inside the function code with `createSupabaseClients()` and `requireAuthedUser()`.
+- Deploy the auth-protected functions with `--no-verify-jwt`. Supabase's legacy gateway JWT verification rejects newer asymmetric `ES256` access tokens before the function can run, which shows up in clients as `401 Invalid JWT`.

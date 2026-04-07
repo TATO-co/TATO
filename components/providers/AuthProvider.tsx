@@ -20,6 +20,7 @@ import {
   isLocalDevelopmentRuntime,
   runtimeConfig,
 } from '@/lib/config';
+import { createTestingSupplierHubDraft } from '@/lib/hubs';
 import { createRequestKey } from '@/lib/models';
 import type {
   AppMode,
@@ -36,6 +37,7 @@ import {
   withTimeout,
 } from '@/lib/auth-helpers';
 import { readFunctionErrorPayload } from '@/lib/function-errors';
+import { ensureSupplierHub } from '@/lib/repositories/hubs';
 import { supabase } from '@/lib/supabase';
 
 export type ProfileRecord = {
@@ -186,41 +188,29 @@ async function clearLocalSupabaseSession(flow: string) {
 }
 
 async function ensureDevelopmentHub(profile: ProfileRecord) {
-  if (!supabase || !developmentApprovalBypassEnabled) {
+  if (!developmentApprovalBypassEnabled) {
     return;
   }
 
-  const { data, error } = await supabase
-    .from('hubs')
-    .select('id')
-    .eq('supplier_id', profile.id)
-    .eq('status', 'active')
-    .limit(1);
-
-  if (error) {
-    captureException(error, { flow: 'auth.ensureDevelopmentHub.lookup' });
-    return;
-  }
-
-  if (data?.length) {
-    return;
-  }
-
-  const { error: insertError } = await supabase.from('hubs').insert({
-    supplier_id: profile.id,
-    name: 'Development Hub',
-    status: 'active',
-    address_line_1: '100 Dev Loop',
-    city: 'Chicago',
-    state: 'IL',
-    postal_code: '60601',
-    country_code: profile.country_code ?? 'US',
-    pickup_instructions: 'Development-only pickup hub.',
+  const result = await ensureSupplierHub({
+    supplierId: profile.id,
+    draft: createTestingSupplierHubDraft({
+      countryCode: profile.country_code,
+      name: 'Development Hub',
+    }),
   });
 
-  if (insertError) {
-    captureException(insertError, { flow: 'auth.ensureDevelopmentHub.insert' });
+  if (!result.ok) {
+    captureException(new Error(result.message), { flow: 'auth.ensureDevelopmentHub' });
   }
+}
+
+function shouldSeedDevelopmentHub(profile: ProfileRecord | null) {
+  return Boolean(
+    profile
+      && profile.status === 'active'
+      && profile.can_supply,
+  );
 }
 
 async function ensureDevelopmentAccess(profile: ProfileRecord): Promise<ProfileRecord> {
@@ -483,6 +473,10 @@ export function AuthProvider({ children }: PropsWithChildren) {
         );
 
         if (resolved) {
+          if (shouldSeedDevelopmentHub(resolved)) {
+            void ensureDevelopmentHub(resolved);
+          }
+
           setProfile(resolved);
           syncTelemetryProfile(authUser, resolved);
           setProfileError(null);
@@ -1020,6 +1014,10 @@ export function AuthProvider({ children }: PropsWithChildren) {
           ? data.message
           : PERSONA_UPDATE_ERROR_MESSAGE,
       };
+    }
+
+    if (shouldSeedDevelopmentHub(resolvedProfile)) {
+      await ensureDevelopmentHub(resolvedProfile);
     }
 
     setProfile(resolvedProfile);

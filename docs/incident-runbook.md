@@ -13,6 +13,7 @@
 ## Ingestion failure
 - Confirm the `items` bucket policy and object path are correct.
 - Check `ingestion_ai_status`, function logs, and Gemini secret configuration.
+- Confirm the supplier still has an active hub; live intake and camera-started drafts fail closed when no active hub exists.
 - Mark failed items for re-upload rather than manually inventing analysis data.
 
 ## Bad approval or suspension

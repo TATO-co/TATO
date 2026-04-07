@@ -7,6 +7,7 @@ import Animated, { FadeInUp } from 'react-native-reanimated';
 import { ModeShell } from '@/components/layout/ModeShell';
 import { useAuth } from '@/components/providers/AuthProvider';
 import { PersonaAccessCard } from '@/components/profile/PersonaAccessCard';
+import { SupplierHubCard } from '@/components/profile/SupplierHubCard';
 import { PlatformIcon } from '@/components/ui/PlatformIcon';
 import { ResponsiveKpiGrid } from '@/components/layout/ResponsivePrimitives';
 import { useViewportInfo } from '@/lib/constants';
@@ -181,6 +182,12 @@ export default function SupplierProfileScreen() {
         )}
 
         {/* ── Persona Access ── */}
+        <Animated.View
+          className="rounded-[24px] border border-tato-line bg-tato-panel p-5"
+          entering={FadeInUp.duration(TIMING.base).delay(120)}>
+          <SupplierHubCard />
+        </Animated.View>
+
         <Animated.View
           className="rounded-[24px] border border-tato-line bg-tato-panel p-5"
           entering={FadeInUp.duration(TIMING.slow)}>

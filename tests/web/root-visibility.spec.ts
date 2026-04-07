@@ -37,7 +37,7 @@ const routeExpectations: RouteExpectation[] = [
   {
     name: 'configuration-required',
     path: '/configuration-required',
-    visibleTexts: ['Configuration Error', 'TATO ACCESS'],
+    visibleTexts: ['Runtime Setup', 'This build is not ready for operator access.'],
   },
   {
     name: 'session-error',

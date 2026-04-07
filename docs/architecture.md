@@ -29,7 +29,7 @@ flowchart LR
     Storage["Storage<br/>items bucket"]
 
     subgraph Edge["Edge Functions"]
-      AdminFns["Identity + admin<br/>set-user-personas, approve-user,<br/>suspend-user, create-connect-onboarding-link,<br/>refresh-connect-status"]
+      AdminFns["Identity + admin<br/>set-user-personas, create-supplier-hub,<br/>approve-user, suspend-user,<br/>create-connect-onboarding-link,<br/>refresh-connect-status"]
       IntakeFns["Ingestion<br/>start-ingestion, gemini-ingest-item,<br/>check-live-intake-availability,<br/>start-live-intake-draft, complete-live-intake-draft"]
       CommerceFns["Commerce<br/>create-claim, generate-broker-listing,<br/>create-sale-payment, complete-claim-payment,<br/>stripe-webhook"]
     end

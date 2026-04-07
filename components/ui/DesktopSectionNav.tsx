@@ -15,7 +15,11 @@ type DesktopSectionNavProps = {
 
 export function DesktopSectionNav({ items, activeKey, compact = false }: DesktopSectionNavProps) {
   return (
-    <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+    <ScrollView
+      horizontal
+      showsHorizontalScrollIndicator={false}
+      contentContainerStyle={{ flexGrow: 0 }}
+      style={{ flexGrow: 0, flexShrink: 0 }}>
       <View className={`flex-row items-center gap-2 rounded-full border border-tato-line bg-tato-panel p-1 ${compact ? 'self-start' : ''}`}>
         {items.map((item) => {
           const active = item.key === activeKey;

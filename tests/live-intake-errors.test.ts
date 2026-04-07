@@ -71,4 +71,22 @@ describe('live intake error classification', () => {
       unavailable: false,
     });
   });
+
+  it('falls back safely when mutation payloads contain non-string code or message values', async () => {
+    const classified = await classifyLiveWorkflowError({
+      context: 'posting',
+      data: {
+        ok: false,
+        code: { type: 'bad_code' } as unknown as string,
+        message: ['not', 'a', 'string'] as unknown as string,
+      },
+      fallbackMessage: 'Unable to post this live item right now.',
+    });
+
+    expect(classified).toMatchObject({
+      code: 'live_posting_failed',
+      message: 'Unable to post this live item right now.',
+      unavailable: false,
+    });
+  });
 });

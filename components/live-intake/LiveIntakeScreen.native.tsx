@@ -182,11 +182,13 @@ function PostedItemsTray({ items }: { items: LivePostedItem[] }) {
 function UnavailableView({
   message,
   onFallback,
+  onSetupHub,
   onRetry,
   onBack,
 }: {
   message: string;
   onFallback: () => void;
+  onSetupHub?: (() => void) | null;
   onRetry: () => void;
   onBack: () => void;
 }) {
@@ -209,6 +211,13 @@ function UnavailableView({
           onPress={onFallback}>
           <Text className="text-base font-semibold text-tato-accent">Open Camera Capture</Text>
         </Pressable>
+        {onSetupHub ? (
+          <Pressable
+            className="mt-4 rounded-full border border-tato-profit/40 bg-tato-profit/10 px-8 py-4"
+            onPress={onSetupHub}>
+            <Text className="text-base font-semibold text-tato-profit">Set Up Supplier Hub</Text>
+          </Pressable>
+        ) : null}
         <Pressable
           className="mt-4 rounded-full border border-tato-line bg-tato-panel px-6 py-3"
           onPress={onRetry}>
@@ -315,12 +324,14 @@ export default function LiveIntakeScreen() {
     !availabilityLoading
     && Boolean(availability)
     && !availability?.available;
+  const liveMissingHub = availability?.code === 'missing_hub';
 
   if ((connectionState === 'idle' || connectionState === 'unsupported') && liveUnavailable) {
     return (
       <UnavailableView
         message={availability?.message ?? 'Live intake is temporarily unavailable. Use photo capture instead.'}
         onFallback={() => router.replace('/(app)/ingestion?entry=camera' as never)}
+        onSetupHub={liveMissingHub ? () => router.push('/(app)/(supplier)/profile' as never) : null}
         onRetry={() => { void refreshAvailability(); }}
         onBack={() => router.back()}
       />

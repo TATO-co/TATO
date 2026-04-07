@@ -364,11 +364,13 @@ function MobileIdleView({
 function MobileUnavailableView({
   message,
   onFallback,
+  onSetupHub,
   onRetry,
   onBack,
 }: {
   message: string;
   onFallback: () => void;
+  onSetupHub?: (() => void) | null;
   onRetry: () => void;
   onBack: () => void;
 }) {
@@ -391,6 +393,13 @@ function MobileUnavailableView({
           onPress={onFallback}>
           <Text className="text-base font-semibold text-tato-accent">Open Camera Capture</Text>
         </Pressable>
+        {onSetupHub ? (
+          <Pressable
+            className="mt-4 rounded-full border border-tato-profit/40 bg-tato-profit/10 px-8 py-4"
+            onPress={onSetupHub}>
+            <Text className="text-base font-semibold text-tato-profit">Set Up Supplier Hub</Text>
+          </Pressable>
+        ) : null}
         <Pressable
           className="mt-4 rounded-full border border-tato-line bg-tato-panel px-6 py-3"
           onPress={onRetry}>
@@ -929,10 +938,12 @@ function MobileConnectedView({
 function DesktopUnavailableLayout({
   router,
   message,
+  onSetupHub,
   onRetry,
 }: {
   router: ReturnType<typeof useRouter>;
   message: string;
+  onSetupHub?: (() => void) | null;
   onRetry: () => void;
 }) {
   return (
@@ -989,6 +1000,15 @@ function DesktopUnavailableLayout({
                 Retry Live Check
               </Text>
             </PressableScale>
+            {onSetupHub ? (
+              <PressableScale
+                className="rounded-full border border-tato-profit/40 bg-tato-profit/10 px-5 py-3"
+                onPress={onSetupHub}>
+                <Text className="text-center font-mono text-xs font-semibold uppercase tracking-[1px] text-tato-profit">
+                  Set Up Supplier Hub
+                </Text>
+              </PressableScale>
+            ) : null}
           </View>
         </View>
       </ScrollView>
@@ -1617,12 +1637,14 @@ export default function LiveIntakeScreen() {
     !session.availabilityLoading
     && Boolean(session.availability)
     && !session.availability?.available;
+  const liveMissingHub = session.availability?.code === 'missing_hub';
 
   if (!isPhone && (connectionState === 'idle' || connectionState === 'unsupported') && liveUnavailable) {
     return (
       <DesktopUnavailableLayout
         router={router}
         message={session.availability?.message ?? 'Live intake is temporarily unavailable. Use photo capture instead.'}
+        onSetupHub={liveMissingHub ? () => router.push('/(app)/(supplier)/profile' as never) : null}
         onRetry={() => { void session.refreshAvailability(); }}
       />
     );
@@ -1633,6 +1655,7 @@ export default function LiveIntakeScreen() {
       <MobileUnavailableView
         message={session.availability?.message ?? 'Live intake is temporarily unavailable. Use photo capture instead.'}
         onFallback={() => router.push('/(app)/ingestion?entry=camera' as never)}
+        onSetupHub={liveMissingHub ? () => router.push('/(app)/(supplier)/profile' as never) : null}
         onRetry={() => { void session.refreshAvailability(); }}
         onBack={() => router.back()}
       />

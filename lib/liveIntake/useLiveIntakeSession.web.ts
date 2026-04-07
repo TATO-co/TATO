@@ -18,6 +18,7 @@ import {
   startMicrophonePcmStream,
 } from '@/lib/liveIntake/audio.web';
 import { canCreateLiveDraft, getLiveDraftCreateBlockers } from '@/lib/liveIntake/platform';
+import { readTrimmedString } from '@/lib/liveIntake/normalize';
 import { looksLikeLiveDraftReadyClaim } from '@/lib/liveIntake/speech';
 import {
   buildLiveDraftDescription,
@@ -83,10 +84,10 @@ function upsertTranscriptEntry(args: {
   entries: LiveTranscriptEntry[];
   pendingIdRef: { current: string | null };
   speaker: LiveTranscriptEntry['speaker'];
-  text: string | undefined;
+  text: unknown;
   final: boolean;
 }) {
-  const text = args.text?.trim();
+  const text = readTrimmedString(args.text);
   if (!text) {
     return args.entries;
   }
@@ -655,16 +656,19 @@ export function useLiveIntakeSession(args: UseLiveIntakeSessionArgs) {
     }
 
     const inputTranscription = message.serverContent?.inputTranscription;
-    if (inputTranscription?.text) {
-      setTranscript((current) =>
-        upsertTranscriptEntry({
-          entries: current,
-          pendingIdRef: pendingUserTranscriptIdRef,
-          speaker: 'user',
-          text: inputTranscription.text,
-          final: Boolean(inputTranscription.finished),
-        }),
-      );
+    if (inputTranscription) {
+      const inputText = readTrimmedString(inputTranscription.text);
+      if (inputText) {
+        setTranscript((current) =>
+          upsertTranscriptEntry({
+            entries: current,
+            pendingIdRef: pendingUserTranscriptIdRef,
+            speaker: 'user',
+            text: inputText,
+            final: Boolean(inputTranscription.finished),
+          }),
+        );
+      }
     }
 
     for (const toolCall of message.toolCall?.functionCalls ?? []) {
@@ -672,19 +676,22 @@ export function useLiveIntakeSession(args: UseLiveIntakeSessionArgs) {
     }
 
     const outputTranscription = message.serverContent?.outputTranscription;
-    if (outputTranscription?.text) {
-      setTranscript((current) =>
-        upsertTranscriptEntry({
-          entries: current,
-          pendingIdRef: pendingAgentTranscriptIdRef,
-          speaker: 'agent',
-          text: outputTranscription.text,
-          final: Boolean(outputTranscription.finished),
-        }),
-      );
+    if (outputTranscription) {
+      const outputText = readTrimmedString(outputTranscription.text);
+      if (outputText) {
+        setTranscript((current) =>
+          upsertTranscriptEntry({
+            entries: current,
+            pendingIdRef: pendingAgentTranscriptIdRef,
+            speaker: 'agent',
+            text: outputText,
+            final: Boolean(outputTranscription.finished),
+          }),
+        );
 
-      if (outputTranscription.finished) {
-        scheduleSpokenReadyGuard(outputTranscription.text);
+        if (outputTranscription.finished) {
+          scheduleSpokenReadyGuard(outputText);
+        }
       }
     }
 

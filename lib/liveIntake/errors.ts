@@ -1,10 +1,11 @@
 import { LIVE_INTAKE_FALLBACK_ROUTE, type LiveIntakeFallbackRoute } from '@/lib/liveIntake/types';
+import { readTrimmedString } from '@/lib/liveIntake/normalize';
 import { readFunctionErrorPayload } from '@/lib/function-errors';
 
 type MutationErrorPayload = {
   ok?: boolean;
-  code?: string;
-  message?: string;
+  code?: unknown;
+  message?: unknown;
   details?: Record<string, unknown>;
   correlationId?: string;
 };
@@ -28,13 +29,13 @@ type ClassifyLiveWorkflowErrorArgs = {
 };
 
 type NormalizedMutationError = {
-  code?: string;
-  message?: string;
+  code?: unknown;
+  message?: unknown;
   status: number | null;
 };
 
-function normalizeText(value: string | null | undefined) {
-  return value?.trim().toLowerCase() ?? '';
+function normalizeText(value: unknown) {
+  return readTrimmedString(value)?.toLowerCase() ?? '';
 }
 
 function isSessionOrJwtFailure(code: string, message: string, status: number | null) {
@@ -76,14 +77,16 @@ export async function classifyLiveWorkflowError(
       }
     : await readFunctionErrorPayload(args.error);
 
-  const code = normalizeText(normalized.code);
-  const message = normalizeText(normalized.message);
+  const normalizedCode = readTrimmedString(normalized.code);
+  const normalizedMessage = readTrimmedString(normalized.message);
+  const code = normalizeText(normalizedCode);
+  const message = normalizeText(normalizedMessage);
   const status = normalized.status;
 
   if (args.context === 'claim') {
     if (isSessionOrJwtFailure(code, message, status)) {
       return {
-        code: normalized.code ?? 'session_invalid',
+        code: normalizedCode ?? 'session_invalid',
         message: 'Your session expired. Sign in again and retry the claim.',
         retryable: true,
         unavailable: false,
@@ -93,7 +96,7 @@ export async function classifyLiveWorkflowError(
 
     if (code === 'forbidden') {
       return {
-        code: normalized.code ?? 'forbidden',
+        code: normalizedCode ?? 'forbidden',
         message: 'This account cannot claim items. Sign in with an active broker account and retry.',
         retryable: false,
         unavailable: false,
@@ -103,7 +106,7 @@ export async function classifyLiveWorkflowError(
 
     if (code === 'claim_unavailable') {
       return {
-        code: normalized.code ?? 'claim_unavailable',
+        code: normalizedCode ?? 'claim_unavailable',
         message: 'This item is no longer available to claim. Refresh the broker queue and try another item.',
         retryable: false,
         unavailable: false,
@@ -113,7 +116,7 @@ export async function classifyLiveWorkflowError(
 
     if (code === 'supplier_inactive') {
       return {
-        code: normalized.code ?? 'supplier_inactive',
+        code: normalizedCode ?? 'supplier_inactive',
         message: 'This supplier is not active right now. Refresh the broker queue and choose a different item.',
         retryable: false,
         unavailable: false,
@@ -123,7 +126,7 @@ export async function classifyLiveWorkflowError(
 
     if (isTransportFailure(code, message, status) || (status != null && status >= 500)) {
       return {
-        code: normalized.code ?? 'claim_service_unavailable',
+        code: normalizedCode ?? 'claim_service_unavailable',
         message: 'Claiming is temporarily unavailable right now. Retry in a moment.',
         retryable: true,
         unavailable: true,
@@ -132,8 +135,8 @@ export async function classifyLiveWorkflowError(
     }
 
     return {
-      code: normalized.code ?? 'claim_failed',
-      message: normalized.message?.trim() || args.fallbackMessage,
+      code: normalizedCode ?? 'claim_failed',
+      message: normalizedMessage ?? args.fallbackMessage,
       retryable: true,
       unavailable: false,
       status,
@@ -142,7 +145,7 @@ export async function classifyLiveWorkflowError(
 
   if (code === 'missing_hub') {
     return {
-      code: normalized.code ?? 'missing_hub',
+      code: normalizedCode ?? 'missing_hub',
       message: 'Live posting is unavailable until this supplier hub is active. Use photo capture instead.',
       retryable: false,
       unavailable: true,
@@ -153,7 +156,7 @@ export async function classifyLiveWorkflowError(
 
   if (code === 'forbidden') {
     return {
-      code: normalized.code ?? 'forbidden',
+      code: normalizedCode ?? 'forbidden',
       message: 'Live posting is unavailable for this account right now. Use photo capture instead.',
       retryable: false,
       unavailable: true,
@@ -164,7 +167,7 @@ export async function classifyLiveWorkflowError(
 
   if (isSessionOrJwtFailure(code, message, status)) {
     return {
-      code: normalized.code ?? 'live_posting_unavailable',
+      code: normalizedCode ?? 'live_posting_unavailable',
       message: 'Live posting is temporarily unavailable right now. Use photo capture instead.',
       retryable: true,
       unavailable: true,
@@ -175,7 +178,7 @@ export async function classifyLiveWorkflowError(
 
   if (isTransportFailure(code, message, status) || (status != null && status >= 500)) {
     return {
-      code: normalized.code ?? 'live_posting_unavailable',
+      code: normalizedCode ?? 'live_posting_unavailable',
       message: 'Live posting is temporarily unavailable right now. Use photo capture instead.',
       retryable: true,
       unavailable: true,
@@ -185,8 +188,8 @@ export async function classifyLiveWorkflowError(
   }
 
   return {
-    code: normalized.code ?? 'live_posting_failed',
-    message: normalized.message?.trim() || args.fallbackMessage,
+    code: normalizedCode ?? 'live_posting_failed',
+    message: normalizedMessage ?? args.fallbackMessage,
     retryable: true,
     unavailable: false,
     fallbackRoute: LIVE_INTAKE_FALLBACK_ROUTE,

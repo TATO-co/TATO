@@ -31,9 +31,11 @@ jobs:
 
       - run: |
           supabase functions deploy \
+            --no-verify-jwt \
             create-claim \
             start-ingestion \
             check-live-intake-availability \
+            create-supplier-hub \
             start-live-intake-draft \
             complete-live-intake-draft \
             create-sale-payment \
