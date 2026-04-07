@@ -1,11 +1,12 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useState } from 'react';
-import { ActivityIndicator, Image, Pressable, ScrollView, Text, View } from 'react-native';
+import { ActivityIndicator, Image, Pressable, RefreshControl, ScrollView, Text, View } from 'react-native';
 import Animated, { FadeInUp } from 'react-native-reanimated';
 
 import { ModeShell } from '@/components/layout/ModeShell';
 import { InventoryTable } from '@/components/ui/InventoryTable';
 import { PhoneActionButton, PhoneEyebrow, PhonePanel } from '@/components/ui/PhoneChrome';
+import { SkeletonCard, SkeletonRow } from '@/components/ui/SkeletonCard';
 import { StatusFilterBar, type StatusFilter } from '@/components/ui/StatusFilterBar';
 import { useViewportInfo } from '@/lib/constants';
 import { useSupplierDashboard } from '@/lib/hooks/useSupplierDashboard';
@@ -38,6 +39,7 @@ export default function SupplierInventoryScreen() {
   const { items, loading, error, refresh } = useSupplierDashboard();
   const { isPhone, isTablet } = useViewportInfo();
   const [activeFilter, setActiveFilter] = useState<StatusFilter>('all');
+  const [refreshing, setRefreshing] = useState(false);
   const fromLiveIntake = from === 'live-intake';
   const completionCopy = getLiveIntakeCompletionCopy('ready_for_claim');
 
@@ -62,8 +64,11 @@ export default function SupplierInventoryScreen() {
       modeLabel="Supplier Mode"
       title="TATO Supplier">
       {loading ? (
-        <View className="items-center py-10">
-          <ActivityIndicator color="#1e6dff" />
+        <View className="gap-4 py-4">
+          <SkeletonCard height={100} borderRadius={24} />
+          <SkeletonRow />
+          <SkeletonRow />
+          <SkeletonRow />
         </View>
       ) : error ? (
         <View className="items-center rounded-2xl border border-tato-line bg-tato-panel p-5">
@@ -104,7 +109,21 @@ export default function SupplierInventoryScreen() {
           )}
         </ScrollView>
       ) : (
-        <ScrollView className="mt-2 flex-1" contentContainerClassName="gap-4 pb-36">
+        <ScrollView
+          className="mt-2 flex-1"
+          contentContainerClassName="gap-4 pb-36"
+          refreshControl={
+            <RefreshControl
+              colors={['#1e6dff']}
+              onRefresh={async () => {
+                setRefreshing(true);
+                await refresh();
+                setRefreshing(false);
+              }}
+              refreshing={refreshing}
+              tintColor="#1e6dff"
+            />
+          }>
           {fromLiveIntake ? (
             <PhonePanel gradientTone="accent" padded="lg">
               <PhoneEyebrow tone="accent">{completionCopy.eyebrow}</PhoneEyebrow>

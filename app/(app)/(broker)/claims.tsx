@@ -2,8 +2,11 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Image,
+  KeyboardAvoidingView,
   Linking,
+  Platform,
   Pressable,
+  RefreshControl,
   ScrollView,
   Text,
   TextInput,
@@ -13,6 +16,7 @@ import {
 import { ModeShell } from '@/components/layout/ModeShell';
 import { ResponsiveKpiGrid, ResponsiveSplitPane } from '@/components/layout/ResponsivePrimitives';
 import { FeedState } from '@/components/ui/FeedState';
+import { SkeletonCard, SkeletonRow } from '@/components/ui/SkeletonCard';
 import { useViewportInfo } from '@/lib/constants';
 import { useBrokerClaims } from '@/lib/hooks/useBrokerClaims';
 import { useItemDetail } from '@/lib/hooks/useItemDetail';
@@ -127,6 +131,7 @@ function buildVariantDescriptions(platformVariants: Record<string, ClaimPlatform
 export default function BrokerClaimsScreen() {
   const { isPhone, tier } = useViewportInfo();
   const { claims, error, loading, refresh } = useBrokerClaims();
+  const [refreshing, setRefreshing] = useState(false);
   const [selectedClaimId, setSelectedClaimId] = useState<string | null>(null);
 
   useEffect(() => {
@@ -345,8 +350,10 @@ export default function BrokerClaimsScreen() {
   );
 
   const detailPane = detailLoading ? (
-    <View className="items-center rounded-[24px] border border-tato-line bg-tato-panel p-8">
-      <ActivityIndicator color="#1e6dff" />
+    <View className="gap-3">
+      <SkeletonCard height={180} borderRadius={24} />
+      <SkeletonRow />
+      <SkeletonRow />
     </View>
   ) : detailError ? (
     <FeedState error={detailError} />
@@ -643,8 +650,11 @@ export default function BrokerClaimsScreen() {
       modeLabel="Broker Mode"
       title="Claim Desk">
       {loading ? (
-        <View className="mt-8 items-center">
-          <ActivityIndicator color="#1e6dff" />
+        <View className="mt-4 gap-4">
+          <SkeletonCard height={90} borderRadius={24} />
+          <SkeletonRow />
+          <SkeletonRow />
+          <SkeletonRow />
         </View>
       ) : error ? (
         <FeedState error={error} onRetry={refresh} />
@@ -678,10 +688,29 @@ export default function BrokerClaimsScreen() {
           />
         </ScrollView>
       ) : (
-        <ScrollView className="mt-2 flex-1" contentContainerClassName="gap-4 pb-10">
-          {queue}
-          {detailPane}
-        </ScrollView>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          style={{ flex: 1 }}>
+          <ScrollView
+            className="mt-2 flex-1"
+            contentContainerClassName="gap-4 pb-36"
+            keyboardShouldPersistTaps="handled"
+            refreshControl={
+              <RefreshControl
+                colors={['#1e6dff']}
+                onRefresh={async () => {
+                  setRefreshing(true);
+                  await refresh();
+                  setRefreshing(false);
+                }}
+                refreshing={refreshing}
+                tintColor="#1e6dff"
+              />
+            }>
+            {queue}
+            {detailPane}
+          </ScrollView>
+        </KeyboardAvoidingView>
       )}
     </ModeShell>
   );

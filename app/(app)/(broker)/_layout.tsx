@@ -16,7 +16,7 @@ export default function TabLayout() {
   const showBottomTabs = width < TABLET_BREAKPOINT;
   const redirectTarget = resolveModeAccessRoute('broker', profile);
 
-  if (loading || (!profile && !profileError)) {
+  if (loading) {
     return (
       <View className="flex-1 items-center justify-center bg-tato-base">
         <ActivityIndicator color="#1e6dff" />

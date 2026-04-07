@@ -1,5 +1,5 @@
 import { useRouter } from 'expo-router';
-import { SymbolView } from 'expo-symbols';
+import { PlatformIcon } from '@/components/ui/PlatformIcon';
 import { ActivityIndicator, Pressable, ScrollView, Text, View } from 'react-native';
 
 import { ModeShell } from '@/components/layout/ModeShell';
@@ -328,7 +328,7 @@ function MobileIdleView({
           accessibilityRole="button"
           className="h-11 w-11 items-center justify-center rounded-full bg-tato-panelSoft"
           onPress={onBack}>
-          <SymbolView name={{ ios: 'chevron.left', android: 'arrow_back', web: 'arrow_back' }} size={18} tintColor="#edf4ff" />
+          <PlatformIcon name={{ ios: 'chevron.left', android: 'arrow_back', web: 'arrow_back' }} size={18} color="#edf4ff" />
         </Pressable>
       </View>
 
@@ -380,7 +380,7 @@ function MobileUnavailableView({
           accessibilityRole="button"
           className="h-11 w-11 items-center justify-center rounded-full bg-tato-panelSoft"
           onPress={onBack}>
-          <SymbolView name={{ ios: 'chevron.left', android: 'arrow_back', web: 'arrow_back' }} size={18} tintColor="#edf4ff" />
+          <PlatformIcon name={{ ios: 'chevron.left', android: 'arrow_back', web: 'arrow_back' }} size={18} color="#edf4ff" />
         </Pressable>
       </View>
       <View className="flex-1 items-center justify-center">
@@ -562,7 +562,7 @@ function MobileConnectedView({
               accessibilityRole="button"
               className="h-9 w-9 items-center justify-center rounded-full bg-black/60"
               onPress={handleEndSession}>
-              <SymbolView name={{ ios: 'chevron.left', android: 'arrow_back', web: 'arrow_back' }} size={16} tintColor="#edf4ff" />
+              <PlatformIcon name={{ ios: 'chevron.left', android: 'arrow_back', web: 'arrow_back' }} size={16} color="#edf4ff" />
             </Pressable>
             <div style={{
               alignItems: 'center',
@@ -971,7 +971,7 @@ function DesktopUnavailableLayout({
               accessibilityRole="button"
               className="h-11 w-11 items-center justify-center rounded-full bg-tato-panelSoft"
               onPress={() => router.back()}>
-              <SymbolView name={{ ios: 'chevron.left', android: 'arrow_back', web: 'arrow_back' }} size={18} tintColor="#edf4ff" />
+              <PlatformIcon name={{ ios: 'chevron.left', android: 'arrow_back', web: 'arrow_back' }} size={18} color="#edf4ff" />
             </Pressable>
           </View>
           <View className="mt-6 flex-row gap-3">
@@ -1092,7 +1092,7 @@ function DesktopLayout({
               accessibilityRole="button"
               className="h-11 w-11 items-center justify-center rounded-full bg-tato-panelSoft"
               onPress={() => router.back()}>
-              <SymbolView name={{ ios: 'chevron.left', android: 'arrow_back', web: 'arrow_back' }} size={18} tintColor="#edf4ff" />
+              <PlatformIcon name={{ ios: 'chevron.left', android: 'arrow_back', web: 'arrow_back' }} size={18} color="#edf4ff" />
             </Pressable>
           </View>
 

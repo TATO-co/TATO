@@ -1,3 +1,4 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { Session, User } from '@supabase/supabase-js';
 import {
   createContext,
@@ -33,6 +34,7 @@ import {
   resolveRoleLabel,
   withTimeout,
 } from '@/lib/auth-helpers';
+import { readFunctionErrorPayload } from '@/lib/function-errors';
 import { supabase } from '@/lib/supabase';
 
 export type ProfileRecord = {
@@ -85,6 +87,7 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 const developmentApprovalBypassEnabled = isLocalDevelopmentRuntime();
 const AUTH_VALIDATE_TIMEOUT_MS = 5000;
 const AUTH_RECOVERY_RETRY_MS = 1500;
+const AUTH_RECOVERY_MAX_ATTEMPTS = 3;
 const PROFILE_RECOVERY_RETRY_MS = 1500;
 const PROFILE_RECOVERY_MAX_ATTEMPTS = 3;
 const PROFILE_SYNC_TIMEOUT_MS = 10000;
@@ -321,35 +324,68 @@ async function ensureProfile(user: User): Promise<ProfileRecord | null> {
 }
 
 function cacheProfile(record: ProfileRecord | null) {
+  void writeCachedProfile(record);
+}
+
+async function writeCachedProfile(record: ProfileRecord | null) {
   try {
-    if (typeof localStorage === 'undefined') return;
+    if (typeof localStorage !== 'undefined') {
+      if (record) {
+        localStorage.setItem(PROFILE_CACHE_KEY, JSON.stringify(record));
+      } else {
+        localStorage.removeItem(PROFILE_CACHE_KEY);
+      }
+      return;
+    }
+
     if (record) {
-      localStorage.setItem(PROFILE_CACHE_KEY, JSON.stringify(record));
+      await AsyncStorage.setItem(PROFILE_CACHE_KEY, JSON.stringify(record));
     } else {
-      localStorage.removeItem(PROFILE_CACHE_KEY);
+      await AsyncStorage.removeItem(PROFILE_CACHE_KEY);
     }
   } catch {
     // Storage full or unavailable — not critical.
   }
 }
 
-function readCachedProfile(userId: string | null): ProfileRecord | null {
+function parseCachedProfile(raw: string | null, userId: string | null): ProfileRecord | null {
+  if (!raw) {
+    return null;
+  }
+
+  const parsed = JSON.parse(raw);
+  // Basic shape check — must have id and status, and only hydrate it when it
+  // belongs to the same cached auth session.
+  if (
+    parsed
+    && typeof parsed.id === 'string'
+    && typeof parsed.status === 'string'
+    && parsed.id === userId
+  ) {
+    return parsed as ProfileRecord;
+  }
+
+  return null;
+}
+
+function readCachedProfileSync(userId: string | null): ProfileRecord | null {
   try {
     if (typeof localStorage === 'undefined') return null;
     const raw = localStorage.getItem(PROFILE_CACHE_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw);
-    // Basic shape check — must have id and status, and only hydrate it when it
-    // belongs to the same cached auth session.
-    if (
-      parsed
-      && typeof parsed.id === 'string'
-      && typeof parsed.status === 'string'
-      && parsed.id === userId
-    ) {
-      return parsed as ProfileRecord;
-    }
+    return parseCachedProfile(raw, userId);
+  } catch {
     return null;
+  }
+}
+
+async function readCachedProfile(userId: string | null): Promise<ProfileRecord | null> {
+  try {
+    if (typeof localStorage !== 'undefined') {
+      return readCachedProfileSync(userId);
+    }
+
+    const raw = await AsyncStorage.getItem(PROFILE_CACHE_KEY);
+    return parseCachedProfile(raw, userId);
   } catch {
     return null;
   }
@@ -364,7 +400,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
   // during refresh and briefly bounce through auth-only screens.
   const cachedSession = useMemo(() => readCachedSession(), []);
   const cachedProfile = useMemo(
-    () => readCachedProfile(cachedSession?.user?.id ?? null),
+    () => readCachedProfileSync(cachedSession?.user?.id ?? null),
     [cachedSession],
   );
   const hasCachedAuth = cachedSession !== null;
@@ -377,9 +413,11 @@ export function AuthProvider({ children }: PropsWithChildren) {
   const [nextMode, setNextMode] = useState<AppMode | null>(null);
   const [recoveryState, setRecoveryState] = useState<RecoveryState>('idle');
   const recoveryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const profileRef = useRef<ProfileRecord | null>(cachedProfile);
 
   // Wrapper that keeps the localStorage cache in sync with React state.
   const setProfile = useCallback((value: ProfileRecord | null) => {
+    profileRef.current = value;
     setProfileRaw(value);
     cacheProfile(value);
   }, []);
@@ -556,7 +594,16 @@ export function AuthProvider({ children }: PropsWithChildren) {
       }
 
       if (validation.kind === 'deferred') {
-        scheduleRecovery('auth', reason, blockUntilSettled, attempt);
+        if (attempt >= AUTH_RECOVERY_MAX_ATTEMPTS) {
+          setRecoveryState('idle');
+          if (blockUntilSettled) {
+            setProfileError(PROFILE_SYNC_ERROR_MESSAGE);
+            setLoading(false);
+          }
+          return;
+        }
+
+        scheduleRecovery('auth', reason, blockUntilSettled, attempt + 1);
         return;
       }
 
@@ -568,7 +615,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
         `${reason}.loadProfile.timeout`,
         {
           preserveCurrentProfileOnFailure: true,
-          terminalOnFailure: kind === 'profile' && attempt >= PROFILE_RECOVERY_MAX_ATTEMPTS,
+          terminalOnFailure: blockUntilSettled && kind === 'profile' && attempt >= PROFILE_RECOVERY_MAX_ATTEMPTS,
         },
       );
 
@@ -592,6 +639,24 @@ export function AuthProvider({ children }: PropsWithChildren) {
     }, kind === 'auth' ? AUTH_RECOVERY_RETRY_MS : PROFILE_RECOVERY_RETRY_MS);
   }, [setProfile, syncProfile, validateSession]);
 
+  const syncProfileInBackground = useCallback((authUser: User, reason: string) => {
+    void (async () => {
+      const resolvedProfile = await syncProfile(
+        authUser,
+        `${reason}.loadProfile`,
+        `${reason}.loadProfile.timeout`,
+        {
+          preserveCurrentProfileOnFailure: true,
+          terminalOnFailure: false,
+        },
+      );
+
+      if (!resolvedProfile) {
+        scheduleRecovery('profile', `${reason}.recovery`, false);
+      }
+    })();
+  }, [scheduleRecovery, syncProfile]);
+
   useEffect(() => {
     let mounted = true;
 
@@ -604,10 +669,12 @@ export function AuthProvider({ children }: PropsWithChildren) {
       }
 
       let resolvedSession: Session | null = null;
+      let bootstrapProfile: ProfileRecord | null = null;
 
       try {
         const { data: cachedData } = await supabase.auth.getSession();
         resolvedSession = cachedData?.session ?? null;
+        bootstrapProfile = await readCachedProfile(resolvedSession?.user?.id ?? null);
       } catch (error) {
         captureException(error, { flow: 'auth.initialize.timeout' });
       }
@@ -636,6 +703,22 @@ export function AuthProvider({ children }: PropsWithChildren) {
 
       setSession(validation.session);
       setUser(validation.user);
+
+      if (bootstrapProfile?.id === validation.user.id) {
+        setProfile(bootstrapProfile);
+        setProfileError(null);
+        syncTelemetryProfile(validation.user, bootstrapProfile);
+        setRecoveryState('idle');
+        setLoading(false);
+
+        if (validation.kind === 'deferred') {
+          scheduleRecovery('auth', 'auth.initialize.recovery', false);
+          return;
+        }
+
+        syncProfileInBackground(validation.user, 'auth.initialize');
+        return;
+      }
 
       if (validation.kind === 'deferred') {
         setProfileError(null);
@@ -729,7 +812,10 @@ export function AuthProvider({ children }: PropsWithChildren) {
       // — these require a profile re-sync.
       clearRecoveryTimer();
       setRecoveryState('idle');
-      setLoading(true);
+      const shouldBlock = !profileRef.current || profileRef.current.id !== changedSession?.user?.id;
+      if (shouldBlock) {
+        setLoading(true);
+      }
       setSession(changedSession);
       setUser(changedSession?.user ?? null);
       const resolvedProfile = await syncProfile(
@@ -743,12 +829,14 @@ export function AuthProvider({ children }: PropsWithChildren) {
       );
 
       if (!resolvedProfile && changedSession?.user) {
-        scheduleRecovery('profile', 'auth.onAuthStateChange.recovery', true);
+        scheduleRecovery('profile', 'auth.onAuthStateChange.recovery', shouldBlock);
         return;
       }
 
       setRecoveryState('idle');
-      setLoading(false);
+      if (shouldBlock) {
+        setLoading(false);
+      }
     });
 
     return () => {
@@ -869,8 +957,16 @@ export function AuthProvider({ children }: PropsWithChildren) {
     });
 
     if (error) {
-      captureException(error, { flow: 'auth.updatePersonas' });
-      return { error: error.message };
+      const parsedError = await readFunctionErrorPayload(error);
+      captureException(error, {
+        flow: 'auth.updatePersonas',
+        functionCode: parsedError.code,
+        functionStatus: parsedError.status ?? undefined,
+        correlationId: parsedError.correlationId,
+      });
+      return {
+        error: parsedError.message?.trim() || error.message || PERSONA_UPDATE_ERROR_MESSAGE,
+      };
     }
 
     const resolvedProfile = (data?.profile ?? null) as ProfileRecord | null;
@@ -923,7 +1019,10 @@ export function AuthProvider({ children }: PropsWithChildren) {
       return;
     }
 
-    setLoading(true);
+    const shouldBlock = !profileRef.current;
+    if (shouldBlock) {
+      setLoading(true);
+    }
     clearRecoveryTimer();
     setRecoveryState('idle');
 
@@ -937,7 +1036,9 @@ export function AuthProvider({ children }: PropsWithChildren) {
       setUser(null);
       setProfile(null);
       setProfileError(null);
-      setLoading(false);
+      if (shouldBlock) {
+        setLoading(false);
+      }
       return;
     }
 
@@ -946,7 +1047,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
 
     if (validation.kind === 'deferred') {
       setProfileError(null);
-      scheduleRecovery('auth', 'auth.refreshProfile.recovery', true);
+      scheduleRecovery('auth', 'auth.refreshProfile.recovery', shouldBlock);
       return;
     }
 
@@ -962,12 +1063,14 @@ export function AuthProvider({ children }: PropsWithChildren) {
 
     if (!resolvedProfile) {
       setProfileError(null);
-      scheduleRecovery('profile', 'auth.refreshProfile.recovery', true);
+      scheduleRecovery('profile', 'auth.refreshProfile.recovery', shouldBlock);
       return;
     }
 
     setRecoveryState('idle');
-    setLoading(false);
+    if (shouldBlock) {
+      setLoading(false);
+    }
   }, [clearRecoveryTimer, scheduleRecovery, session, syncProfile, user, validateSession]);
 
   const switchMode = useCallback(

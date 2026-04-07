@@ -1,7 +1,7 @@
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
 import { useMemo, useState } from 'react';
-import { FlatList, Pressable, ScrollView, Text, View } from 'react-native';
+import { FlatList, Pressable, RefreshControl, ScrollView, Text, View } from 'react-native';
 import Animated, { FadeInUp } from 'react-native-reanimated';
 
 import {
@@ -130,6 +130,7 @@ export function BrokerFeedPanel({
   const [minBrokerPayoutCents, setMinBrokerPayoutCents] = useState(0);
   const [minAiConfidence, setMinAiConfidence] = useState(0);
   const { items, loading, error, claimStateById, claimErrorById, claimedCount, refresh, claimItem } = useBrokerFeed();
+  const [refreshing, setRefreshing] = useState(false);
   const { flips } = useRecentFlips();
 
   const compactDesktop = useAdvancedFeedMode && (isTablet || (resolvedDesktop && !isWideDesktop));
@@ -744,10 +745,22 @@ export function BrokerFeedPanel({
         <FeedState error={error} empty={isEmpty} emptyLabel="No items match this filter yet." onRetry={refresh} />
       ) : (
         <FlatList
-          contentContainerClassName="gap-4 pb-32"
+          contentContainerClassName="gap-4 pb-36"
           data={activeItems}
           keyExtractor={(item) => item.id}
           ListHeaderComponent={listHeader}
+          refreshControl={
+            <RefreshControl
+              colors={['#1e6dff']}
+              onRefresh={async () => {
+                setRefreshing(true);
+                await refresh();
+                setRefreshing(false);
+              }}
+              refreshing={refreshing}
+              tintColor="#1e6dff"
+            />
+          }
           renderItem={renderItem}
           showsVerticalScrollIndicator={false}
         />

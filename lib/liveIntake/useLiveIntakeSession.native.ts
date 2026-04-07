@@ -14,6 +14,7 @@ import { captureException, trackEvent } from '@/lib/analytics';
 import {
   captureStillPhotoAsBase64,
   captureFrameAsBase64,
+  ensureNativeAudioAvailable,
   playAudioChunk,
   startNativeMicCapture,
 } from '@/lib/liveIntake/audio.native';
@@ -755,6 +756,13 @@ export function useLiveIntakeSession(args: UseLiveIntakeSessionArgs) {
     if (!availabilityResult.available) {
       setConnectionState('idle');
       setError(availabilityResult.message ?? 'Live posting is temporarily unavailable. Use photo capture instead.');
+      return;
+    }
+
+    const audioSupport = await ensureNativeAudioAvailable();
+    if (!audioSupport.ok) {
+      setConnectionState('unsupported');
+      setError(audioSupport.message);
       return;
     }
 

@@ -1,6 +1,7 @@
 import { useRouter } from 'expo-router';
 import { useState } from 'react';
-import { ActivityIndicator, Pressable, SafeAreaView, ScrollView, Text, View } from 'react-native';
+import { ActivityIndicator, Pressable, ScrollView, Text, View } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { useAuth } from '@/components/providers/AuthProvider';
 
@@ -23,7 +24,7 @@ export default function AccountSuspendedScreen() {
               This account is currently suspended.
             </Text>
             <Text className="mt-4 text-base leading-7 text-tato-muted">
-              TATO has blocked workspace access for this account. Retry the account sync if you expect this suspension to have been lifted, or sign out.
+              TATO has paused workspace access for this account. Retry the account sync if you expect the suspension to have been lifted, or sign out.
             </Text>
 
             <View className="mt-5 rounded-2xl border border-tato-line bg-tato-panelSoft p-4">
@@ -47,7 +48,7 @@ export default function AccountSuspendedScreen() {
                   setMessage(null);
                   try {
                     await refreshProfile();
-                    setMessage('Account status checked. This account is still suspended unless TATO routes you back into the app.');
+                    setMessage('Account status checked. This account is still suspended unless TATO routes you back into the workspace.');
                   } finally {
                     setBusyAction(null);
                   }
@@ -69,7 +70,7 @@ export default function AccountSuspendedScreen() {
                   setMessage(null);
                   try {
                     await signOut();
-                    router.replace('/(auth)/sign-in');
+                    router.replace('/sign-in');
                   } finally {
                     setBusyAction(null);
                   }

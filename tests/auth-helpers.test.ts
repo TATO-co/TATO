@@ -6,7 +6,9 @@ import {
   resolvePayoutReadiness,
   resolveModeAccessRoute,
   resolvePreferredRoute,
+  resolveRootRedirectTarget,
   resolveRoleLabel,
+  toPublicPath,
   withTimeout,
 } from '@/lib/auth-helpers';
 
@@ -141,7 +143,7 @@ describe('resolvePreferredRoute', () => {
   it('returns sign-in when not authenticated', () => {
     expect(
       resolvePreferredRoute({ ...base, isAuthenticated: false, profile: null }),
-    ).toBe('/(auth)/sign-in');
+    ).toBe('/sign-in');
   });
 
   it('returns session-error when profileError is set', () => {
@@ -262,6 +264,130 @@ describe('resolvePreferredRoute', () => {
     expect(
       resolvePreferredRoute({ ...base, profile: null }),
     ).toBe('/(auth)/persona-setup');
+  });
+});
+
+/* ---------- toPublicPath --------------------------------------------------- */
+
+describe('toPublicPath', () => {
+  it('removes expo-router route groups', () => {
+    expect(toPublicPath('/(app)/(broker)/workspace')).toBe('/workspace');
+  });
+
+  it('returns slash when a grouped root collapses to empty', () => {
+    expect(toPublicPath('/(auth)')).toBe('/');
+  });
+});
+
+/* ---------- resolveRootRedirectTarget -------------------------------------- */
+
+describe('resolveRootRedirectTarget', () => {
+  it('does not redirect configured public entry routes when signed out', () => {
+    expect(
+      resolveRootRedirectTarget({
+        configured: true,
+        isAuthenticated: false,
+        pathname: '/',
+        preferredRoute: '/sign-in',
+        segments: [],
+      }),
+    ).toBeNull();
+  });
+
+  it('does not redirect the public sign-in route when signed out and the router exposes a public segment path', () => {
+    expect(
+      resolveRootRedirectTarget({
+        configured: true,
+        isAuthenticated: false,
+        pathname: '/sign-in',
+        preferredRoute: '/sign-in',
+        segments: ['sign-in'],
+      }),
+    ).toBeNull();
+  });
+
+  it('redirects signed-out protected routes to sign-in', () => {
+    expect(
+      resolveRootRedirectTarget({
+        configured: true,
+        isAuthenticated: false,
+        pathname: '/workspace',
+        preferredRoute: '/sign-in',
+        segments: ['(app)', '(broker)', 'workspace'],
+      }),
+    ).toBe('/sign-in');
+  });
+
+  it('redirects authenticated visitors away from root to their preferred app route', () => {
+    expect(
+      resolveRootRedirectTarget({
+        configured: true,
+        isAuthenticated: true,
+        pathname: '/',
+        preferredRoute: '/(app)/(broker)/workspace',
+        segments: [],
+      }),
+    ).toBe('/workspace');
+  });
+
+  it('does not redirect when the current pathname already matches the public preferred path', () => {
+    expect(
+      resolveRootRedirectTarget({
+        configured: true,
+        isAuthenticated: true,
+        pathname: '/workspace',
+        preferredRoute: '/(app)/(broker)/workspace',
+        segments: ['(app)', '(broker)', 'workspace'],
+      }),
+    ).toBeNull();
+  });
+
+  it('redirects authenticated auth-group routes back into the app', () => {
+    expect(
+      resolveRootRedirectTarget({
+        configured: true,
+        isAuthenticated: true,
+        pathname: '/sign-in',
+        preferredRoute: '/(app)/(supplier)/dashboard',
+        segments: ['(auth)', 'sign-in'],
+      }),
+    ).toBe('/dashboard');
+  });
+
+  it('redirects authenticated users to required auth recovery routes when needed', () => {
+    expect(
+      resolveRootRedirectTarget({
+        configured: true,
+        isAuthenticated: true,
+        pathname: '/workspace',
+        preferredRoute: '/(auth)/session-error',
+        segments: ['(app)', '(broker)', 'workspace'],
+      }),
+    ).toBe('/session-error');
+  });
+
+  it('redirects misconfigured routes to the configuration screen', () => {
+    expect(
+      resolveRootRedirectTarget({
+        configured: false,
+        isAuthenticated: false,
+        pathname: '/workspace',
+        preferredRoute: '/(auth)/configuration-required',
+        segments: ['(app)', '(broker)', 'workspace'],
+      }),
+    ).toBe('/configuration-required');
+  });
+
+  it('does not redirect when already on the configuration screen', () => {
+    expect(
+      resolveRootRedirectTarget({
+        configured: false,
+        isAuthenticated: false,
+        pathname: '/configuration-required',
+        preferredRoute: '/(auth)/configuration-required',
+        segments: ['(auth)', 'configuration-required'],
+      }),
+    ).toBeNull();
   });
 });
 

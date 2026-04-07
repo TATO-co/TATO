@@ -1,17 +1,20 @@
 import { useIsDesktop } from '@/lib/constants';
 import * as WebBrowser from 'expo-web-browser';
 import { useRouter } from 'expo-router';
-import { SymbolView } from 'expo-symbols';
+import { PlatformIcon } from '@/components/ui/PlatformIcon';
+import { ScreenHeader } from '@/components/ui/ScreenHeader';
 import { useState } from 'react';
 import {
   ActivityIndicator,
+  KeyboardAvoidingView,
+  Platform,
   Pressable,
-  SafeAreaView,
   ScrollView,
   Text,
   TextInput,
   View,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { trackEvent } from '@/lib/analytics';
 import { useAuth } from '@/components/providers/AuthProvider';
@@ -45,21 +48,13 @@ export default function PaymentsScreen() {
   const [creatingIntent, setCreatingIntent] = useState(false);
 
   return (
-    <SafeAreaView className="flex-1 bg-tato-base">
-      <View className={`flex-1 ${isDesktop ? 'mx-auto w-full max-w-[1320px] px-8 pt-7' : 'px-4 pt-3'}`}>
-        <View className="mb-4 flex-row items-center justify-between">
-          <Pressable
-            accessibilityLabel="Back to wallet"
-            accessibilityRole="button"
-            className="h-10 w-10 items-center justify-center rounded-full bg-[#132342]"
-            onPress={() => router.back()}>
-            <SymbolView name={{ ios: 'chevron.left', android: 'arrow_back', web: 'arrow_back' }} size={18} tintColor="#edf4ff" />
-          </Pressable>
-          <Text className="text-2xl font-bold text-tato-text">Payments & Splits</Text>
-          <View className="h-10 w-10" />
-        </View>
-
-        <ScrollView className="flex-1" contentContainerClassName="gap-4 pb-10">
+    <SafeAreaView className="flex-1 bg-tato-base" edges={['left', 'right']}>
+      <ScreenHeader title="Payments & Splits" />
+      <View className={`flex-1 ${isDesktop ? 'mx-auto w-full max-w-[1320px] px-8' : 'px-4'}`}>
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          style={{ flex: 1 }}>
+          <ScrollView className="flex-1" contentContainerClassName="gap-4 pb-10" keyboardShouldPersistTaps="handled">
           <View className="rounded-[24px] border border-tato-line bg-[#071a39] p-5">
             <Text className="text-xs uppercase tracking-[1px] text-tato-muted" style={{ fontFamily: 'SpaceMono' }}>
               Net Settled Balance
@@ -209,6 +204,7 @@ export default function PaymentsScreen() {
             </View>
           </View>
         </ScrollView>
+        </KeyboardAvoidingView>
       </View>
     </SafeAreaView>
   );

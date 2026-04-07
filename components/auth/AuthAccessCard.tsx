@@ -38,6 +38,19 @@ const primaryButtonLabelClasses: Record<AuthAccessCardVariant, string> = {
   signIn: 'text-white',
 };
 
+const authStepDefinitions: { key: AuthStep; label: string; helper: string }[] = [
+  {
+    key: 'email',
+    label: 'Work Email',
+    helper: 'We send a secure one-time code.',
+  },
+  {
+    key: 'code',
+    label: 'Verify Code',
+    helper: 'Use the latest email to continue.',
+  },
+];
+
 export function AuthAccessCard({
   eyebrow = 'Workspace Access',
   title,
@@ -53,7 +66,23 @@ export function AuthAccessCard({
   const [token, setToken] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [showDeveloperTools, setShowDeveloperTools] = useState(false);
   const devBypassAvailable = isDevelopmentBypassAvailable();
+  const developerRuntime = isLocalDevelopmentRuntime();
+  const currentStep = step === 'email' ? 1 : 2;
+
+  const guidance =
+    step === 'email'
+      ? {
+          title: 'Start with your work email.',
+          body:
+            'We send a one-time code so you can sign in without a password. Suppliers, brokers, and admins all start here.',
+        }
+      : {
+          title: 'Use the newest code in your inbox.',
+          body:
+            'If this is your first sign-in, the email may say "Confirm your signup". The newest 8-digit code is the one that will work.',
+        };
 
   const requestOtp = async () => {
     setError(null);
@@ -155,6 +184,44 @@ export function AuthAccessCard({
         {configured ? (
           <View className="mt-8 gap-3">
             <View className="gap-3">
+              <View className="flex-row gap-2">
+                {authStepDefinitions.map((item, index) => {
+                  const active = item.key === step;
+                  const complete = step === 'code' && item.key === 'email';
+
+                  return (
+                    <View
+                      className={`flex-1 rounded-[18px] border px-3 py-3 ${
+                        active
+                          ? 'border-tato-accent bg-tato-accent/12'
+                          : complete
+                            ? 'border-tato-profit/30 bg-tato-profit/10'
+                            : 'border-tato-line bg-[#0a1628]/86'
+                      }`}
+                      key={item.key}>
+                      <Text
+                        className={`font-mono text-[10px] uppercase tracking-[1.2px] ${
+                          active ? 'text-tato-accent' : complete ? 'text-tato-profit' : 'text-tato-dim'
+                        }`}>
+                        Step {index + 1}
+                      </Text>
+                      <Text className="mt-2 text-sm font-semibold text-tato-text">{item.label}</Text>
+                      <Text className="mt-1 text-xs leading-5 text-tato-muted">{item.helper}</Text>
+                    </View>
+                  );
+                })}
+              </View>
+
+              <View className="rounded-[20px] border border-[#20406d] bg-[#0a1a31]/90 px-4 py-4">
+                <Text className="font-mono text-[10px] uppercase tracking-[1.5px] text-[#9ec4ff]">
+                  Step {currentStep} of 2
+                </Text>
+                <Text className="mt-2 text-base font-semibold text-tato-text">{guidance.title}</Text>
+                <Text className="mt-2 text-sm leading-6 text-tato-muted">{guidance.body}</Text>
+              </View>
+            </View>
+
+            <View className="gap-3">
               {step === 'email' ? (
                 <View>
                   <Text className="mb-1.5 ml-1 font-mono text-[10px] uppercase tracking-[1px] text-tato-dim">
@@ -188,10 +255,10 @@ export function AuthAccessCard({
                     placeholderTextColor="#64779c"
                     value={token}
                   />
-                  <Text className="mt-2 px-1 text-xs leading-5 text-tato-muted">
-                    If this is your first sign-in, Supabase may label the email as &quot;Confirm your signup&quot;. Use the code from that email here.
-                  </Text>
-                  <Pressable className="ml-1 mt-2" onPress={() => setStep('email')}>
+                  <Pressable
+                    className="ml-1 mt-2 py-2"
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    onPress={() => setStep('email')}>
                     <Text className="text-sm text-tato-accent">Edit email address</Text>
                   </Pressable>
                 </View>
@@ -221,54 +288,76 @@ export function AuthAccessCard({
 
             <View className="mt-1 items-center">
               <Text className="px-4 text-center text-xs leading-5 text-tato-muted">
-                If an account doesn&apos;t exist for this email, it will be automatically created and routed into persona setup.
+                New to TATO? After verification, we&apos;ll create your workspace profile and take you into setup.
               </Text>
             </View>
 
-            {step === 'email' && isLocalDevelopmentRuntime() && !devBypassAvailable ? (
-              <Text className="mt-1 text-center text-[11px] text-tato-dim">
-                Set `EXPO_PUBLIC_DEV_BYPASS_EMAIL` and `EXPO_PUBLIC_DEV_BYPASS_PASSWORD` to enable one-click dev sign-in.
-              </Text>
-            ) : null}
-
-            {step === 'email' && devBypassAvailable ? (
-              <View className="mt-2 gap-3">
-                <View className="items-center">
-                  <Text className="font-mono text-[10px] uppercase tracking-[2px] text-tato-dim">
-                    Development
-                  </Text>
-                </View>
-                <PressableScale
-                  accessibilityLabel="Continue as development user"
+            {step === 'email' && developerRuntime ? (
+              <View className="mt-2 overflow-hidden rounded-[20px] border border-[#17355f] bg-[#071427]/88">
+                <Pressable
+                  accessibilityLabel="Toggle developer tools"
                   accessibilityRole="button"
-                  className="rounded-full border border-tato-accent/35 bg-[#0d1e37]/94 px-8 py-4"
-                  disabled={submitting}
-                  onPress={runDevBypass}>
-                  {submitting ? (
-                    <ActivityIndicator color="#d9e7ff" />
-                  ) : (
-                    <Text className="text-center font-mono text-sm font-semibold uppercase tracking-[1px] text-tato-accent">
-                      Bypass Sign-In
+                  className="flex-row items-center justify-between px-4 py-3.5"
+                  onPress={() => setShowDeveloperTools((current) => !current)}>
+                  <View className="flex-1 pr-4">
+                    <Text className="font-mono text-[10px] uppercase tracking-[1.8px] text-tato-dim">
+                      Developer Tools
                     </Text>
-                  )}
-                </PressableScale>
-                <Text className="text-center text-[11px] text-tato-dim">
-                  Development-only shortcut.
-                </Text>
+                    <Text className="mt-1 text-sm leading-6 text-tato-muted">
+                      Keep test-only sign-in controls out of the primary operator flow.
+                    </Text>
+                  </View>
+                  <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-accent">
+                    {showDeveloperTools ? 'Hide' : 'Show'}
+                  </Text>
+                </Pressable>
+
+                {showDeveloperTools ? (
+                  <View className="border-t border-[#17355f] px-4 pb-4 pt-3">
+                    {devBypassAvailable ? (
+                      <>
+                        <PressableScale
+                          accessibilityLabel="Continue as development user"
+                          accessibilityRole="button"
+                          className="rounded-full border border-tato-accent/35 bg-[#0d1e37]/94 px-8 py-4"
+                          disabled={submitting}
+                          onPress={runDevBypass}>
+                          {submitting ? (
+                            <ActivityIndicator color="#d9e7ff" />
+                          ) : (
+                            <Text className="text-center font-mono text-sm font-semibold uppercase tracking-[1px] text-tato-accent">
+                              Bypass Sign-In
+                            </Text>
+                          )}
+                        </PressableScale>
+                        <Text className="mt-2 text-center text-[11px] text-tato-dim">
+                          Development-only shortcut.
+                        </Text>
+                      </>
+                    ) : (
+                      <Text className="text-[11px] leading-5 text-tato-dim">
+                        Set `EXPO_PUBLIC_DEV_BYPASS_EMAIL` and `EXPO_PUBLIC_DEV_BYPASS_PASSWORD` to enable one-click dev sign-in.
+                      </Text>
+                    )}
+                  </View>
+                ) : null}
               </View>
             ) : null}
           </View>
         ) : (
           <View className="mt-8 gap-3 rounded-[24px] border border-tato-line bg-[#0c1727]/80 p-4">
             <Text className="font-mono text-[11px] uppercase tracking-[2px] text-tato-warn">
-              Configuration Error
+              Runtime Setup Required
+            </Text>
+            <Text className="text-sm leading-6 text-tato-text">
+              This build cannot sign anyone in until the required environment values are present.
             </Text>
             <Text className="text-sm leading-6 text-tato-muted">
               {configurationError ?? 'Supabase is not configured for this build.'}
             </Text>
-            {isLocalDevelopmentRuntime() ? (
+            {developerRuntime ? (
               <Text className="text-xs leading-5 text-tato-dim">
-                Set `EXPO_PUBLIC_DEV_BYPASS_EMAIL` and `EXPO_PUBLIC_DEV_BYPASS_PASSWORD` to enable one-click dev sign-in.
+                Once the runtime is configured, operators can use the normal email-code flow and new accounts can finish workspace setup after verification.
               </Text>
             ) : null}
           </View>

@@ -1,21 +1,25 @@
 import * as ImagePicker from 'expo-image-picker';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { SymbolView } from 'expo-symbols';
+import { PlatformIcon } from '@/components/ui/PlatformIcon';
+import { ScreenHeader } from '@/components/ui/ScreenHeader';
 import { useEffect, useMemo, useState } from 'react';
 import { Share } from 'react-native';
 import {
   ActivityIndicator,
   Image,
+  KeyboardAvoidingView,
+  Platform,
   Pressable,
-  SafeAreaView,
   ScrollView,
   Text,
   TextInput,
   View,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { useAuth } from '@/components/providers/AuthProvider';
 import { FeedState } from '@/components/ui/FeedState';
+import { SkeletonCard, SkeletonRow } from '@/components/ui/SkeletonCard';
 import { useViewportInfo } from '@/lib/constants';
 import { useItemDetail } from '@/lib/hooks/useItemDetail';
 import {
@@ -348,33 +352,40 @@ export default function ItemDetailsScreen() {
     setPhotoActionSuccess('Item photos updated.');
   };
 
-  return (
-    <SafeAreaView className="flex-1 bg-tato-base">
-      <View className="mx-auto flex-1 w-full pt-4" style={{ maxWidth: pageMaxWidth ?? 1180, paddingHorizontal: pageGutter }}>
-        <View className="mb-4 flex-row items-center justify-between">
-          <Pressable
-            className="h-11 w-11 items-center justify-center rounded-full bg-[#132342]"
-            onPress={() => router.back()}>
-            <SymbolView name={{ ios: 'chevron.left', android: 'arrow_back', web: 'arrow_back' }} size={18} tintColor="#edf4ff" />
-          </Pressable>
-          <Text className="text-2xl font-bold text-tato-text">{fromLiveIntake ? completionCopy.screenTitle : 'Item Detail'}</Text>
-          <Pressable
-            className="h-11 w-11 items-center justify-center rounded-full bg-[#132342]"
-            onPress={handleShare}>
-            <SymbolView name={{ ios: 'square.and.arrow.up', android: 'share', web: 'share' }} size={18} tintColor="#edf4ff" />
-          </Pressable>
-        </View>
+  const shareButton = (
+    <Pressable
+      accessibilityLabel="Share item"
+      accessibilityRole="button"
+      className="h-11 w-11 items-center justify-center rounded-full bg-tato-panelSoft"
+      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+      onPress={handleShare}>
+      <PlatformIcon name={{ ios: 'square.and.arrow.up', android: 'share', web: 'share' }} size={18} color="#edf4ff" />
+    </Pressable>
+  );
 
+  return (
+    <SafeAreaView className="flex-1 bg-tato-base" edges={['left', 'right']}>
+      <ScreenHeader
+        title={fromLiveIntake ? completionCopy.screenTitle : 'Item Detail'}
+        trailing={shareButton}
+      />
+      <View className="mx-auto flex-1 w-full" style={{ maxWidth: pageMaxWidth ?? 1180, paddingHorizontal: pageGutter }}>
         {loading ? (
-          <View className="mt-10 items-center">
-            <ActivityIndicator color="#1e6dff" />
+          <View className="gap-4 py-4">
+            <SkeletonCard height={320} borderRadius={24} />
+            <SkeletonCard height={60} borderRadius={20} />
+            <SkeletonRow />
+            <SkeletonRow />
           </View>
         ) : error ? (
           <FeedState error={error} onRetry={refresh} />
         ) : !detail ? (
           <FeedState empty emptyLabel="Item not found." />
         ) : (
-          <ScrollView className="flex-1" contentContainerClassName="gap-5 pb-10">
+          <KeyboardAvoidingView
+            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+            style={{ flex: 1 }}>
+            <ScrollView className="flex-1" contentContainerClassName="gap-5 pb-10" keyboardShouldPersistTaps="handled">
             {fromLiveIntake ? (
               <View className="rounded-[24px] border border-tato-profit/30 bg-tato-profit/10 p-5">
                 <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-profit">{completionCopy.eyebrow}</Text>
@@ -905,6 +916,7 @@ export default function ItemDetailsScreen() {
               </View>
             </View>
           </ScrollView>
+          </KeyboardAvoidingView>
         )}
       </View>
     </SafeAreaView>

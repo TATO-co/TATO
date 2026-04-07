@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { SymbolView } from 'expo-symbols';
+import { PlatformIcon } from '@/components/ui/PlatformIcon';
 import { Image, Pressable, Text, View } from 'react-native';
 
 import { useViewportInfo } from '@/lib/constants';
@@ -175,10 +175,10 @@ export function InventoryTable({ items, onItemPress, renderActions, variant = 'a
               </View>
 
               <View className="items-center">
-                <SymbolView
+                <PlatformIcon
                   name={{ ios: 'link', android: 'link', web: 'link' }}
                   size={14}
-                  tintColor="#5a7a9e"
+                  color="#5a7a9e"
                 />
               </View>
             </Pressable>
@@ -282,10 +282,10 @@ export function InventoryTable({ items, onItemPress, renderActions, variant = 'a
               {formatMoney(item.askPriceCents, item.currencyCode, 2)}
             </Text>
             <View className="w-[44px] items-center">
-              <SymbolView
+              <PlatformIcon
                 name={{ ios: 'link', android: 'link', web: 'link' }}
                 size={14}
-                tintColor="#5a7a9e"
+                color="#5a7a9e"
               />
             </View>
           </Pressable>

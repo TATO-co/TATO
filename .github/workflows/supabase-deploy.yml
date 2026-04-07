@@ -29,6 +29,22 @@ jobs:
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
 
-      - run: supabase functions deploy create-claim start-ingestion create-sale-payment complete-claim-payment approve-user suspend-user create-connect-onboarding-link refresh-connect-status gemini-ingest-item stripe-webhook
+      - run: |
+          supabase functions deploy \
+            create-claim \
+            start-ingestion \
+            check-live-intake-availability \
+            start-live-intake-draft \
+            complete-live-intake-draft \
+            create-sale-payment \
+            complete-claim-payment \
+            approve-user \
+            set-user-personas \
+            suspend-user \
+            create-connect-onboarding-link \
+            refresh-connect-status \
+            gemini-ingest-item \
+            stripe-webhook \
+            generate-broker-listing
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}

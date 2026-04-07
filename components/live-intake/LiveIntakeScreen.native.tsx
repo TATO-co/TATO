@@ -1,6 +1,6 @@
 import { CameraView } from 'expo-camera';
 import { useRouter } from 'expo-router';
-import { SymbolView } from 'expo-symbols';
+import { PlatformIcon } from '@/components/ui/PlatformIcon';
 import { useCallback } from 'react';
 import {
   ActivityIndicator,
@@ -9,6 +9,9 @@ import {
   Text,
   View,
 } from 'react-native';
+import Animated, { useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
+
+import { hapticMedium, hapticSelection, hapticSuccess } from '@/lib/haptics';
 
 import { useLiveIntakeSession } from '@/lib/liveIntake/useLiveIntakeSession.native';
 import { useAuth } from '@/components/providers/AuthProvider';
@@ -195,7 +198,7 @@ function UnavailableView({
           accessibilityRole="button"
           className="h-11 w-11 items-center justify-center rounded-full bg-tato-panelSoft"
           onPress={onBack}>
-          <SymbolView name={{ ios: 'chevron.left', android: 'arrow_back', web: 'arrow_back' }} size={18} tintColor="#edf4ff" />
+          <PlatformIcon name={{ ios: 'chevron.left', android: 'arrow_back', web: 'arrow_back' }} size={18} color="#edf4ff" />
         </Pressable>
       </View>
       <View className="flex-1 items-center justify-center">
@@ -333,7 +336,7 @@ export default function LiveIntakeScreen() {
             accessibilityRole="button"
             className="h-11 w-11 items-center justify-center rounded-full bg-tato-panelSoft"
             onPress={() => router.back()}>
-            <SymbolView name={{ ios: 'chevron.left', android: 'arrow_back', web: 'arrow_back' }} size={18} tintColor="#edf4ff" />
+            <PlatformIcon name={{ ios: 'chevron.left', android: 'arrow_back', web: 'arrow_back' }} size={18} color="#edf4ff" />
           </Pressable>
         </View>
         <View className="flex-1 items-center justify-center">
@@ -401,11 +404,24 @@ export default function LiveIntakeScreen() {
     );
   }
 
+  const cameraHeight = useSharedValue(canCreate ? 240 : 360);
+
+  // Animate camera height when canCreate changes
+  const prevCanCreate = useSharedValue(canCreate);
+  if (prevCanCreate.value !== canCreate) {
+    prevCanCreate.value = canCreate;
+    cameraHeight.value = withTiming(canCreate ? 240 : 360, { duration: 300 });
+  }
+
+  const cameraHeightStyle = useAnimatedStyle(() => ({
+    height: cameraHeight.value,
+  }));
+
   // Connected — full session UI
   return (
     <View className="flex-1 bg-tato-base">
       {/* Camera Preview */}
-      <View className={`relative overflow-hidden rounded-b-[24px] ${canCreate ? 'h-[240px]' : 'h-[360px]'}`}>
+      <Animated.View className="relative overflow-hidden rounded-b-[24px]" style={cameraHeightStyle}>
         {cameraGranted ? (
           <CameraView
             ref={(ref) => {
@@ -426,9 +442,10 @@ export default function LiveIntakeScreen() {
             <Pressable
               accessibilityLabel="Exit session"
               accessibilityRole="button"
-              className="h-9 w-9 items-center justify-center rounded-full bg-black/60"
+              className="h-11 w-11 items-center justify-center rounded-full bg-black/60"
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
               onPress={handleEndSession}>
-              <SymbolView name={{ ios: 'chevron.left', android: 'arrow_back', web: 'arrow_back' }} size={16} tintColor="#edf4ff" />
+              <PlatformIcon name={{ ios: 'chevron.left', android: 'arrow_back', web: 'arrow_back' }} size={16} color="#edf4ff" />
             </Pressable>
             <View className="rounded-full bg-black/60 px-3 py-1">
               <Text className="text-xs font-bold text-white">LIVE</Text>
@@ -454,34 +471,25 @@ export default function LiveIntakeScreen() {
             <Text className="text-xs font-semibold text-white">🔍 Re-scan</Text>
           </Pressable>
         </View>
-      </View>
+      </Animated.View>
 
       <ScrollView className="flex-1" contentContainerClassName={`gap-4 p-4 ${canCreate ? 'pb-48' : 'pb-10'}`}>
         <View className="rounded-[20px] border border-tato-line bg-tato-panel p-4">
-          <Text className="text-xs uppercase tracking-[1px] text-tato-accent">Unsaved Live Draft</Text>
+          <Text className="text-xs uppercase tracking-[1px] text-tato-accent">
+            {canCreate ? 'Draft Ready' : 'Live Draft'}
+          </Text>
           <Text className="mt-2 text-lg font-bold text-tato-text">
             {canCreate
-              ? 'This draft can now be sent to the broker queue.'
+              ? 'Ready to post to broker queue.'
               : liveSessionReady
-                ? 'This screen is the draft while TATO is writing it live.'
-                : 'Reconnect the live session before treating this as an active draft.'}
+                ? 'Listening — show the item.'
+                : 'Session disconnected.'}
           </Text>
-          <Text className="mt-2 text-sm leading-6 text-tato-muted">
-            {liveSessionReady
-              ? 'Everything below updates during the conversation. It is not saved yet. When you tap send, you land on the saved draft screen and the item becomes claim-ready.'
-              : 'This only becomes a live draft while the session is actively connected. Nothing below is saved until the session is running and you tap send.'}
-          </Text>
-          <View className="mt-4 rounded-[16px] border border-tato-line bg-tato-panelSoft p-3">
-            <Text className="text-xs uppercase tracking-[1px] text-tato-dim">Next Path</Text>
+          {!liveSessionReady ? (
             <Text className="mt-2 text-sm leading-6 text-tato-muted">
-              {liveSessionReady
-                ? '1. Keep showing the item while TATO fills this draft.'
-                : '1. Reconnect the live session so TATO can resume writing the draft.'}
+              Reconnect to resume the live draft.
             </Text>
-            <Text className="text-sm leading-6 text-tato-muted">2. Tap `Send Draft to Broker Queue` once blockers clear.</Text>
-            <Text className="text-sm leading-6 text-tato-muted">3. Review the saved draft on the next screen.</Text>
-            <Text className="text-sm leading-6 text-tato-muted">4. Open Broker Queue so a broker can claim it.</Text>
-          </View>
+          ) : null}
         </View>
 
         <DraftActionCard
@@ -612,60 +620,49 @@ export default function LiveIntakeScreen() {
         {/* Posted Items */}
         <PostedItemsTray items={postedItems} />
 
-        {/* Draft Blockers / Create Button */}
-        <View className="gap-3">
-          {blockers.length > 0 ? (
-            <View className="rounded-[14px] border border-yellow-500/30 bg-yellow-900/10 p-3">
-              <Text className="text-xs font-semibold text-yellow-400">Draft Blockers</Text>
-              {blockers.map((blocker, i) => (
-                <Text className="mt-1 text-xs text-yellow-300" key={i}>• {blocker}</Text>
-              ))}
-            </View>
-          ) : null}
+        {/* Inline action buttons — only show when sticky bar is NOT visible */}
+        {!canCreate ? (
+          <View className="gap-3">
+            {blockers.length > 0 ? (
+              <View className="rounded-[14px] border border-yellow-500/30 bg-yellow-900/10 p-3">
+                <Text className="text-xs font-semibold text-yellow-400">Draft Blockers</Text>
+                {blockers.map((blocker, i) => (
+                  <Text className="mt-1 text-xs text-yellow-300" key={i}>• {blocker}</Text>
+                ))}
+              </View>
+            ) : null}
 
-          {createDraftError ? (
-            <View className="rounded-[14px] border border-red-500/30 bg-red-900/20 p-3">
-              <Text className="text-sm text-red-400">{createDraftError}</Text>
-            </View>
-          ) : null}
+            {createDraftError ? (
+              <View className="rounded-[14px] border border-red-500/30 bg-red-900/20 p-3">
+                <Text className="text-sm text-red-400">{createDraftError}</Text>
+              </View>
+            ) : null}
 
-          <Pressable
-            className={`items-center rounded-full py-4 ${
-              actionState.primaryDisabled ? 'bg-tato-panelSoft' : 'bg-tato-accent'
-            }`}
-            disabled={actionState.primaryDisabled || creatingDraft}
-            onPress={handlePrimaryAction}>
-            {creatingDraft && canCreate ? (
-              <ActivityIndicator color="white" />
-            ) : (
-              <Text className={`text-base font-bold ${actionState.primaryDisabled ? 'text-tato-dim' : 'text-white'}`}>
-                {canCreate ? `✦ ${actionState.primaryLabel}` : actionState.primaryLabel}
-              </Text>
-            )}
-          </Pressable>
-          {actionState.showFinishAction ? (
             <Pressable
-              className="items-center rounded-full border border-tato-profit/40 bg-tato-profit/10 py-3.5"
-              disabled={creatingDraft}
-              onPress={handlePostAndFinish}>
-              <Text className="text-sm font-semibold text-tato-profit">Post & Finish Session</Text>
+              className={`items-center rounded-full py-4 ${
+                actionState.primaryDisabled ? 'bg-tato-panelSoft' : 'bg-tato-accent'
+              }`}
+              disabled={actionState.primaryDisabled || creatingDraft}
+              onPress={handlePrimaryAction}>
+              {creatingDraft && canCreate ? (
+                <ActivityIndicator color="white" />
+              ) : (
+                <Text className={`text-base font-bold ${actionState.primaryDisabled ? 'text-tato-dim' : 'text-white'}`}>
+                  {actionState.primaryLabel}
+                </Text>
+              )}
             </Pressable>
-          ) : null}
-          <Pressable
-            className="items-center rounded-full border border-tato-line bg-tato-panelSoft py-3"
-            onPress={handleEndSession}>
-            <Text className="text-sm text-tato-muted">
-              {postedItems.length > 0
-                ? `Done — Review ${postedItems.length} Item${postedItems.length === 1 ? '' : 's'}`
-                : 'End Session'}
-            </Text>
-          </Pressable>
-          <Text className="text-xs leading-5 text-tato-dim">
-            {canCreate
-              ? 'Post sends this item to the broker queue and resets the draft so you can scan the next one.'
-              : readiness.detail}
-          </Text>
-        </View>
+            <Pressable
+              className="items-center rounded-full border border-tato-line bg-tato-panelSoft py-3"
+              onPress={handleEndSession}>
+              <Text className="text-sm text-tato-muted">
+                {postedItems.length > 0
+                  ? `Done — Review ${postedItems.length} Item${postedItems.length === 1 ? '' : 's'}`
+                  : 'End Session'}
+              </Text>
+            </Pressable>
+          </View>
+        ) : null}
       </ScrollView>
 
       {/* ── Sticky bottom action bar (appears when draft is ready) ── */}

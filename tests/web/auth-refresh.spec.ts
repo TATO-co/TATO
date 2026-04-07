@@ -73,6 +73,8 @@ test('authenticated refresh stays out of auth recovery screens', async ({ page }
   expect(samples.some((sample) => sample.text.includes('Account Suspended'))).toBeFalsy();
   expect(samples.some((sample) => sample.text.includes('Session Recovery'))).toBeFalsy();
   expect(samples.some((sample) => sample.text.includes('We couldn\'t restore your workspace.'))).toBeFalsy();
+  expect(samples.some((sample) => sample.text.includes('TATO Boot'))).toBeFalsy();
+  expect(samples.some((sample) => sample.text.includes('Initializing session and workspace routes.'))).toBeFalsy();
   expect(samples.some((sample) => sample.text.includes('TATO ACCESS'))).toBeFalsy();
   expect(samples.some((sample) => sample.text.includes('Where raw intake becomes broker conviction.'))).toBeFalsy();
 

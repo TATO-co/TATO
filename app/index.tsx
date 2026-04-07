@@ -4,11 +4,7 @@ import { useEffect, useMemo } from 'react';
 import { useAuth } from '@/components/providers/AuthProvider';
 import { WelcomeRootScreen } from '@/components/welcome/WelcomeRootScreen';
 import { runtimeConfig } from '@/lib/config';
-import { resolvePreferredRoute, type ProfileSnapshot } from '@/lib/auth-helpers';
-
-function toPublicPath(route: string) {
-  return route.replace(/\/\([^/]+\)/g, '') || '/';
-}
+import { resolvePreferredRoute, toPublicPath, type ProfileSnapshot } from '@/lib/auth-helpers';
 
 function resolveSupabaseAuthStorageKey() {
   const url = runtimeConfig.supabaseUrl;

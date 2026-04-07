@@ -5,6 +5,7 @@ import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, { FadeInDown, runOnJS, useAnimatedStyle, useSharedValue, withSpring } from 'react-native-reanimated';
 
 import { PressableScale } from '@/components/ui/PressableScale';
+import { hapticMedium, hapticSuccess } from '@/lib/haptics';
 import { useReducedMotionPreference } from '@/lib/hooks/useReducedMotionPreference';
 import { formatMoney, type BrokerFeedItem } from '@/lib/models';
 import { SPRING_SMOOTH, TIMING } from '@/lib/ui';
@@ -58,6 +59,7 @@ function SwipeClaimCardInner({
       const shouldClaim = offsetX.value < -ACTION_WIDTH * 0.7;
 
       if (shouldClaim && canClaim) {
+        runOnJS(hapticSuccess)();
         runOnJS(onClaim)();
       }
 
@@ -143,7 +145,10 @@ function SwipeClaimCardInner({
                           ? 'bg-[#356db6]'
                           : 'bg-tato-accent hover:bg-tato-accentStrong focus:bg-tato-accentStrong'
                       }`}
-                    onPress={() => onClaim()}>
+                    onPress={() => {
+                      hapticMedium();
+                      onClaim();
+                    }}>
                     <Text className={`text-center font-bold text-white ${isDesktop ? 'text-base' : 'text-lg'}`}>
                       {resolvedClaimState === 'pending'
                         ? 'Claiming...'

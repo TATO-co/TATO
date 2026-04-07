@@ -1,6 +1,7 @@
 import { useRouter } from 'expo-router';
 import { useState } from 'react';
-import { ActivityIndicator, Pressable, SafeAreaView, ScrollView, Text, View } from 'react-native';
+import { ActivityIndicator, Pressable, ScrollView, Text, View } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { useAuth } from '@/components/providers/AuthProvider';
 import { isLocalDevelopmentRuntime } from '@/lib/config';
@@ -24,7 +25,7 @@ export default function SessionErrorScreen() {
               We couldn&apos;t restore your workspace.
             </Text>
             <Text className="mt-4 text-base leading-7 text-tato-muted">
-              Your session is still present, but TATO could not load the profile data needed to route you back into the app.
+              Your sign-in is still present, but TATO could not load the account record needed to place you back into the workspace.
             </Text>
 
             <View className="mt-5 rounded-2xl border border-tato-line bg-tato-panelSoft p-4">
@@ -60,7 +61,7 @@ export default function SessionErrorScreen() {
                   setMessage(null);
                   try {
                     await refreshProfile();
-                    setMessage('Account sync retried. If the profile loads cleanly, TATO will route you back into the app.');
+                    setMessage('Account sync retried. If the profile loads cleanly, TATO will route you back into the workspace.');
                   } finally {
                     setBusyAction(null);
                   }
@@ -82,7 +83,7 @@ export default function SessionErrorScreen() {
                   setMessage(null);
                   try {
                     await signOut();
-                    router.replace('/(auth)/sign-in');
+                    router.replace('/sign-in');
                   } finally {
                     setBusyAction(null);
                   }

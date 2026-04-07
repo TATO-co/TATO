@@ -1,19 +1,19 @@
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as ImagePicker from 'expo-image-picker';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { SymbolView } from 'expo-symbols';
+import { PlatformIcon } from '@/components/ui/PlatformIcon';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Image,
   Platform,
   Pressable,
-  SafeAreaView,
   ScrollView,
   Text,
   View
 } from 'react-native';
 import Animated, { FadeInUp } from 'react-native-reanimated';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ResponsiveSplitPane } from '@/components/layout/ResponsivePrimitives';
 import { useAuth } from '@/components/providers/AuthProvider';
@@ -150,10 +150,10 @@ function AnalysisPanel({
             accessibilityRole="button"
             className="flex-row items-center gap-2 rounded-full border border-tato-line px-4 py-2"
             onPress={onGallery}>
-            <SymbolView
+            <PlatformIcon
               name={{ ios: 'photo', android: 'photo_library', web: 'photo_library' }}
               size={16}
-              tintColor="#8ea4c8"
+              color="#8ea4c8"
             />
             <Text className="text-sm text-tato-muted">Gallery</Text>
           </Pressable>
@@ -162,7 +162,7 @@ function AnalysisPanel({
             accessibilityRole="button"
             className="flex-row items-center gap-2 rounded-full border border-tato-line px-4 py-2"
             onPress={onLiveIntake}>
-            <SymbolView name={{ ios: 'waveform.and.mic', android: 'mic', web: 'mic' }} size={16} tintColor="#8ea4c8" />
+            <PlatformIcon name={{ ios: 'waveform.and.mic', android: 'mic', web: 'mic' }} size={16} color="#8ea4c8" />
             <Text className="text-sm text-tato-muted">Live Agent</Text>
           </Pressable>
         </View>
@@ -293,7 +293,7 @@ export default function IngestionScreen() {
           accessibilityRole="button"
           className="h-12 w-12 items-center justify-center rounded-full bg-black/45"
           onPress={() => router.back()}>
-          <SymbolView name={{ ios: 'xmark', android: 'close', web: 'close' }} size={22} tintColor="#f2f7ff" />
+          <PlatformIcon name={{ ios: 'xmark', android: 'close', web: 'close' }} size={22} color="#f2f7ff" />
         </Pressable>
 
         <View className="rounded-full bg-tato-accent px-4 py-2">
@@ -307,10 +307,10 @@ export default function IngestionScreen() {
           accessibilityRole="button"
           className="h-12 w-12 items-center justify-center rounded-full bg-black/45"
           onPress={() => setFlashMode((current) => (current === 'off' ? 'on' : 'off'))}>
-          <SymbolView
+          <PlatformIcon
             name={{ ios: 'flashlight.on.fill', android: 'flash_on', web: 'flash_on' }}
             size={20}
-            tintColor={flashMode === 'on' ? '#1e6dff' : '#f2f7ff'}
+            color={flashMode === 'on' ? '#1e6dff' : '#f2f7ff'}
           />
         </Pressable>
       </View>

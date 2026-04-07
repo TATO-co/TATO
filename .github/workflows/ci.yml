@@ -23,9 +23,10 @@ jobs:
           deno-version: v2.x
 
       - run: npm ci
-      - run: npm run typecheck
-      - run: npm test
+      - run: npm run check:fast
       - run: npx playwright install --with-deps chromium
       - run: npm run test:web-smoke
-      - run: npm run check:functions
-      - run: npx expo export --platform web
+      - run: npm run export:web
+        env:
+          APP_VARIANT: development
+          EXPO_PUBLIC_APP_ENV: development

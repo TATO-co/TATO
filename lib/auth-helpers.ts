@@ -26,6 +26,10 @@ export function modeRoute(mode: AppMode) {
   return mode === 'supplier' ? '/(app)/(supplier)/dashboard' : '/(app)/(broker)/workspace';
 }
 
+export function toPublicPath(route: string) {
+  return route.replace(/\/\([^/]+\)/g, '') || '/';
+}
+
 export function resolvePayoutReadiness(profile: ProfileSnapshot | null): PayoutReadiness {
   if (!profile) {
     return 'not_ready';
@@ -94,6 +98,14 @@ export type PreferredRouteInput = {
   nextMode: AppMode | null;
 };
 
+export type RootRedirectInput = {
+  configured: boolean;
+  isAuthenticated: boolean;
+  pathname: string;
+  preferredRoute: string;
+  segments: string[];
+};
+
 export function resolvePreferredRoute(input: PreferredRouteInput): string {
   const { configured, isAuthenticated, isAdmin, profileError, profile, nextMode } = input;
 
@@ -102,7 +114,7 @@ export function resolvePreferredRoute(input: PreferredRouteInput): string {
   }
 
   if (!isAuthenticated) {
-    return '/(auth)/sign-in';
+    return '/sign-in';
   }
 
   if (profileError) {
@@ -146,6 +158,54 @@ export function resolvePreferredRoute(input: PreferredRouteInput): string {
   }
 
   return '/(auth)/persona-setup';
+}
+
+export function resolveRootRedirectTarget(input: RootRedirectInput): string | null {
+  const {
+    configured,
+    isAuthenticated,
+    pathname,
+    preferredRoute,
+    segments,
+  } = input;
+  const inAuthGroup = segments[0] === '(auth)';
+  const authScreen = String(segments[1] ?? '');
+  const isRootRoute = pathname === '/';
+  const currentPath = segments.length ? `/${segments.join('/')}` : '/';
+  const onPublicEntry = pathname === '/' || pathname === '/sign-in';
+  const preferredPublicPath = toPublicPath(preferredRoute);
+
+  if (!configured) {
+    if (onPublicEntry) {
+      return null;
+    }
+
+    return !inAuthGroup || authScreen !== 'configuration-required'
+      ? '/configuration-required'
+      : null;
+  }
+
+  if (!isAuthenticated) {
+    if (onPublicEntry) {
+      return null;
+    }
+
+    return !inAuthGroup && !isRootRoute ? '/sign-in' : null;
+  }
+
+  if (currentPath === preferredRoute || pathname === preferredPublicPath) {
+    return null;
+  }
+
+  if (preferredRoute.startsWith('/(auth)')) {
+    return preferredPublicPath;
+  }
+
+  if (onPublicEntry || inAuthGroup) {
+    return preferredPublicPath;
+  }
+
+  return null;
 }
 
 export function resolveModeAccessRoute(mode: AppMode, profile: ProfileSnapshot | null): string | null {

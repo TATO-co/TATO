@@ -77,6 +77,14 @@ const config: ExpoConfig = {
   },
   plugins: [
     'expo-router',
+    '@sentry/react-native',
+    'expo-web-browser',
+    [
+      'expo-audio',
+      {
+        microphonePermission: 'Allow TATO to use your microphone for live supplier intake.',
+      },
+    ],
     [
       'expo-camera',
       {
@@ -90,6 +98,7 @@ const config: ExpoConfig = {
         photosPermission: 'Allow TATO to access photos for supplier inventory ingestion.',
       },
     ],
+    'expo-asset',
     'expo-font',
   ],
   experiments: {

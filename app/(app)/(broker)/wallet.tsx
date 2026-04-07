@@ -1,6 +1,7 @@
 import * as WebBrowser from 'expo-web-browser';
 import { useRouter } from 'expo-router';
-import { ActivityIndicator, Pressable, ScrollView, Text, View } from 'react-native';
+import { useState } from 'react';
+import { ActivityIndicator, Pressable, RefreshControl, ScrollView, Text, View } from 'react-native';
 import Animated, { FadeInUp } from 'react-native-reanimated';
 
 import { ModeShell } from '@/components/layout/ModeShell';
@@ -20,6 +21,7 @@ export default function WalletScreen() {
   const { isPhone, tier } = useViewportInfo();
   const { payoutReadiness, refreshProfile } = useAuth();
   const { entries, loading, error, summary, refresh } = useLedger();
+  const [refreshing, setRefreshing] = useState(false);
   const netCents = Math.round((summary.inflow - summary.outflow) * 100);
   const inflowCents = Math.round(summary.inflow * 100);
   const outflowCents = Math.round(summary.outflow * 100);
@@ -66,7 +68,21 @@ export default function WalletScreen() {
       modeLabel="Broker Mode"
       title="The Hunt">
       {isPhone ? (
-        <ScrollView className="mt-2 flex-1" contentContainerClassName="gap-4 pb-36">
+        <ScrollView
+          className="mt-2 flex-1"
+          contentContainerClassName="gap-4 pb-36"
+          refreshControl={
+            <RefreshControl
+              colors={['#1e6dff']}
+              onRefresh={async () => {
+                setRefreshing(true);
+                await refresh();
+                setRefreshing(false);
+              }}
+              refreshing={refreshing}
+              tintColor="#1e6dff"
+            />
+          }>
           <Animated.View entering={FadeInUp.duration(TIMING.quick)}>
             <PhonePanel gradientTone="profit" padded="lg">
               <PhoneEyebrow tone="profit">Available Balance</PhoneEyebrow>
@@ -74,7 +90,7 @@ export default function WalletScreen() {
                 {formatMoney(netCents, primaryCurrency, 2)}
               </Text>
               <Text className="mt-3 text-[15px] leading-7 text-[#c4eadf]">
-                Settles to Stripe Connect daily at 5:00 PM local, with hub payouts split automatically after checkout closes.
+                Settles daily at 5:00 PM local via Stripe Connect.
               </Text>
 
               <View className="mt-5 flex-row gap-3">

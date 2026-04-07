@@ -4,6 +4,7 @@ import { type ReactNode, useEffect, useRef, useState } from 'react';
 import {
   Animated,
   Easing,
+  Platform,
   ScrollView,
   Text,
   View,
@@ -122,7 +123,7 @@ function FlowCard({
   const isLarge = index === 0 || index === 3;
   
   return (
-    <View className={`min-h-[280px] ${isLarge ? 'basis-[60%]' : 'basis-[35%]'} flex-1 grow overflow-hidden rounded-[36px] border border-white/10 bg-[#08162b]/60 p-8 shadow-xl`} style={{ backdropFilter: 'blur(16px)' }}>
+    <View className={`${isLarge ? 'basis-[60%]' : 'basis-[35%]'} flex-1 grow overflow-hidden rounded-[36px] border border-white/10 bg-[#08162b]/60 p-8`} style={Platform.select({ web: { backdropFilter: 'blur(16px)' } as never, default: { shadowColor: '#1e6dff', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.12, shadowRadius: 16, elevation: 4 } })}>
       <LinearGradient
         className="absolute inset-0"
         colors={['rgba(30, 109, 255, 0.08)', 'transparent']}
@@ -165,7 +166,7 @@ function PerspectiveCard({
       : (['rgba(30, 109, 255, 0.12)', 'transparent'] as const);
 
   return (
-    <View className="flex-1 overflow-hidden rounded-[40px] border border-white/10 bg-[#08162b]/60 p-8 shadow-xl" style={{ backdropFilter: 'blur(16px)' }}>
+    <View className="flex-1 overflow-hidden rounded-[40px] border border-white/10 bg-[#08162b]/60 p-8" style={Platform.select({ web: { backdropFilter: 'blur(16px)' } as never, default: { shadowColor: tone === 'supplier' ? '#1ec995' : '#1e6dff', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.12, shadowRadius: 16, elevation: 4 } })}>
       <LinearGradient className="absolute inset-0" colors={gradient} locations={[0, 0.5]} />
       <View className="relative">
         <Text className={`font-mono text-[12px] font-bold uppercase tracking-[3px] ${tone === 'supplier' ? 'text-tato-profit' : 'text-tato-accent'}`}>
@@ -202,7 +203,7 @@ function ProofCard({
   children: ReactNode;
 }) {
   return (
-    <View className="flex-1 rounded-[36px] border border-white/10 bg-[#08162b]/60 p-8 shadow-xl" style={{ backdropFilter: 'blur(16px)' }}>
+    <View className="flex-1 rounded-[36px] border border-white/10 bg-[#08162b]/60 p-8" style={Platform.select({ web: { backdropFilter: 'blur(16px)' } as never, default: { shadowColor: '#1e6dff', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.1, shadowRadius: 12, elevation: 4 } })}>
       <Text className="font-mono text-[12px] font-bold uppercase tracking-[3px] text-[#9ec4ff]">
         {eyebrow}
       </Text>
@@ -343,9 +344,18 @@ export function WelcomeRootScreen() {
           <Animated.View
             className={`${isDesktop ? 'mt-32 py-12' : 'mt-16 py-6'} mb-8`}
             style={heroStyle}>
-            {/* Volumetric glow effects */}
-            <View className="absolute right-0 -top-20 h-[600px] w-[600px] rounded-full bg-[#1e6dff]/10 blur-[120px]" pointerEvents="none" />
-            <View className="absolute -left-32 top-32 h-[500px] w-[500px] rounded-full bg-[#1ec995]/10 blur-[100px]" pointerEvents="none" />
+            {/* Volumetric glow effects (web-only, native uses solid bg instead) */}
+            {Platform.OS === 'web' ? (
+              <>
+                <View className="absolute right-0 -top-20 h-[600px] w-[600px] rounded-full bg-[#1e6dff]/10 blur-[120px]" pointerEvents="none" />
+                <View className="absolute -left-32 top-32 h-[500px] w-[500px] rounded-full bg-[#1ec995]/10 blur-[100px]" pointerEvents="none" />
+              </>
+            ) : (
+              <>
+                <View className="absolute right-0 -top-20 h-[400px] w-[400px] rounded-full bg-[#1e6dff]/6" pointerEvents="none" />
+                <View className="absolute -left-32 top-32 h-[300px] w-[300px] rounded-full bg-[#1ec995]/6" pointerEvents="none" />
+              </>
+            )}
 
             <View className={`relative ${isDesktop ? 'flex-row items-center gap-16' : 'gap-12'}`}>
               <View className={`${isDesktop ? 'max-w-[660px] flex-1' : 'w-full'}`}>
@@ -353,7 +363,10 @@ export function WelcomeRootScreen() {
                   Where raw intake becomes broker conviction.
                 </Text>
                 <Text className={`${isPhone ? 'text-[17px] leading-[28px]' : 'text-[20px] leading-[32px]'} mt-6 max-w-[600px] text-[#A3B8CC] font-medium`}>
-                  Stop losing margin in the back room. TATO unites fragmented supply with surgical brokerage, giving you the tools to intake instantly, price accurately, and clear inventory the moment it's ready.
+                  {isPhone
+                    ? 'Intake instantly, price accurately, and clear inventory the moment it\'s ready.'
+                    : 'Stop losing margin in the back room. TATO unites fragmented supply with surgical brokerage, giving you the tools to intake instantly, price accurately, and clear inventory the moment it\'s ready.'
+                  }
                 </Text>
 
                 <View className={`${isPhone ? 'mt-8 flex-col gap-4' : 'mt-10 flex-row gap-4'}`}>
@@ -385,8 +398,8 @@ export function WelcomeRootScreen() {
               </View>
 
               <Animated.View
-                className={`${isDesktop ? 'w-[440px]' : 'w-full'} rounded-[36px] border border-white/10 bg-[#08162b]/60 p-6 shadow-2xl`}
-                style={[floatingStyle, { backdropFilter: 'blur(16px)' }]}>
+                className={`${isDesktop ? 'w-[440px]' : 'w-full'} rounded-[36px] border border-white/10 bg-[#08162b]/60 p-6`}
+                style={[floatingStyle, Platform.select({ web: { backdropFilter: 'blur(16px)' } as never, default: { shadowColor: '#1e6dff', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.15, shadowRadius: 20, elevation: 6 } })]}>
                 <Text className="font-mono text-[11px] font-bold uppercase tracking-[3px] text-[#9ec4ff]">
                   System Telemetry
                 </Text>

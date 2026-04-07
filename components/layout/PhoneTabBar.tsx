@@ -1,6 +1,7 @@
 import { LinearGradient } from 'expo-linear-gradient';
-import { SymbolView } from 'expo-symbols';
+import { PlatformIcon } from '@/components/ui/PlatformIcon';
 import { Platform, Pressable, Text, View, type PressableProps, type ViewStyle } from 'react-native';
+import { hapticLight } from '@/lib/haptics';
 
 type DockIcon = {
   ios: string;
@@ -31,10 +32,10 @@ export function getFloatingDockStyle(bottomInset: number): ViewStyle {
     position: 'absolute' as const,
     left: 12,
     right: 12,
-    bottom: resolvedBottomInset + 10,
-    height: 84 + resolvedBottomInset,
-    paddingTop: 8,
-    paddingBottom: 10 + resolvedBottomInset,
+    bottom: resolvedBottomInset + 8,
+    height: 72,
+    paddingTop: 6,
+    paddingBottom: 8,
     paddingHorizontal: 10,
     borderTopWidth: 0,
     borderWidth: 1,
@@ -54,9 +55,9 @@ export function getFloatingDockStyle(bottomInset: number): ViewStyle {
     return {
       ...baseStyle,
       bottom: `calc(${webSafeAreaInsetBottom} + 14px)` as unknown as number,
-      height: `calc(88px + ${webSafeAreaInsetBottom})` as unknown as number,
-      paddingTop: 10,
-      paddingBottom: `calc(14px + ${webSafeAreaInsetBottom})` as unknown as number,
+      height: 76,
+      paddingTop: 8,
+      paddingBottom: 10,
       backgroundColor: 'rgba(5, 18, 36, 0.98)',
       borderColor: '#28508b',
       shadowOpacity: 0.42,
@@ -66,6 +67,16 @@ export function getFloatingDockStyle(bottomInset: number): ViewStyle {
   }
 
   return baseStyle;
+}
+
+/**
+ * Returns the bottom padding screens should apply to their ScrollView
+ * `contentContainerStyle` so content is never occluded by the floating dock.
+ */
+export function getDockContentPadding(bottomInset: number): number {
+  const resolvedBottomInset = Math.max(bottomInset, 0);
+  // dock height (72) + bottom position (inset + 8) + breathing room (16)
+  return 72 + resolvedBottomInset + 8 + 16;
 }
 
 export function PhoneTabButton({
@@ -90,16 +101,19 @@ export function PhoneTabButton({
         accessibilityState={accessibilityState}
         className="flex-1 items-center justify-center"
         onLongPress={onLongPress}
-        onPress={onPress}
-        style={{ minWidth: 86, marginTop: -28 }}
+        onPress={(e) => {
+          hapticLight();
+          onPress?.(e);
+        }}
+        style={{ minWidth: 76, marginTop: -20 }}
         testID={testID}>
-        <View className="items-center gap-2">
+        <View className="items-center gap-1">
           <LinearGradient
-            className="h-[70px] w-[70px] items-center justify-center rounded-full border border-[#2a5eb3]"
+            className="h-[56px] w-[56px] items-center justify-center rounded-full border border-[#2a5eb3]"
             colors={focused ? ['#3b82ff', '#1e6dff'] : ['#102443', '#0b1b32']}
             end={{ x: 1, y: 1 }}
             start={{ x: 0, y: 0 }}>
-            <SymbolView name={icon as never} size={28} tintColor="#ffffff" />
+            <PlatformIcon name={icon} size={24} color="#ffffff" />
           </LinearGradient>
           <Text className={`font-mono text-[10px] uppercase tracking-[1.2px] ${labelColor}`}>
             {label}
@@ -116,7 +130,10 @@ export function PhoneTabButton({
       accessibilityState={accessibilityState}
       className="flex-1 items-center justify-center"
       onLongPress={onLongPress}
-      onPress={onPress}
+      onPress={(e) => {
+        hapticLight();
+        onPress?.(e);
+      }}
       style={{ minWidth: 68 }}
       testID={testID}>
       <View className="overflow-hidden rounded-[22px]">
@@ -129,11 +146,11 @@ export function PhoneTabButton({
           />
         ) : null}
         <View
-          className={`items-center gap-1 rounded-[22px] border px-3 py-2.5 ${
+          className={`items-center gap-0.5 rounded-[22px] border px-3 py-2 ${
             focused ? 'border-[#2a5eb3]' : 'border-transparent'
           }`}>
-          <SymbolView name={icon as never} size={20} tintColor={iconTint} />
-          <Text className={`font-mono text-[10px] uppercase tracking-[1px] ${labelColor}`}>
+          <PlatformIcon name={icon} size={20} color={iconTint} />
+          <Text className={`font-mono text-[11px] uppercase tracking-[1px] ${labelColor}`}>
             {label}
           </Text>
         </View>

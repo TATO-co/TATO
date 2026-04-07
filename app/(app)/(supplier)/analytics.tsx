@@ -1,4 +1,5 @@
-import { ActivityIndicator, Pressable, ScrollView, Text, View } from 'react-native';
+import { ActivityIndicator, Pressable, RefreshControl, ScrollView, Text, View } from 'react-native';
+import { useState } from 'react';
 import Animated, { FadeInUp } from 'react-native-reanimated';
 
 import { ModeShell } from '@/components/layout/ModeShell';
@@ -6,6 +7,7 @@ import { ResponsiveKpiGrid, ResponsiveSplitPane } from '@/components/layout/Resp
 import { InventoryTable } from '@/components/ui/InventoryTable';
 import { KpiCard } from '@/components/ui/KpiCard';
 import { PhoneEyebrow, PhoneMetricChip, PhonePanel } from '@/components/ui/PhoneChrome';
+import { SkeletonCard, SkeletonRow } from '@/components/ui/SkeletonCard';
 import { PressableScale } from '@/components/ui/PressableScale';
 import { useViewportInfo } from '@/lib/constants';
 import { useSupplierDashboard } from '@/lib/hooks/useSupplierDashboard';
@@ -31,6 +33,7 @@ const insightToneColors: Record<DerivedInsight['tone'], { border: string; bg: st
 export default function SupplierAnalyticsScreen() {
   const { metrics, items, loading, error, refresh } = useSupplierDashboard();
   const { isPhone, isTablet, tier } = useViewportInfo();
+  const [refreshing, setRefreshing] = useState(false);
   const claimed = items.filter((item) => item.status === 'claimed').length;
   const pending = items.filter((item) => item.status === 'pending_pickup').length;
   const conversionPct = items.length ? ((claimed + pending) / items.length) * 100 : 0;
@@ -77,8 +80,11 @@ export default function SupplierAnalyticsScreen() {
       modeLabel="Supplier Mode"
       title="TATO Supplier">
       {loading ? (
-        <View className="mt-12 items-center">
-          <ActivityIndicator color="#1e6dff" />
+        <View className="gap-4 py-4">
+          <SkeletonCard height={120} borderRadius={24} />
+          <SkeletonCard height={80} borderRadius={20} />
+          <SkeletonRow />
+          <SkeletonRow />
         </View>
       ) : error ? (
         <View className="mt-4 items-center rounded-2xl border border-tato-line bg-tato-panel p-5">
@@ -90,7 +96,21 @@ export default function SupplierAnalyticsScreen() {
           </Pressable>
         </View>
       ) : isPhone ? (
-        <ScrollView className="mt-2 flex-1" contentContainerClassName="gap-4 pb-36">
+        <ScrollView
+          className="mt-2 flex-1"
+          contentContainerClassName="gap-4 pb-36"
+          refreshControl={
+            <RefreshControl
+              colors={['#1e6dff']}
+              onRefresh={async () => {
+                setRefreshing(true);
+                await refresh();
+                setRefreshing(false);
+              }}
+              refreshing={refreshing}
+              tintColor="#1e6dff"
+            />
+          }>
           <Animated.View entering={FadeInUp.duration(TIMING.quick)}>
             <PhonePanel gradientTone={conversionPct >= 50 ? 'profit' : 'accent'} padded="lg">
               <PhoneEyebrow tone={conversionPct >= 50 ? 'profit' : 'accent'}>Claim Conversion</PhoneEyebrow>

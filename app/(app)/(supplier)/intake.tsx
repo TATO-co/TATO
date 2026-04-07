@@ -1,5 +1,5 @@
 import { useRouter } from 'expo-router';
-import { SymbolView } from 'expo-symbols';
+import { PlatformIcon } from '@/components/ui/PlatformIcon';
 import { useEffect, useState } from 'react';
 import { ScrollView, Text, View } from 'react-native';
 
@@ -196,7 +196,7 @@ export default function SupplierIntakeScreen() {
                         {workflow.description}
                       </Text>
                     </View>
-                    <SymbolView name={workflow.icon as never} size={20} tintColor="#edf4ff" />
+                    <PlatformIcon name={workflow.icon} size={20} color="#edf4ff" />
                   </View>
                   <Text className="mt-3 font-mono text-[11px] uppercase tracking-[1px] text-[#9cb7e1]">
                     {workflow.actionLabel}
@@ -257,7 +257,7 @@ export default function SupplierIntakeScreen() {
                   onPress={() => openWorkflow(workflow)}>
                   <View className="flex-row items-center justify-between gap-4">
                     <View className="h-12 w-12 items-center justify-center rounded-full bg-black/25">
-                      <SymbolView name={workflow.icon as never} size={20} tintColor="#edf4ff" />
+                      <PlatformIcon name={workflow.icon} size={20} color="#edf4ff" />
                     </View>
                     <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-dim">
                       {workflow.eyebrow}

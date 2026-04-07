@@ -1,4 +1,5 @@
 import { LIVE_INTAKE_FALLBACK_ROUTE, type LiveIntakeFallbackRoute } from '@/lib/liveIntake/types';
+import { readFunctionErrorPayload } from '@/lib/function-errors';
 
 type MutationErrorPayload = {
   ok?: boolean;
@@ -6,18 +7,6 @@ type MutationErrorPayload = {
   message?: string;
   details?: Record<string, unknown>;
   correlationId?: string;
-};
-
-type FunctionErrorContext = {
-  status?: number;
-  clone?: () => FunctionErrorContext;
-  json?: () => Promise<unknown>;
-  text?: () => Promise<string>;
-};
-
-type FunctionInvokeErrorLike = {
-  message?: string;
-  context?: FunctionErrorContext;
 };
 
 export type LiveWorkflowErrorContext = 'availability' | 'posting' | 'claim';
@@ -74,50 +63,6 @@ function isTransportFailure(code: string, message: string, status: number | null
     || code === 'internal_error'
     || code === 'server_misconfigured'
   );
-}
-
-async function readFunctionErrorPayload(error: unknown): Promise<NormalizedMutationError> {
-  const candidate = (error ?? {}) as FunctionInvokeErrorLike;
-  const context = candidate.context;
-  const status = typeof context?.status === 'number' ? context.status : null;
-  const responseReader = typeof context?.clone === 'function' ? context.clone() : context;
-
-  if (responseReader?.json) {
-    const payload = (await responseReader.json().catch(() => null)) as MutationErrorPayload | null;
-    if (payload && (payload.code || payload.message)) {
-      return {
-        code: payload.code,
-        message: payload.message ?? candidate.message,
-        status,
-      };
-    }
-  }
-
-  if (responseReader?.text) {
-    const text = await responseReader.text().catch(() => '');
-    if (text.trim().length > 0) {
-      try {
-        const payload = JSON.parse(text) as MutationErrorPayload;
-        return {
-          code: payload.code,
-          message: payload.message ?? candidate.message,
-          status,
-        };
-      } catch {
-        return {
-          code: undefined,
-          message: text,
-          status,
-        };
-      }
-    }
-  }
-
-  return {
-    code: undefined,
-    message: candidate.message,
-    status,
-  };
 }
 
 export async function classifyLiveWorkflowError(

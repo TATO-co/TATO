@@ -15,8 +15,6 @@ type PressableScaleProps = PropsWithChildren<
     }
 >;
 
-const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
-
 /**
  * A pressable that subtly scales down on press for micro-interaction feedback.
  *
@@ -46,18 +44,20 @@ export function PressableScale({
     }
 
     return (
-        <AnimatedPressable
-            onPressIn={(event) => {
-                scale.value = withTiming(activeScale, { duration: 100 });
-                onPressIn?.(event);
-            }}
-            onPressOut={(event) => {
-                scale.value = withTiming(1, { duration: 140 });
-                onPressOut?.(event);
-            }}
-            style={[animatedStyle, style]}
-            {...rest}>
-            {children}
-        </AnimatedPressable>
+        <Animated.View style={animatedStyle}>
+            <Pressable
+                onPressIn={(event) => {
+                    scale.value = withTiming(activeScale, { duration: 100 });
+                    onPressIn?.(event);
+                }}
+                onPressOut={(event) => {
+                    scale.value = withTiming(1, { duration: 140 });
+                    onPressOut?.(event);
+                }}
+                style={style}
+                {...rest}>
+                {children}
+            </Pressable>
+        </Animated.View>
     );
 }

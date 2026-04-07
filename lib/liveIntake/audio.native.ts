@@ -1,19 +1,82 @@
-import { Audio, type AVPlaybackStatus, InterruptionModeAndroid, InterruptionModeIOS } from 'expo-av';
+import type { AudioStatus, RecordingOptions } from 'expo-audio';
 import { Platform } from 'react-native';
 
 const TARGET_SAMPLE_RATE = 16000;
+const CHUNK_DURATION_MS = 500;
+
+type ExpoAudioModule = typeof import('expo-audio');
+
+let expoAudioModulePromise: Promise<ExpoAudioModule> | null = null;
+
+function getNativeAudioUnavailableMessage(error: unknown) {
+  const detail = error instanceof Error ? error.message : String(error);
+  return (
+    'This build does not include native audio support for live intake. '
+    + 'Use photo capture for now, or reopen the app in Expo Go / rebuild your development build after installing native dependencies. '
+    + `(${detail})`
+  );
+}
+
+async function loadExpoAudioModule() {
+  if (!expoAudioModulePromise) {
+    expoAudioModulePromise = import('expo-audio');
+  }
+
+  return expoAudioModulePromise;
+}
+
+function createRecordingOptions(expoAudio: ExpoAudioModule): RecordingOptions {
+  return {
+    isMeteringEnabled: false,
+    extension: '.wav',
+    sampleRate: TARGET_SAMPLE_RATE,
+    numberOfChannels: 1,
+    bitRate: 256000,
+    android: {
+      extension: '.wav',
+      outputFormat: 'default',
+      audioEncoder: 'default',
+    },
+    ios: {
+      extension: '.wav',
+      outputFormat: expoAudio.IOSOutputFormat.LINEARPCM,
+      audioQuality: expoAudio.AudioQuality.HIGH,
+      sampleRate: TARGET_SAMPLE_RATE,
+      linearPCMBitDepth: 16,
+      linearPCMIsBigEndian: false,
+      linearPCMIsFloat: false,
+    },
+    web: {
+      mimeType: 'audio/webm',
+      bitsPerSecond: 256000,
+    },
+  };
+}
+
+export async function ensureNativeAudioAvailable() {
+  try {
+    await loadExpoAudioModule();
+    return { ok: true as const };
+  } catch (error) {
+    return {
+      ok: false as const,
+      message: getNativeAudioUnavailableMessage(error),
+    };
+  }
+}
 
 /**
  * Configures the audio session for simultaneous recording and playback.
  */
 export async function configureAudioSession() {
-  await Audio.setAudioModeAsync({
-    allowsRecordingIOS: true,
-    interruptionModeIOS: InterruptionModeIOS.DoNotMix,
-    playsInSilentModeIOS: true,
-    interruptionModeAndroid: InterruptionModeAndroid.DoNotMix,
-    shouldDuckAndroid: true,
-    playThroughEarpieceAndroid: false,
+  const expoAudio = await loadExpoAudioModule();
+
+  await expoAudio.setAudioModeAsync({
+    allowsRecording: true,
+    interruptionMode: 'doNotMix',
+    playsInSilentMode: true,
+    shouldPlayInBackground: false,
+    shouldRouteThroughEarpiece: false,
   });
 }
 
@@ -28,38 +91,16 @@ export async function configureAudioSession() {
 export async function startNativeMicCapture(args: {
   onChunk: (chunk: { mimeType: string; data: string }) => void;
 }) {
+  const expoAudio = await loadExpoAudioModule();
+  const recordingOptions = createRecordingOptions(expoAudio);
+
   await configureAudioSession();
 
-  const recording = new Audio.Recording();
-
-  // Use LINEAR16 PCM recording preset optimized for the Gemini Live API
-  await recording.prepareToRecordAsync({
-    isMeteringEnabled: false,
-    android: {
-      extension: '.wav',
-      outputFormat: Audio.AndroidOutputFormat.DEFAULT,
-      audioEncoder: Audio.AndroidAudioEncoder.DEFAULT,
-      sampleRate: TARGET_SAMPLE_RATE,
-      numberOfChannels: 1,
-      bitRate: 256000,
-    },
-    ios: {
-      extension: '.wav',
-      outputFormat: Audio.IOSOutputFormat.LINEARPCM,
-      audioQuality: Audio.IOSAudioQuality.HIGH,
-      sampleRate: TARGET_SAMPLE_RATE,
-      numberOfChannels: 1,
-      bitRate: 256000,
-      bitRateStrategy: Audio.IOSBitRateStrategy.CONSTANT,
-      linearPCMBitDepth: 16,
-      linearPCMIsBigEndian: false,
-      linearPCMIsFloat: false,
-    },
-    web: {},
-  });
+  const recording = new expoAudio.AudioModule.AudioRecorder(recordingOptions);
+  await recording.prepareToRecordAsync(recordingOptions);
 
   // Set up a periodic poll for audio data.
-  // Unlike the web AudioWorklet, expo-av does not provide a real-time PCM
+  // Unlike the web AudioWorklet, expo-audio does not provide a real-time PCM
   // streaming callback. We poll the recording status and when there is new
   // metering data, we know audio is flowing. The actual PCM data gets sent
   // when we stop and restart micro-recordings.
@@ -67,18 +108,17 @@ export async function startNativeMicCapture(args: {
   // For the initial implementation, we use a chunked recording approach:
   // record for ~500ms, stop, read the file, encode as base64, send, repeat.
   let active = true;
-  const chunkMs = 500;
 
   const chunkLoop = async () => {
     while (active) {
       try {
-        await recording.startAsync();
-        await new Promise((resolve) => setTimeout(resolve, chunkMs));
+        recording.record();
+        await new Promise((resolve) => setTimeout(resolve, CHUNK_DURATION_MS));
 
         if (!active) break;
 
-        await recording.stopAndUnloadAsync();
-        const uri = recording.getURI();
+        await recording.stop();
+        const uri = recording.uri ?? recording.getStatus().url;
 
         if (uri) {
           // Read the recorded WAV file and convert to base64
@@ -105,30 +145,7 @@ export async function startNativeMicCapture(args: {
 
         // Prepare a new recording for the next chunk
         if (active) {
-          await recording.prepareToRecordAsync({
-            isMeteringEnabled: false,
-            android: {
-              extension: '.wav',
-              outputFormat: Audio.AndroidOutputFormat.DEFAULT,
-              audioEncoder: Audio.AndroidAudioEncoder.DEFAULT,
-              sampleRate: TARGET_SAMPLE_RATE,
-              numberOfChannels: 1,
-              bitRate: 256000,
-            },
-            ios: {
-              extension: '.wav',
-              outputFormat: Audio.IOSOutputFormat.LINEARPCM,
-              audioQuality: Audio.IOSAudioQuality.HIGH,
-              sampleRate: TARGET_SAMPLE_RATE,
-              numberOfChannels: 1,
-              bitRate: 256000,
-              bitRateStrategy: Audio.IOSBitRateStrategy.CONSTANT,
-              linearPCMBitDepth: 16,
-              linearPCMIsBigEndian: false,
-              linearPCMIsFloat: false,
-            },
-            web: {},
-          });
+          await recording.prepareToRecordAsync(recordingOptions);
         }
       } catch (err) {
         // Recording may fail if the session is being torn down
@@ -146,9 +163,9 @@ export async function startNativeMicCapture(args: {
   return async () => {
     active = false;
     try {
-      const status = await recording.getStatusAsync();
+      const status = recording.getStatus();
       if (status.isRecording) {
-        await recording.stopAndUnloadAsync();
+        await recording.stop();
       }
     } catch {
       // Already stopped
@@ -159,25 +176,47 @@ export async function startNativeMicCapture(args: {
 /**
  * Play back a base64 PCM audio chunk from the Gemini Live API.
  *
- * On native we write the data to a temporary file and play it via expo-av.
+ * On native we pass the data to expo-audio as an inline source.
  * This is a simplified approach; production would benefit from a streaming
  * audio player for lower latency.
  */
 export async function playAudioChunk(base64: string, _mimeType?: string) {
   try {
-    // Convert base64 to a data URI that expo-av can play
+    const expoAudio = await loadExpoAudioModule();
+
+    // Convert base64 to a data URI that expo-audio can play
     const dataUri = `data:audio/wav;base64,${base64}`;
-    const { sound } = await Audio.Sound.createAsync(
+    const player = expoAudio.createAudioPlayer(
       { uri: dataUri },
-      { shouldPlay: true },
+      { keepAudioSessionActive: true },
     );
 
-    // Clean up when playback finishes
-    sound.setOnPlaybackStatusUpdate((status: AVPlaybackStatus) => {
-      if ('didJustFinish' in status && status.didJustFinish) {
-        void sound.unloadAsync();
+    let cleanedUp = false;
+    let cleanupTimeout: ReturnType<typeof setTimeout> | null = null;
+    let subscription: { remove: () => void } | null = null;
+
+    const cleanup = () => {
+      if (cleanedUp) {
+        return;
+      }
+
+      cleanedUp = true;
+      if (cleanupTimeout) {
+        clearTimeout(cleanupTimeout);
+      }
+      subscription?.remove();
+      player.remove();
+    };
+
+    subscription = player.addListener('playbackStatusUpdate', (status: AudioStatus) => {
+      if (status.didJustFinish) {
+        cleanup();
       }
     });
+
+    // Avoid leaking short-lived players if playback never reaches a terminal event.
+    cleanupTimeout = setTimeout(cleanup, 15_000);
+    player.play();
   } catch (err) {
     console.warn('[audio.native] playback error:', err);
   }

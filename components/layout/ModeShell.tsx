@@ -1,7 +1,8 @@
 import { Link } from 'expo-router';
-import { SymbolView } from 'expo-symbols';
+import { PlatformIcon } from '@/components/ui/PlatformIcon';
 import { PropsWithChildren } from 'react';
-import { Image, Pressable, SafeAreaView, Text, View } from 'react-native';
+import { Image, Pressable, Text, View } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { DesktopSectionNav, type DesktopSectionNavItem } from '@/components/ui/DesktopSectionNav';
 import { useViewportInfo } from '@/lib/constants';
@@ -124,7 +125,7 @@ export function ModeShell({
                       className={actionButtonClassName}
                       key={action.key}
                       onPress={action.onPress}>
-                      <SymbolView name={action.icon as never} size={18} tintColor="#edf4ff" />
+                      <PlatformIcon name={action.icon} size={18} color="#edf4ff" />
                     </Pressable>
                   );
 
@@ -175,7 +176,7 @@ export function ModeShell({
                       className={actionButtonClassName}
                       key={action.key}
                       onPress={action.onPress}>
-                      <SymbolView name={action.icon as never} size={18} tintColor="#edf4ff" />
+                      <PlatformIcon name={action.icon} size={18} color="#edf4ff" />
                     </Pressable>
                   );
 
@@ -221,7 +222,7 @@ export function ModeShell({
               </View>
             </View>
 
-            <View className="flex-row items-center gap-2">
+            <View className="flex-row items-center gap-1.5">
               {actions.map((action) => {
                 const button = (
                   <Pressable
@@ -230,7 +231,7 @@ export function ModeShell({
                     className={actionButtonClassName}
                     key={action.key}
                     onPress={action.onPress}>
-                    <SymbolView name={action.icon as never} size={isPhone ? 20 : 18} tintColor="#edf4ff" />
+                    <PlatformIcon name={action.icon} size={isPhone ? 20 : 18} color="#edf4ff" />
                   </Pressable>
                 );
 
