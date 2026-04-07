@@ -298,7 +298,7 @@ async function ensureProfile(user: User): Promise<ProfileRecord | null> {
   }
 
   if (existing) {
-    return ensureDevelopmentAccess(existing);
+    return existing;
   }
 
   const inferredName =
@@ -309,14 +309,14 @@ async function ensureProfile(user: User): Promise<ProfileRecord | null> {
     id: user.id,
     email: user.email ?? null,
     display_name: inferredName,
-    default_mode: developmentApprovalBypassEnabled ? 'broker' : null,
+    default_mode: null,
     status: 'active',
-    can_supply: developmentApprovalBypassEnabled,
-    can_broker: developmentApprovalBypassEnabled,
-    is_admin: developmentApprovalBypassEnabled,
+    can_supply: false,
+    can_broker: false,
+    is_admin: false,
     country_code: 'US',
-    payouts_enabled: developmentApprovalBypassEnabled,
-    stripe_connect_onboarding_complete: developmentApprovalBypassEnabled,
+    payouts_enabled: false,
+    stripe_connect_onboarding_complete: false,
     payout_currency_code: 'USD',
   };
 
@@ -332,7 +332,7 @@ async function ensureProfile(user: User): Promise<ProfileRecord | null> {
     return null;
   }
 
-  return ensureDevelopmentAccess(inserted ?? profileSeed);
+  return inserted ?? profileSeed;
 }
 
 function cacheProfile(record: ProfileRecord | null) {
@@ -939,21 +939,29 @@ export function AuthProvider({ children }: PropsWithChildren) {
       return { error: 'Development bypass is disabled for this build.' };
     }
 
-    if (!user) {
+    if (!supabase) {
+      return { error: configurationError ?? 'Supabase is not configured.' };
+    }
+
+    const authUser = user ?? (await supabase.auth.getUser()).data.user ?? null;
+
+    if (!authUser) {
       return { error: 'You must be signed in before using the development bypass.' };
     }
 
-    const resolved = await ensureProfile(user);
-    if (!resolved) {
+    const seededProfile = await ensureProfile(authUser);
+    if (!seededProfile) {
       return { error: 'Unable to activate development access for this account.' };
     }
 
+    const resolved = await ensureDevelopmentAccess(seededProfile);
+
     setProfile(resolved);
     setProfileError(null);
-    syncTelemetryProfile(user, resolved);
+    syncTelemetryProfile(authUser, resolved);
 
     return { error: null };
-  }, [user]);
+  }, [configurationError, setProfile, user]);
 
   const updatePersonas = useCallback(async (input: {
     canBroker: boolean;

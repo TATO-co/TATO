@@ -24,6 +24,7 @@ TATO treats AI as a contributor inside a controlled machine. The machine in this
 
 - Expo client code may read through Supabase anon + RLS, but sensitive mutations belong in Edge Functions or the live-agent service.
 - Never put service-role, Gemini, or Stripe secrets in Expo client code, public config, or exported bundles.
+- User-facing copy must help the user act, understand status, or recover. Do not leak internal design rationale, layout intent, product strategy, or implementation thinking into on-screen text.
 - Auth and routing behavior lives behind `lib/auth-helpers.ts`, `components/providers/AuthProvider.tsx`, and the web auth smoke specs. Do not bypass that contract with ad-hoc redirects in screens.
 - Money movement must remain server-owned, idempotent, and auditable. Prefer extending existing claim, sale, and webhook paths over adding parallel payment flows.
 - Live intake and still-photo intake must converge on the same `items` model and downstream broker claim flow.

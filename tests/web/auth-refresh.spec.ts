@@ -7,6 +7,7 @@ type RefreshSample = {
 
 async function signInWithDevBypass(page: Page) {
   await page.goto('/sign-in', { waitUntil: 'networkidle' });
+  await page.getByRole('button', { name: 'Toggle developer tools' }).click();
   await page.getByRole('button', { name: 'Continue as development user' }).click();
   await page.waitForURL((url) => !url.pathname.endsWith('/sign-in'), { timeout: 15_000 });
 }

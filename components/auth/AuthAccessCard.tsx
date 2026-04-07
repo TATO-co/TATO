@@ -59,7 +59,14 @@ export function AuthAccessCard({
   showMonogram = false,
   className = '',
 }: AuthAccessCardProps) {
-  const { configured, configurationError, signInWithOtp, signInWithPassword, verifyOtp } = useAuth();
+  const {
+    activateDevelopmentAccess,
+    configured,
+    configurationError,
+    signInWithOtp,
+    signInWithPassword,
+    verifyOtp,
+  } = useAuth();
 
   const [step, setStep] = useState<AuthStep>('email');
   const [email, setEmail] = useState('');
@@ -139,11 +146,20 @@ export function AuthAccessCard({
       runtimeConfig.devBypassEmail ?? '',
       runtimeConfig.devBypassPassword ?? '',
     );
-    setSubmitting(false);
 
     if (bypassError) {
+      setSubmitting(false);
       setError(`Dev bypass failed: ${bypassError}`);
       trackEvent('sign_in_error', { mode: 'dev_bypass', message: bypassError });
+      return;
+    }
+
+    const { error: accessError } = await activateDevelopmentAccess();
+    setSubmitting(false);
+
+    if (accessError) {
+      setError(`Dev bypass failed: ${accessError}`);
+      trackEvent('sign_in_error', { mode: 'dev_bypass', message: accessError });
       return;
     }
 

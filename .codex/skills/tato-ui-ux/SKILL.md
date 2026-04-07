@@ -23,6 +23,7 @@ description: Use when changing screens, layouts, shared UI components, responsiv
 - Design for phone and desktop intentionally. Tablet should be a considered middle layout, not stretched phone UI.
 - Loading, empty, error, and locked states are part of the product, not fallback clutter.
 - Route-facing auth screens are behavioral surfaces. Copy, layout, and visible anchors may be part of smoke-test contracts.
+- User-facing copy should explain what the user can do, what happened, or what happens next. Never explain the design, brand, hierarchy, intent, layout choice, or product reasoning to the user.
 
 ## Use These Building Blocks
 
@@ -48,6 +49,7 @@ description: Use when changing screens, layouts, shared UI components, responsiv
    - stronger section order
    - cleaner spacing rhythm
    - better empty or error guidance
+   - copy that is concrete and user-serving, not self-conscious or rationale-heavy
 5. Check both desktop and phone behavior for anything route-facing or shell-facing.
 6. Keep motion purposeful. Prefer staged reveal or subtle structural animation; avoid noisy micro-motion.
 7. Make accessibility explicit:
@@ -55,6 +57,14 @@ description: Use when changing screens, layouts, shared UI components, responsiv
    - headings and action labels are clear
    - important controls have accessibility labels
    - text remains legible against gradients and tinted panels
+
+## Copy Guardrails
+
+- Good copy names the action, state, outcome, or next step.
+- Good copy sounds operator-facing, direct, and calm.
+- Bad copy explains that a layout is intentional, distinctive, elevated, premium, immersive, cinematic, or designed to create a feeling.
+- Bad copy narrates internal UX logic such as information hierarchy, visual rhythm, trust-building, funneling attention, or brand posture.
+- When in doubt, replace rationale with instruction, reassurance, or a concrete label.
 
 ## Validation
 
@@ -70,3 +80,4 @@ description: Use when changing screens, layouts, shared UI components, responsiv
 - replacing meaningful loading or error states with blank space
 - changing auth-facing text anchors without checking the smoke tests
 - using isolated screen-specific layout code when a shared primitive should own the pattern
+- shipping user-facing copy that sounds like an internal design review
