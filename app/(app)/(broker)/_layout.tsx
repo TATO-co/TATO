@@ -12,9 +12,9 @@ const inactiveColor = '#7a8fb3';
 export default function TabLayout() {
   const { width } = useWindowDimensions();
   const insets = useSafeAreaInsets();
-  const { loading, profile, profileError } = useAuth();
+  const { isAuthenticated, loading, profile, profileError } = useAuth();
   const showBottomTabs = width < TABLET_BREAKPOINT;
-  const redirectTarget = resolveModeAccessRoute('broker', profile);
+  const redirectTarget = resolveModeAccessRoute('broker', profile, isAuthenticated);
 
   if (loading) {
     return (

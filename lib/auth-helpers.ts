@@ -89,6 +89,25 @@ export function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: st
   });
 }
 
+export function isTerminalAuthSessionError(message: string | null | undefined) {
+  const normalized = message?.trim().toLowerCase() ?? '';
+
+  if (!normalized) {
+    return false;
+  }
+
+  return (
+    normalized.includes('invalid jwt')
+    || normalized.includes('jwt expired')
+    || normalized.includes('session from session_id claim in jwt does not exist')
+    || normalized.includes('user from sub claim in jwt does not exist')
+    || normalized.includes('invalid refresh token')
+    || normalized.includes('refresh token not found')
+    || normalized.includes('refresh token has been revoked')
+    || normalized.includes('auth session missing')
+  );
+}
+
 export type PreferredRouteInput = {
   configured: boolean;
   isAuthenticated: boolean;
@@ -208,7 +227,15 @@ export function resolveRootRedirectTarget(input: RootRedirectInput): string | nu
   return null;
 }
 
-export function resolveModeAccessRoute(mode: AppMode, profile: ProfileSnapshot | null): string | null {
+export function resolveModeAccessRoute(
+  mode: AppMode,
+  profile: ProfileSnapshot | null,
+  isAuthenticated = true,
+): string | null {
+  if (!isAuthenticated) {
+    return '/sign-in';
+  }
+
   if (!profile) {
     return '/(auth)/persona-setup';
   }

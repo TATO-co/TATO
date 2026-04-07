@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { ProfileSnapshot } from '@/lib/auth-helpers';
 import {
+  isTerminalAuthSessionError,
   modeRoute,
   resolvePayoutReadiness,
   resolveModeAccessRoute,
@@ -120,6 +121,22 @@ describe('withTimeout', () => {
   it('rejects with original error when promise fails before timeout', async () => {
     const failing = Promise.reject(new Error('boom'));
     await expect(withTimeout(failing, 5000, 'test')).rejects.toThrow('boom');
+  });
+});
+
+/* ---------- isTerminalAuthSessionError ----------------------------------- */
+
+describe('isTerminalAuthSessionError', () => {
+  it('detects invalid jwt failures as terminal session errors', () => {
+    expect(isTerminalAuthSessionError('Invalid JWT')).toBe(true);
+  });
+
+  it('detects revoked or missing refresh token failures as terminal session errors', () => {
+    expect(isTerminalAuthSessionError('Invalid refresh token: refresh token not found')).toBe(true);
+  });
+
+  it('does not classify transient network failures as terminal session errors', () => {
+    expect(isTerminalAuthSessionError('Network request failed')).toBe(false);
   });
 });
 
@@ -394,6 +411,10 @@ describe('resolveRootRedirectTarget', () => {
 /* ---------- resolveModeAccessRoute ----------------------------------------- */
 
 describe('resolveModeAccessRoute', () => {
+  it('sends signed-out users to sign-in before persona setup', () => {
+    expect(resolveModeAccessRoute('broker', null, false)).toBe('/sign-in');
+  });
+
   it('returns null when broker access is allowed', () => {
     expect(resolveModeAccessRoute('broker', makeProfile({ can_broker: true }))).toBeNull();
   });

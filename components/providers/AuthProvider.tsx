@@ -28,6 +28,7 @@ import type {
   ProfileStatus,
 } from '@/lib/models';
 import {
+  isTerminalAuthSessionError,
   modeRoute,
   resolvePayoutReadiness,
   resolvePreferredRoute,
@@ -171,6 +172,17 @@ function syncTelemetryProfile(authUser: User | null, resolved: ProfileRecord | n
         }
       : null,
   );
+}
+
+async function clearLocalSupabaseSession(flow: string) {
+  if (!supabase) {
+    return;
+  }
+
+  const { error } = await supabase.auth.signOut({ scope: 'local' });
+  if (error) {
+    captureException(error, { flow });
+  }
 }
 
 async function ensureDevelopmentHub(profile: ProfileRecord) {
@@ -521,8 +533,24 @@ export function AuthProvider({ children }: PropsWithChildren) {
         );
 
         if (userResult.error || !userResult.data?.user) {
+          if (userResult.error && isTerminalAuthSessionError(userResult.error.message)) {
+            await clearLocalSupabaseSession(`${errorFlow}.invalidSession`);
+            return {
+              kind: 'none',
+              session: null,
+              user: null,
+            };
+          }
+
           if (userResult.error) {
             captureException(userResult.error, { flow: errorFlow });
+          } else {
+            await clearLocalSupabaseSession(`${errorFlow}.missingUser`);
+            return {
+              kind: 'none',
+              session: null,
+              user: null,
+            };
           }
 
           return {
@@ -958,6 +986,14 @@ export function AuthProvider({ children }: PropsWithChildren) {
 
     if (error) {
       const parsedError = await readFunctionErrorPayload(error);
+
+      if (parsedError.status === 401 || isTerminalAuthSessionError(parsedError.message)) {
+        await clearLocalSupabaseSession('auth.updatePersonas.invalidSession');
+        return {
+          error: 'Your session expired. Sign in again and retry workspace setup.',
+        };
+      }
+
       captureException(error, {
         flow: 'auth.updatePersonas',
         functionCode: parsedError.code,
