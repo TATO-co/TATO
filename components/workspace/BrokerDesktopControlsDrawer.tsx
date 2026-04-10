@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { startTransition, useEffect, useRef } from 'react';
 import { Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import Animated, { FadeIn, FadeOut, SlideInRight, SlideOutRight } from 'react-native-reanimated';
 
@@ -176,7 +176,9 @@ export function BrokerDesktopControlsDrawer({
                   autoCapitalize="none"
                   autoCorrect={false}
                   className="text-base text-tato-text"
-                  onChangeText={onChangeSearchQuery}
+                  onChangeText={(value) => {
+                    startTransition(() => onChangeSearchQuery(value));
+                  }}
                   placeholder="Search items, brands, or hubs"
                   placeholderTextColor="#6f84a7"
                   value={searchQuery}

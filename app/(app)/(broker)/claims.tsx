@@ -1,17 +1,18 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { startTransition, useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
-  Image,
   KeyboardAvoidingView,
   Linking,
   Platform,
   Pressable,
   RefreshControl,
   ScrollView,
+  StyleSheet,
   Text,
   TextInput,
   View,
 } from 'react-native';
+import { Image } from 'expo-image';
 
 import { ModeShell } from '@/components/layout/ModeShell';
 import { ResponsiveKpiGrid, ResponsiveSplitPane } from '@/components/layout/ResponsivePrimitives';
@@ -130,8 +131,7 @@ function buildVariantDescriptions(platformVariants: Record<string, ClaimPlatform
 
 export default function BrokerClaimsScreen() {
   const { isPhone, tier } = useViewportInfo();
-  const { claims, error, loading, refresh } = useBrokerClaims();
-  const [refreshing, setRefreshing] = useState(false);
+  const { claims, error, loading, refresh, refreshing } = useBrokerClaims();
   const [selectedClaimId, setSelectedClaimId] = useState<string | null>(null);
 
   useEffect(() => {
@@ -210,8 +210,24 @@ export default function BrokerClaimsScreen() {
       ? persistedDescriptions
       : fallbackDescriptions;
   const reportingCurrency = selectedClaim?.currencyCode ?? 'USD';
-  const totalOpenPayout = claims.reduce((sum, claim) => sum + claim.estimatedBrokerPayoutCents, 0);
-  const awaitingPickup = claims.filter((claim) => claim.status === 'awaiting_pickup').length;
+  const claimStats = useMemo(
+    () => claims.reduce(
+      (current, claim) => {
+        current.totalOpenPayout += claim.estimatedBrokerPayoutCents;
+        if (claim.status === 'awaiting_pickup') {
+          current.awaitingPickup += 1;
+        }
+        return current;
+      },
+      {
+        awaitingPickup: 0,
+        totalOpenPayout: 0,
+      },
+    ),
+    [claims],
+  );
+  const totalOpenPayout = claimStats.totalOpenPayout;
+  const awaitingPickup = claimStats.awaitingPickup;
   const workflowLocked =
     selectedClaim?.status === 'completed' || selectedClaim?.status === 'expired' || selectedClaim?.status === 'cancelled';
   const canMarkBuyerCommitted = Boolean(
@@ -315,38 +331,45 @@ export default function BrokerClaimsScreen() {
     await refresh();
   }, [refresh, selectedClaim?.id, workflowDraft.pickupDueInput]);
 
-  const queue = (
-    <View className="gap-3">
-      {claims.map((claim) => (
-        <Pressable
-          className={`rounded-[22px] border p-4 ${selectedClaim?.id === claim.id ? 'border-tato-accent bg-[#102443]' : 'border-tato-line bg-tato-panel'}`}
-          key={claim.id}
-          onPress={() => setSelectedClaimId(claim.id)}>
-          <View className="flex-row items-start justify-between gap-3">
-            <View className="flex-1">
-              <Text className="text-lg font-semibold text-tato-text">{claim.itemTitle}</Text>
-              <Text className="mt-1 text-sm text-tato-muted">{claim.supplierName}</Text>
+  const handleSelectClaim = useCallback((claimId: string) => {
+    startTransition(() => setSelectedClaimId(claimId));
+  }, []);
+  const activeQueueClaimId = selectedClaim?.id ?? claims[0]?.id ?? null;
+  const queue = useMemo(
+    () => (
+      <View className="gap-3">
+        {claims.map((claim) => (
+          <Pressable
+            className={`rounded-[22px] border p-4 ${activeQueueClaimId === claim.id ? 'border-tato-accent bg-[#102443]' : 'border-tato-line bg-tato-panel'}`}
+            key={claim.id}
+            onPress={() => handleSelectClaim(claim.id)}>
+            <View className="flex-row items-start justify-between gap-3">
+              <View className="flex-1">
+                <Text className="text-lg font-semibold text-tato-text">{claim.itemTitle}</Text>
+                <Text className="mt-1 text-sm text-tato-muted">{claim.supplierName}</Text>
+              </View>
+              <Text className="text-sm font-semibold text-tato-profit">
+                {formatMoney(claim.estimatedBrokerPayoutCents, claim.currencyCode, 0)}
+              </Text>
             </View>
-            <Text className="text-sm font-semibold text-tato-profit">
-              {formatMoney(claim.estimatedBrokerPayoutCents, claim.currencyCode, 0)}
-            </Text>
-          </View>
 
-          <View className="mt-3 flex-row flex-wrap gap-2">
-            <View className="rounded-full border border-tato-line bg-tato-panelSoft px-3 py-1.5">
-              <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-accent">
-                {statusLabel(claim.status)}
-              </Text>
+            <View className="mt-3 flex-row flex-wrap gap-2">
+              <View className="rounded-full border border-tato-line bg-tato-panelSoft px-3 py-1.5">
+                <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-accent">
+                  {statusLabel(claim.status)}
+                </Text>
+              </View>
+              <View className="rounded-full border border-tato-line bg-tato-panelSoft px-3 py-1.5">
+                <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-muted">
+                  Expires {new Date(claim.expiresAt).toLocaleDateString()}
+                </Text>
+              </View>
             </View>
-            <View className="rounded-full border border-tato-line bg-tato-panelSoft px-3 py-1.5">
-              <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-muted">
-                Expires {new Date(claim.expiresAt).toLocaleDateString()}
-              </Text>
-            </View>
-          </View>
-        </Pressable>
-      ))}
-    </View>
+          </Pressable>
+        ))}
+      </View>
+    ),
+    [activeQueueClaimId, claims, handleSelectClaim],
   );
 
   const detailPane = detailLoading ? (
@@ -362,7 +385,13 @@ export default function BrokerClaimsScreen() {
   ) : (
     <View className="gap-4">
       <View className="overflow-hidden rounded-[24px] border border-tato-line bg-tato-panel">
-        <Image className="h-[280px] w-full" resizeMode="cover" source={{ uri: detail.imageUrl }} />
+        <Image
+          cachePolicy="disk"
+          contentFit="cover"
+          source={{ uri: detail.imageUrl }}
+          style={styles.detailImage}
+          transition={120}
+        />
         <View className="p-5">
           <View className="flex-row flex-wrap gap-2">
             <View className="rounded-full border border-tato-line bg-tato-panelSoft px-3 py-1.5">
@@ -698,10 +727,8 @@ export default function BrokerClaimsScreen() {
             refreshControl={
               <RefreshControl
                 colors={['#1e6dff']}
-                onRefresh={async () => {
-                  setRefreshing(true);
-                  await refresh();
-                  setRefreshing(false);
+                onRefresh={() => {
+                  void refresh();
                 }}
                 refreshing={refreshing}
                 tintColor="#1e6dff"
@@ -715,3 +742,10 @@ export default function BrokerClaimsScreen() {
     </ModeShell>
   );
 }
+
+const styles = StyleSheet.create({
+  detailImage: {
+    height: 280,
+    width: '100%',
+  },
+});

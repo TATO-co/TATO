@@ -118,6 +118,7 @@ export type PreferredRouteInput = {
 };
 
 export type RootRedirectInput = {
+  browserPathname?: string | null;
   configured: boolean;
   isAuthenticated: boolean;
   pathname: string;
@@ -181,6 +182,7 @@ export function resolvePreferredRoute(input: PreferredRouteInput): string {
 
 export function resolveRootRedirectTarget(input: RootRedirectInput): string | null {
   const {
+    browserPathname,
     configured,
     isAuthenticated,
     pathname,
@@ -189,9 +191,13 @@ export function resolveRootRedirectTarget(input: RootRedirectInput): string | nu
   } = input;
   const inAuthGroup = segments[0] === '(auth)';
   const authScreen = String(segments[1] ?? '');
-  const isRootRoute = pathname === '/';
-  const currentPath = segments.length ? `/${segments.join('/')}` : '/';
-  const onPublicEntry = pathname === '/' || pathname === '/sign-in';
+  const resolvedPathname = !segments.length && browserPathname
+    ? browserPathname
+    : pathname;
+  const isRootRoute = resolvedPathname === '/';
+  const currentPath = segments.length ? `/${segments.join('/')}` : resolvedPathname;
+  const currentPublicPath = toPublicPath(currentPath);
+  const onPublicEntry = resolvedPathname === '/' || resolvedPathname === '/sign-in';
   const preferredPublicPath = toPublicPath(preferredRoute);
 
   if (!configured) {
@@ -212,7 +218,20 @@ export function resolveRootRedirectTarget(input: RootRedirectInput): string | nu
     return !inAuthGroup && !isRootRoute ? '/sign-in' : null;
   }
 
-  if (currentPath === preferredRoute || pathname === preferredPublicPath) {
+  const browserDeepLinkStillResolving = Boolean(
+    browserPathname
+    && browserPathname !== '/'
+    && browserPathname !== '/sign-in'
+    && !['/persona-setup', '/account-suspended', '/session-error', '/configuration-required'].includes(browserPathname)
+    && currentPublicPath !== browserPathname
+    && resolvedPathname !== browserPathname,
+  );
+
+  if (browserDeepLinkStillResolving) {
+    return null;
+  }
+
+  if (currentPath === preferredRoute || resolvedPathname === preferredPublicPath) {
     return null;
   }
 

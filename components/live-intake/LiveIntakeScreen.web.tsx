@@ -17,6 +17,7 @@ import {
 } from '@/lib/liveIntake/platform';
 import type { LiveConditionGrade, LivePostedItem } from '@/lib/liveIntake/types';
 import { supplierDesktopNav } from '@/lib/navigation';
+import { normalizeStillPhotoFallbackMessage, STILL_PHOTO_UPLOAD_ROUTE } from '@/lib/stillPhotoIntake';
 
 /* ── Shared helpers ──────────────────────────────────────────── */
 
@@ -170,7 +171,7 @@ function DraftActionCard({
             className="rounded-full border border-tato-line bg-tato-panelSoft px-4 py-3"
             onPress={onFallbackPress}>
             <Text className="text-center font-mono text-xs font-semibold uppercase tracking-[1px] text-tato-text">
-              Use Photo Capture
+              Use Photo Upload
             </Text>
           </PressableScale>
         )}
@@ -354,7 +355,7 @@ function MobileIdleView({
         <Pressable
           className="mt-4 rounded-full border border-tato-line bg-tato-panel px-6 py-3"
           onPress={onFallback}>
-          <Text className="text-sm text-tato-muted">Use Photo Capture Instead</Text>
+          <Text className="text-sm text-tato-muted">Use Photo Upload Instead</Text>
         </Pressable>
       </View>
     </View>
@@ -391,7 +392,7 @@ function MobileUnavailableView({
         <Pressable
           className="mt-8 rounded-full border border-tato-accent/50 bg-tato-accent/10 px-8 py-4"
           onPress={onFallback}>
-          <Text className="text-base font-semibold text-tato-accent">Open Camera Capture</Text>
+          <Text className="text-base font-semibold text-tato-accent">Open Photo Upload</Text>
         </Pressable>
         {onSetupHub ? (
           <Pressable
@@ -653,6 +654,11 @@ function MobileConnectedView({
                 ? readiness.headline
                 : 'Session disconnected'}
           </Text>
+          {liveSessionReady ? (
+            <Text className="mt-2 text-sm leading-6 text-tato-muted">
+              You usually do not need to talk. Show the angle TATO asks for unless it needs spoken details.
+            </Text>
+          ) : null}
           <View className="mt-4 gap-2.5">
             <Pressable
               className={`items-center rounded-full py-4 ${actionState.primaryDisabled ? 'bg-tato-panelSoft' : 'bg-tato-accent'}`}
@@ -693,7 +699,7 @@ function MobileConnectedView({
           blockers={blockers}
           creating={session.creatingDraft}
           ready={canCreate}
-          onFallbackPress={() => router.push('/(app)/ingestion?entry=camera' as never)}
+          onFallbackPress={() => router.push(STILL_PHOTO_UPLOAD_ROUTE as never)}
           onFinishPress={handlePostAndFinish}
           onPrimaryPress={handlePrimaryAction}
         />
@@ -950,14 +956,8 @@ function DesktopUnavailableLayout({
     <ModeShell
       actions={[
         {
-          key: 'fallback-camera',
-          href: '/(app)/ingestion?entry=camera',
-          icon: { ios: 'camera', android: 'photo_camera', web: 'photo_camera' },
-          accessibilityLabel: 'Switch to photo capture intake',
-        },
-        {
           key: 'fallback-upload',
-          href: '/(app)/ingestion?entry=upload',
+          href: STILL_PHOTO_UPLOAD_ROUTE,
           icon: { ios: 'photo.on.rectangle', android: 'photo_library', web: 'photo_library' },
           accessibilityLabel: 'Switch to photo upload intake',
         },
@@ -974,8 +974,10 @@ function DesktopUnavailableLayout({
               <Text className="font-mono text-[11px] uppercase tracking-[1px] text-[#f5b942]">
                 Live Intake Unavailable
               </Text>
-              <Text className="mt-3 text-3xl font-bold text-tato-text">Use photo capture for now.</Text>
-              <Text className="mt-3 max-w-[720px] text-sm leading-7 text-tato-muted">{message}</Text>
+              <Text className="mt-3 text-3xl font-bold text-tato-text">Use photo upload for now.</Text>
+              <Text className="mt-3 max-w-[720px] text-sm leading-7 text-tato-muted">
+                {normalizeStillPhotoFallbackMessage(message, 'web')}
+              </Text>
             </View>
             <Pressable
               accessibilityLabel="Back to intake options"
@@ -988,9 +990,9 @@ function DesktopUnavailableLayout({
           <View className="mt-6 flex-row gap-3">
             <PressableScale
               className="rounded-full bg-tato-accent px-5 py-3"
-              onPress={() => router.push('/(app)/ingestion?entry=camera' as never)}>
+              onPress={() => router.push(STILL_PHOTO_UPLOAD_ROUTE as never)}>
               <Text className="text-center font-mono text-xs font-semibold uppercase tracking-[1px] text-white">
-                Open Camera Capture
+                Open Photo Upload
               </Text>
             </PressableScale>
             <PressableScale
@@ -1080,14 +1082,8 @@ function DesktopLayout({
     <ModeShell
       actions={[
         {
-          key: 'fallback-camera',
-          href: '/(app)/ingestion?entry=camera',
-          icon: { ios: 'camera', android: 'photo_camera', web: 'photo_camera' },
-          accessibilityLabel: 'Switch to photo capture intake',
-        },
-        {
           key: 'fallback-upload',
-          href: '/(app)/ingestion?entry=upload',
+          href: STILL_PHOTO_UPLOAD_ROUTE,
           icon: { ios: 'photo.on.rectangle', android: 'photo_library', web: 'photo_library' },
           accessibilityLabel: 'Switch to photo upload intake',
         },
@@ -1106,6 +1102,9 @@ function DesktopLayout({
                 Gemini Live Intake
               </Text>
               <Text className="mt-3 text-3xl font-bold text-tato-text">Live Intake</Text>
+              <Text className="mt-3 max-w-[700px] text-sm leading-7 text-tato-muted">
+                Show the requested angle and let TATO watch. You usually only need to speak when it asks for information that is not visible on camera.
+              </Text>
             </View>
             <Pressable
               accessibilityLabel="Back to intake options"
@@ -1269,9 +1268,9 @@ function DesktopLayout({
                     <Pressable
                       accessibilityRole="button"
                       className="flex-1 rounded-full border border-tato-line bg-[#0a1423] px-4 py-3"
-                      onPress={() => router.push('/(app)/ingestion?entry=camera' as never)}>
+                      onPress={() => router.push(STILL_PHOTO_UPLOAD_ROUTE as never)}>
                       <Text className="text-center font-mono text-xs font-semibold uppercase tracking-[1px] text-tato-text">
-                        Use Photo Capture
+                        Use Photo Upload
                       </Text>
                     </Pressable>
                   </div>
@@ -1293,7 +1292,7 @@ function DesktopLayout({
                     <div>
                       <div style={{ fontSize: 22, fontWeight: 700 }}>Browser support is incomplete.</div>
                       <div style={{ color: '#b5c3db', fontSize: 14, marginTop: 10 }}>
-                        Use Chrome or Edge, or switch to photo capture.
+                        Use Chrome or Edge, or switch to photo upload.
                       </div>
                     </div>
                   </div>
@@ -1336,7 +1335,7 @@ function DesktopLayout({
                 ) : (
                   <View className="rounded-[18px] border border-tato-line bg-tato-panelSoft px-4 py-4">
                     <Text className="text-sm leading-6 text-tato-muted">
-                      Speak to begin.
+                      TATO will guide the scan. You usually only need to move the item.
                     </Text>
                   </View>
                 )}
@@ -1350,6 +1349,9 @@ function DesktopLayout({
             <View className="rounded-[24px] border border-tato-line bg-tato-panel p-5">
               <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-accent">Unsaved Live Draft</Text>
               <Text className="mt-3 text-xl font-bold text-tato-text">Live Draft</Text>
+              <Text className="mt-2 text-sm leading-6 text-tato-muted">
+                Default flow: TATO asks, you show the view, and it keeps scanning without needing a spoken reply.
+              </Text>
 
               <View className="mt-5 gap-3">
                 <PressableScale
@@ -1429,7 +1431,7 @@ function DesktopLayout({
                   blockers={blockers}
                   creating={session.creatingDraft}
                   ready={readiness.ready}
-                  onFallbackPress={() => router.push('/(app)/ingestion?entry=camera' as never)}
+                  onFallbackPress={() => router.push(STILL_PHOTO_UPLOAD_ROUTE as never)}
                   onFinishPress={handlePostAndFinish}
                   onPrimaryPress={handlePrimaryAction}
                 />
@@ -1643,7 +1645,10 @@ export default function LiveIntakeScreen() {
     return (
       <DesktopUnavailableLayout
         router={router}
-        message={session.availability?.message ?? 'Live intake is temporarily unavailable. Use photo capture instead.'}
+        message={normalizeStillPhotoFallbackMessage(
+          session.availability?.message ?? 'Live intake is temporarily unavailable. Use photo upload instead.',
+          'web',
+        )}
         onSetupHub={liveMissingHub ? () => router.push('/(app)/(supplier)/profile' as never) : null}
         onRetry={() => { void session.refreshAvailability(); }}
       />
@@ -1653,8 +1658,11 @@ export default function LiveIntakeScreen() {
   if (isPhone && (connectionState === 'idle' || connectionState === 'unsupported') && liveUnavailable) {
     return (
       <MobileUnavailableView
-        message={session.availability?.message ?? 'Live intake is temporarily unavailable. Use photo capture instead.'}
-        onFallback={() => router.push('/(app)/ingestion?entry=camera' as never)}
+        message={normalizeStillPhotoFallbackMessage(
+          session.availability?.message ?? 'Live intake is temporarily unavailable. Use photo upload instead.',
+          'web',
+        )}
+        onFallback={() => router.push(STILL_PHOTO_UPLOAD_ROUTE as never)}
         onSetupHub={liveMissingHub ? () => router.push('/(app)/(supplier)/profile' as never) : null}
         onRetry={() => { void session.refreshAvailability(); }}
         onBack={() => router.back()}
@@ -1672,7 +1680,7 @@ export default function LiveIntakeScreen() {
             : undefined
         }
         onStart={session.requestPermissionsAndStart}
-        onFallback={() => router.push('/(app)/ingestion?entry=camera' as never)}
+        onFallback={() => router.push(STILL_PHOTO_UPLOAD_ROUTE as never)}
         onBack={() => router.back()}
         startDisabled={session.availabilityLoading || !browserSupported}
         startLabel={session.availabilityLoading ? 'Checking Live Posting' : '✦ Start Live Session'}

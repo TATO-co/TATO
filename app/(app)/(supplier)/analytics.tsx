@@ -1,5 +1,5 @@
 import { ActivityIndicator, Pressable, RefreshControl, ScrollView, Text, View } from 'react-native';
-import { useState } from 'react';
+import { useMemo } from 'react';
 import Animated, { FadeInUp } from 'react-native-reanimated';
 
 import { ModeShell } from '@/components/layout/ModeShell';
@@ -31,38 +31,53 @@ const insightToneColors: Record<DerivedInsight['tone'], { border: string; bg: st
 };
 
 export default function SupplierAnalyticsScreen() {
-  const { metrics, items, loading, error, refresh } = useSupplierDashboard();
+  const { metrics, items, loading, refreshing, error, refresh } = useSupplierDashboard();
   const { isPhone, isTablet, tier } = useViewportInfo();
-  const [refreshing, setRefreshing] = useState(false);
-  const claimed = items.filter((item) => item.status === 'claimed').length;
-  const pending = items.filter((item) => item.status === 'pending_pickup').length;
+  const statusCounts = useMemo(() => {
+    return items.reduce(
+      (current, item) => {
+        current[item.status] += 1;
+        return current;
+      },
+      {
+        available: 0,
+        claimed: 0,
+        pending_pickup: 0,
+      } as Record<'available' | 'claimed' | 'pending_pickup', number>,
+    );
+  }, [items]);
+  const claimed = statusCounts.claimed;
+  const pending = statusCounts.pending_pickup;
   const conversionPct = items.length ? ((claimed + pending) / items.length) * 100 : 0;
-  const insights: DerivedInsight[] = [
-    {
-      id: 'conversion',
-      title: 'Claim Conversion',
-      description: `${(claimed + pending).toString()} of ${items.length} items are in an active broker or pickup flow.`,
-      source: 'Live inventory',
-      action: 'View',
-      tone: conversionPct >= 50 ? 'positive' : 'info',
-    },
-    {
-      id: 'available',
-      title: 'Available Inventory',
-      description: `${items.filter((item) => item.status === 'available').length} items remain claimable by brokers.`,
-      source: 'Inventory',
-      action: 'View',
-      tone: items.filter((item) => item.status === 'available').length >= pending ? 'accent' : 'warning',
-    },
-    {
-      id: 'pickup',
-      title: 'Pickup Queue',
-      description: `${pending} items are awaiting final hub release and payment completion.`,
-      source: 'Settlement',
-      action: 'View',
-      tone: pending > 0 ? 'warning' : 'positive',
-    },
-  ];
+  const insights: DerivedInsight[] = useMemo(
+    () => [
+      {
+        id: 'conversion',
+        title: 'Claim Conversion',
+        description: `${(claimed + pending).toString()} of ${items.length} items are in an active broker or pickup flow.`,
+        source: 'Live inventory',
+        action: 'View',
+        tone: conversionPct >= 50 ? 'positive' : 'info',
+      },
+      {
+        id: 'available',
+        title: 'Available Inventory',
+        description: `${statusCounts.available} items remain claimable by brokers.`,
+        source: 'Inventory',
+        action: 'View',
+        tone: statusCounts.available >= pending ? 'accent' : 'warning',
+      },
+      {
+        id: 'pickup',
+        title: 'Pickup Queue',
+        description: `${pending} items are awaiting final hub release and payment completion.`,
+        source: 'Settlement',
+        action: 'View',
+        tone: pending > 0 ? 'warning' : 'positive',
+      },
+    ],
+    [claimed, conversionPct, items.length, pending, statusCounts.available],
+  );
 
   return (
     <ModeShell
@@ -102,10 +117,8 @@ export default function SupplierAnalyticsScreen() {
           refreshControl={
             <RefreshControl
               colors={['#1e6dff']}
-              onRefresh={async () => {
-                setRefreshing(true);
-                await refresh();
-                setRefreshing(false);
+              onRefresh={() => {
+                void refresh();
               }}
               refreshing={refreshing}
               tintColor="#1e6dff"

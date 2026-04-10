@@ -41,7 +41,7 @@ test('signed-out visitors can stay on the welcome root', async ({ page }) => {
   await page.goto('/', { waitUntil: 'networkidle' });
 
   await expect(page).toHaveURL(/\/$/);
-  await expect(page.getByText('Where raw intake becomes broker conviction.', { exact: false })).toBeVisible();
+  await expect(page.getByText('Turn your inventory into cash, instantly.', { exact: false })).toBeVisible();
 });
 
 test('signed-out protected routes still redirect to direct sign-in', async ({ page }) => {
@@ -53,12 +53,15 @@ test('signed-out protected routes still redirect to direct sign-in', async ({ pa
 
 test('authenticated visitors are redirected away from public entry points', async ({ page }) => {
   await signInWithDevBypass(page);
+  const preferredPath = new URL(page.url()).pathname;
+
+  expect(['/dashboard', '/workspace']).toContain(preferredPath);
 
   await page.goto('/', { waitUntil: 'networkidle' });
-  await expect(page).toHaveURL(/\/workspace$/, { timeout: 15_000 });
+  await expect(page).toHaveURL(new RegExp(`${preferredPath.replace('/', '\\/')}$`), { timeout: 15_000 });
 
   await page.goto('/sign-in', { waitUntil: 'networkidle' });
-  await expect(page).toHaveURL(/\/workspace$/, { timeout: 15_000 });
+  await expect(page).toHaveURL(new RegExp(`${preferredPath.replace('/', '\\/')}$`), { timeout: 15_000 });
 });
 
 test('authenticated refresh stays out of auth recovery screens', async ({ page }) => {
@@ -77,7 +80,23 @@ test('authenticated refresh stays out of auth recovery screens', async ({ page }
   expect(samples.some((sample) => sample.text.includes('TATO Boot'))).toBeFalsy();
   expect(samples.some((sample) => sample.text.includes('Initializing session and workspace routes.'))).toBeFalsy();
   expect(samples.some((sample) => sample.text.includes('TATO ACCESS'))).toBeFalsy();
-  expect(samples.some((sample) => sample.text.includes('Where raw intake becomes broker conviction.'))).toBeFalsy();
+  expect(samples.some((sample) => sample.text.includes('Turn your inventory into cash, instantly.'))).toBeFalsy();
 
   await expect(page).toHaveURL(/\/workspace$/);
+});
+
+test('authenticated deep links survive reload without snapping to the preferred root', async ({ page }) => {
+  await signInWithDevBypass(page);
+  const preferredPath = new URL(page.url()).pathname;
+
+  await page.goto('/claims', { waitUntil: 'networkidle' });
+  await expect(page).toHaveURL(/\/claims$/, { timeout: 15_000 });
+  await expect(page.getByText('Claim Desk', { exact: false })).toBeVisible();
+
+  const samples = await captureRefreshSamples(page, 25, 100);
+
+  expect(samples.some((sample) => sample.path === preferredPath)).toBeFalsy();
+  expect(samples.some((sample) => /\/(sign-in|persona-setup|account-suspended|session-error)$/.test(sample.path))).toBeFalsy();
+
+  await expect(page).toHaveURL(/\/claims$/);
 });

@@ -1,53 +1,34 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 
-import { fetchItemDetail } from '@/lib/repositories/tato';
 import type { ItemDetail } from '@/lib/models';
+import { tatoQueryKeys } from '@/lib/query/keys';
+import { fetchItemDetail } from '@/lib/repositories/tato';
 
 export function useItemDetail(itemId: string | null) {
-  const [detail, setDetail] = useState<ItemDetail | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const detailQuery = useQuery({
+    queryKey: tatoQueryKeys.itemDetail(itemId),
+    queryFn: () => fetchItemDetail(itemId!),
+    enabled: Boolean(itemId),
+    placeholderData: (previous) => previous,
+    staleTime: 60 * 1000,
+  });
 
-  const load = useCallback(
-    async (asRefresh = false) => {
-      if (!itemId) {
-        setDetail(null);
-        setError('No item selected.');
-        setLoading(false);
-        return;
-      }
-
-      if (asRefresh) {
-        setRefreshing(true);
-      } else {
-        setLoading(true);
-      }
-
-      try {
-        const data = await fetchItemDetail(itemId);
-        setDetail(data);
-        setError(data ? null : 'Item not found.');
-      } catch (loadError) {
-        const message = loadError instanceof Error ? loadError.message : 'Unable to load item detail.';
-        setError(message);
-      } finally {
-        setLoading(false);
-        setRefreshing(false);
-      }
-    },
-    [itemId],
-  );
-
-  useEffect(() => {
-    load();
-  }, [load]);
+  let error: string | null = null;
+  if (!itemId) {
+    error = 'No item selected.';
+  } else if (detailQuery.error instanceof Error) {
+    error = detailQuery.error.message;
+  } else if (detailQuery.data === null && detailQuery.isSuccess) {
+    error = 'Item not found.';
+  }
 
   return {
-    detail,
-    loading,
-    refreshing,
+    detail: (detailQuery.data ?? null) as ItemDetail | null,
+    loading: Boolean(itemId) && detailQuery.isPending,
+    refreshing: detailQuery.isRefetching,
     error,
-    refresh: () => load(true),
+    refresh: async () => {
+      await detailQuery.refetch();
+    },
   };
 }

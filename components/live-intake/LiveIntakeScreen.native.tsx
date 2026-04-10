@@ -496,6 +496,11 @@ export default function LiveIntakeScreen() {
                 ? 'Listening — show the item.'
                 : 'Session disconnected.'}
           </Text>
+          {liveSessionReady ? (
+            <Text className="mt-2 text-sm leading-6 text-tato-muted">
+              You usually do not need to talk. Show the angle TATO asks for unless it needs spoken details.
+            </Text>
+          ) : null}
           {!liveSessionReady ? (
             <Text className="mt-2 text-sm leading-6 text-tato-muted">
               Reconnect to resume the live draft.

@@ -1,7 +1,8 @@
 import { useRouter } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useState } from 'react';
-import { ActivityIndicator, Image, Pressable, ScrollView, Text, View } from 'react-native';
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Image } from 'expo-image';
 import Animated, { FadeInUp } from 'react-native-reanimated';
 
 import { ModeShell } from '@/components/layout/ModeShell';
@@ -125,8 +126,11 @@ export default function ProfileScreen() {
           />
           <View className="flex-row items-center gap-4">
             <Image
-              className="h-16 w-16 rounded-full"
+              cachePolicy="disk"
+              contentFit="cover"
               source={{ uri: 'https://images.unsplash.com/photo-1502685104226-ee32379fefbe?auto=format&fit=crop&w=256&q=80' }}
+              style={styles.heroAvatar}
+              transition={120}
             />
             <View className="flex-1">
               <Text className="text-2xl font-bold text-tato-text">
@@ -240,3 +244,11 @@ export default function ProfileScreen() {
     </ModeShell>
   );
 }
+
+const styles = StyleSheet.create({
+  heroAvatar: {
+    borderRadius: 32,
+    height: 64,
+    width: 64,
+  },
+});

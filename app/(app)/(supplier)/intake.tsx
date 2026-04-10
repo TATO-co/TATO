@@ -1,7 +1,7 @@
 import { useRouter } from 'expo-router';
 import { PlatformIcon } from '@/components/ui/PlatformIcon';
 import { useEffect, useState } from 'react';
-import { ScrollView, Text, View } from 'react-native';
+import { Platform, ScrollView, Text, View } from 'react-native';
 
 import { ModeShell } from '@/components/layout/ModeShell';
 import { useAuth } from '@/components/providers/AuthProvider';
@@ -14,6 +14,7 @@ import { getLiveIntakeEntryState } from '@/lib/liveIntake/platform';
 import type { LiveIntakeAvailability } from '@/lib/liveIntake/types';
 import { getLiveIntakeAvailability, isLiveIntakeConfigured } from '@/lib/repositories/liveIntake';
 import { supplierDesktopNav } from '@/lib/navigation';
+import { getStillPhotoRoute, normalizeStillPhotoFallbackMessage } from '@/lib/stillPhotoIntake';
 
 type IntakeWorkflow = {
   id: 'live' | 'camera' | 'upload';
@@ -70,17 +71,22 @@ export default function SupplierIntakeScreen() {
   const router = useRouter();
   const { user } = useAuth();
   const { isPhone, tier } = useViewportInfo();
+  const isWeb = Platform.OS === 'web';
   const liveConfigured = isLiveIntakeConfigured();
   const [liveAvailability, setLiveAvailability] = useState<LiveIntakeAvailability | null>(null);
   const [liveAvailabilityLoading, setLiveAvailabilityLoading] = useState(true);
   const liveWorkflow = workflows.find((workflow) => workflow.id === 'live')!;
   const cameraWorkflow = workflows.find((workflow) => workflow.id === 'camera')!;
   const uploadWorkflow = workflows.find((workflow) => workflow.id === 'upload')!;
+  const stillPhotoWorkflow = isWeb ? uploadWorkflow : cameraWorkflow;
+  const photoWorkflows = isWeb ? [uploadWorkflow] : [cameraWorkflow, uploadWorkflow];
+  const visibleWorkflows = isWeb ? [liveWorkflow, uploadWorkflow] : workflows;
   const liveEntryState = getLiveIntakeEntryState({
     liveConfigured,
     availability: liveAvailability,
     checking: liveAvailabilityLoading,
   });
+  const liveEntryMessage = normalizeStillPhotoFallbackMessage(liveEntryState.message, Platform.OS);
   const liveReady = liveEntryState.enabled;
   const liveMissingHub = liveAvailability?.code === 'missing_hub';
 
@@ -127,20 +133,29 @@ export default function SupplierIntakeScreen() {
       actions={
         isPhone
           ? []
-          : [
-              {
-                key: 'camera',
-                href: '/(app)/ingestion?entry=camera',
-                icon: { ios: 'camera', android: 'photo_camera', web: 'photo_camera' },
-                accessibilityLabel: 'Open camera capture',
-              },
-              {
-                key: 'upload',
-                href: '/(app)/ingestion?entry=upload',
-                icon: { ios: 'photo.on.rectangle', android: 'photo_library', web: 'photo_library' },
-                accessibilityLabel: 'Open photo upload',
-              },
-            ]
+          : isWeb
+            ? [
+                {
+                  key: 'upload',
+                  href: getStillPhotoRoute({ platform: Platform.OS, preferred: 'upload' }),
+                  icon: { ios: 'photo.on.rectangle', android: 'photo_library', web: 'photo_library' },
+                  accessibilityLabel: 'Open photo upload',
+                },
+              ]
+            : [
+                {
+                  key: 'camera',
+                  href: getStillPhotoRoute({ platform: Platform.OS, preferred: 'camera' }),
+                  icon: { ios: 'camera', android: 'photo_camera', web: 'photo_camera' },
+                  accessibilityLabel: 'Open camera capture',
+                },
+                {
+                  key: 'upload',
+                  href: getStillPhotoRoute({ platform: Platform.OS, preferred: 'upload' }),
+                  icon: { ios: 'photo.on.rectangle', android: 'photo_library', web: 'photo_library' },
+                  accessibilityLabel: 'Open photo upload',
+                },
+              ]
       }
       avatarEmoji="👔"
       desktopNavActiveKey="intake"
@@ -155,8 +170,10 @@ export default function SupplierIntakeScreen() {
               {liveReady
                 ? 'Talk through the item. Gemini handles the intake form in the background.'
                 : liveEntryState.status === 'checking'
-                  ? 'Live posting is being checked. Camera capture is ready right now.'
-                  : liveEntryState.message}
+                  ? isWeb
+                    ? 'Live posting is being checked. Photo upload is ready right now.'
+                    : 'Live posting is being checked. Camera capture is ready right now.'
+                  : liveEntryMessage}
             </Text>
 
             <View className="mt-6 flex-row gap-3">
@@ -167,7 +184,9 @@ export default function SupplierIntakeScreen() {
                     ? 'Start Live Intake'
                     : liveMissingHub
                       ? 'Set Up Supplier Hub'
-                      : 'Open Camera Capture'
+                      : isWeb
+                        ? 'Open Photo Upload'
+                        : 'Open Camera Capture'
                 }
                 onPress={() => {
                   if (liveReady) {
@@ -180,13 +199,13 @@ export default function SupplierIntakeScreen() {
                     return;
                   }
 
-                  openWorkflow(cameraWorkflow);
+                  openWorkflow(stillPhotoWorkflow);
                 }}
               />
               <PhoneActionButton
                 className="flex-1"
-                label={liveReady ? 'Photo Capture' : 'Open Camera Capture'}
-                onPress={() => openWorkflow(cameraWorkflow)}
+                label={isWeb ? 'Photo Upload' : liveReady ? 'Photo Capture' : 'Open Camera Capture'}
+                onPress={() => openWorkflow(stillPhotoWorkflow)}
                 variant="secondary"
               />
             </View>
@@ -195,11 +214,11 @@ export default function SupplierIntakeScreen() {
           <PhonePanel padded="lg">
             <PhoneEyebrow>Other Options</PhoneEyebrow>
             <Text className="mt-3 text-[22px] font-sans-bold leading-[28px] text-tato-text">
-              Photo Capture
+              {isWeb ? 'Photo Upload' : 'Photo Capture'}
             </Text>
 
             <View className="mt-4 gap-3">
-              {[cameraWorkflow, uploadWorkflow].map((workflow) => (
+              {photoWorkflows.map((workflow) => (
                 <PressableScale
                   activeScale={0.985}
                   className="rounded-[22px] border border-[#17355f] bg-[#091a31] p-4"
@@ -235,7 +254,7 @@ export default function SupplierIntakeScreen() {
             <Text className="mt-3 max-w-[760px] text-sm leading-7 text-tato-muted">
               {liveReady
                 ? 'Use live intake when you want Gemini to build the broker-ready draft while you talk through the item.'
-                : liveEntryState.message}
+                : liveEntryMessage}
             </Text>
 
             <View className="mt-5 flex-row flex-wrap gap-3">
@@ -257,17 +276,19 @@ export default function SupplierIntakeScreen() {
           </View>
 
           <ResponsiveKpiGrid tier={tier} columns={{ phone: 1, tablet: 2, desktop: 3, wideDesktop: 3 }}>
-            {workflows.map((workflow) => {
+            {visibleWorkflows.map((workflow) => {
               const isLiveWorkflow = workflow.id === 'live';
               const actionLabel = isLiveWorkflow
                 ? liveReady
                   ? workflow.actionLabel
                   : liveMissingHub
                     ? 'Set Up Supplier Hub'
-                    : 'Open Camera Capture'
+                    : isWeb
+                      ? 'Open Photo Upload'
+                      : 'Open Camera Capture'
                 : workflow.actionLabel;
               const description = isLiveWorkflow && !liveReady
-                ? liveEntryState.message
+                ? liveEntryMessage
                 : workflow.description;
 
               return (
@@ -291,7 +312,7 @@ export default function SupplierIntakeScreen() {
                       return;
                     }
 
-                    openWorkflow(cameraWorkflow);
+                    openWorkflow(stillPhotoWorkflow);
                   }}>
                   <View className="flex-row items-center justify-between gap-4">
                     <View className="h-12 w-12 items-center justify-center rounded-full bg-black/25">

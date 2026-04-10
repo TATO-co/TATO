@@ -1,25 +1,27 @@
 import { LinearGradient } from 'expo-linear-gradient';
 import { memo } from 'react';
-import { Image, Pressable, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Image } from 'expo-image';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, { FadeInDown, runOnJS, useAnimatedStyle, useSharedValue, withSpring } from 'react-native-reanimated';
 
 import { PressableScale } from '@/components/ui/PressableScale';
 import { hapticMedium, hapticSuccess } from '@/lib/haptics';
+import type { BrokerFeedStateItem } from '@/lib/hooks/useBrokerFeed';
 import { useReducedMotionPreference } from '@/lib/hooks/useReducedMotionPreference';
-import { formatMoney, type BrokerFeedItem } from '@/lib/models';
+import { formatMoney } from '@/lib/models';
 import { SPRING_SMOOTH, TIMING } from '@/lib/ui';
 
 type ClaimState = 'idle' | 'pending' | 'claimed' | 'error';
 
 type SwipeClaimCardProps = {
-  item: BrokerFeedItem;
+  item: BrokerFeedStateItem;
   claimed: boolean;
   claimState?: ClaimState;
   claimError?: string;
   isDesktop?: boolean;
   index?: number;
-  onClaim: () => void;
+  onClaim: (item: BrokerFeedStateItem) => void;
   onOpenItem?: (itemId: string) => void;
 };
 
@@ -40,6 +42,7 @@ function SwipeClaimCardInner({
   const reducedMotion = useReducedMotionPreference();
   const resolvedClaimState: ClaimState = claimState ?? (claimed ? 'claimed' : 'idle');
   const canClaim = resolvedClaimState === 'idle' || resolvedClaimState === 'error';
+  const triggerClaim = () => onClaim(item);
 
   const animatedStyle = useAnimatedStyle(() => ({
     transform: [{ translateX: offsetX.value }],
@@ -60,7 +63,7 @@ function SwipeClaimCardInner({
 
       if (shouldClaim && canClaim) {
         runOnJS(hapticSuccess)();
-        runOnJS(onClaim)();
+        runOnJS(triggerClaim)();
       }
 
       if (reducedMotion) {
@@ -86,10 +89,14 @@ function SwipeClaimCardInner({
         <Animated.View style={animatedStyle}>
           <View className={`${isDesktop ? 'h-[360px]' : 'h-[460px]'}`}>
             <Image
-              className="absolute inset-0 h-full w-full"
-              resizeMode="cover"
+              cachePolicy="disk"
+              contentFit="cover"
               source={{ uri: item.imageUrl }}
-              style={{ borderRadius: isDesktop ? 26 : 34 }}
+              style={[
+                styles.cardImage,
+                { borderRadius: isDesktop ? 26 : 34 },
+              ]}
+              transition={120}
             />
 
             <Pressable className="flex-1 justify-between" onPress={() => onOpenItem?.(item.id)}>
@@ -147,7 +154,7 @@ function SwipeClaimCardInner({
                       }`}
                     onPress={() => {
                       hapticMedium();
-                      onClaim();
+                      triggerClaim();
                     }}>
                     <Text className={`text-center font-bold text-white ${isDesktop ? 'text-base' : 'text-lg'}`}>
                       {resolvedClaimState === 'pending'
@@ -174,5 +181,13 @@ function SwipeClaimCardInner({
     </Animated.View>
   );
 }
+
+const styles = StyleSheet.create({
+  cardImage: {
+    ...StyleSheet.absoluteFillObject,
+    height: '100%',
+    width: '100%',
+  },
+});
 
 export const SwipeClaimCard = memo(SwipeClaimCardInner);

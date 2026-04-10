@@ -1,7 +1,7 @@
 import { useRouter } from 'expo-router';
-import { useCallback, useMemo, useState } from 'react';
-import { ActivityIndicator, FlatList, Image, ScrollView, Text, View } from 'react-native';
-import Animated, { FadeInUp } from 'react-native-reanimated';
+import { startTransition, useCallback, useMemo, useState } from 'react';
+import { ActivityIndicator, ScrollView, Text, View } from 'react-native';
+import { FlashList } from '@shopify/flash-list';
 
 import { ResponsiveKpiGrid, ResponsiveSplitPane } from '@/components/layout/ResponsivePrimitives';
 import { FeedState } from '@/components/ui/FeedState';
@@ -13,29 +13,15 @@ import { SkeletonCard, SkeletonRow } from '@/components/ui/SkeletonCard';
 import { StatusFilterBar, type StatusFilter } from '@/components/ui/StatusFilterBar';
 import { useViewportInfo } from '@/lib/constants';
 import { useReducedMotionPreference } from '@/lib/hooks/useReducedMotionPreference';
-import { formatMoney, type SupplierItem as SupplierItemRow, type SupplierItemStatus } from '@/lib/models';
+import type { SupplierItem as SupplierItemRow, SupplierItemStatus } from '@/lib/models';
 import { useSupplierDashboard } from '@/lib/hooks/useSupplierDashboard';
-import { confirmDestructiveAction, TIMING } from '@/lib/ui';
+import { useWorkspaceUiStore } from '@/lib/stores/workspace-ui';
+import { confirmDestructiveAction } from '@/lib/ui';
+import { SupplierQueueItemCard } from '@/components/workspace/SupplierQueueItemCard';
 
 type SupplierQueuePanelProps = {
   isDesktop?: boolean;
 };
-
-function StatusPill({ status }: { status: SupplierItemStatus }) {
-  const map: Record<SupplierItemStatus, { text: string; color: string; bg: string; border: string }> = {
-    available: { text: 'AVAILABLE', color: '#1ec995', bg: 'rgba(30, 201, 149, 0.12)', border: 'rgba(30, 201, 149, 0.5)' },
-    claimed: { text: 'CLAIMED', color: '#f5b942', bg: 'rgba(245, 185, 66, 0.12)', border: 'rgba(245, 185, 66, 0.5)' },
-    pending_pickup: { text: 'PENDING', color: '#1e6dff', bg: 'rgba(30, 109, 255, 0.12)', border: 'rgba(30, 109, 255, 0.5)' },
-  };
-  const s = map[status];
-  return (
-    <Text
-      className="rounded-full border px-2.5 py-1 text-[11px] font-semibold"
-      style={{ color: s.color, borderColor: s.border, backgroundColor: s.bg }}>
-      {s.text}
-    </Text>
-  );
-}
 
 function filterMatches(filter: StatusFilter, status: SupplierItemStatus): boolean {
   if (filter === 'all') return true;
@@ -51,10 +37,24 @@ export function SupplierQueuePanel({ isDesktop }: SupplierQueuePanelProps) {
   const useTabletLayout = !resolvedDesktop && viewport.isTablet;
   const tier = resolvedDesktop ? viewport.tier : useTabletLayout ? 'tablet' : 'phone';
   const router = useRouter();
-  const [activeFilter, setActiveFilter] = useState<StatusFilter>('all');
   const [actionFeedback, setActionFeedback] = useState<{ tone: 'success' | 'error'; message: string } | null>(null);
-  const { items, metrics, loading, deletingItemId, error, refresh, deleteItem } = useSupplierDashboard();
+  const { items, metrics, loading, refreshing, deletingItemId, error, refresh, deleteItem } = useSupplierDashboard();
   const reducedMotion = useReducedMotionPreference();
+  const activeFilter = useWorkspaceUiStore((state) => state.supplier.activeFilter) as StatusFilter;
+  const setSupplierActiveFilter = useWorkspaceUiStore((state) => state.setSupplierActiveFilter);
+  const statusCounts = useMemo(() => {
+    return items.reduce(
+      (current, item) => {
+        current[item.status] += 1;
+        return current;
+      },
+      {
+        available: 0,
+        claimed: 0,
+        pending_pickup: 0,
+      } as Record<SupplierItemStatus, number>,
+    );
+  }, [items]);
 
   const filteredItems = useMemo(
     () => items.filter((item) => filterMatches(activeFilter, item.status)),
@@ -64,20 +64,26 @@ export function SupplierQueuePanel({ isDesktop }: SupplierQueuePanelProps) {
   const metric0 = metrics[0];
   const metric1 = metrics[1];
   const metric2 = metrics[2];
-  const availableCount = items.filter((item) => item.status === 'available').length;
-  const pendingCount = items.filter((item) => item.status === 'pending_pickup').length;
-  const claimedCount = items.filter((item) => item.status === 'claimed').length;
-  const highActivityCount = items.filter(
-    (item) => item.brokerActivity === 'High' || item.brokerActivity === 'Very High',
-  ).length;
+  const availableCount = statusCounts.available;
+  const pendingCount = statusCounts.pending_pickup;
+  const claimedCount = statusCounts.claimed;
+  const highActivityCount = useMemo(
+    () => items.reduce(
+      (count, item) => (
+        item.brokerActivity === 'High' || item.brokerActivity === 'Very High' ? count + 1 : count
+      ),
+      0,
+    ),
+    [items],
+  );
   const actionQueueStats = useMemo(
     () => [
-      { label: 'Items awaiting claim', value: items.filter((item) => item.status === 'available').length },
-      { label: 'Pending pickups', value: items.filter((item) => item.status === 'pending_pickup').length },
-      { label: 'Claimed inventory', value: items.filter((item) => item.status === 'claimed').length },
+      { label: 'Items awaiting claim', value: statusCounts.available },
+      { label: 'Pending pickups', value: statusCounts.pending_pickup },
+      { label: 'Claimed inventory', value: statusCounts.claimed },
       { label: 'Active SKUs', value: items.length },
     ],
-    [items],
+    [items.length, statusCounts.available, statusCounts.claimed, statusCounts.pending_pickup],
   );
 
   const handleDeleteItem = useCallback(
@@ -105,6 +111,21 @@ export function SupplierQueuePanel({ isDesktop }: SupplierQueuePanelProps) {
     [deleteItem],
   );
 
+  const handleFilterChange = useCallback(
+    (filter: StatusFilter) => {
+      startTransition(() => setSupplierActiveFilter(filter));
+    },
+    [setSupplierActiveFilter],
+  );
+  const handleOpenItemById = useCallback(
+    (itemId: string) => {
+      router.push(`/(app)/item/${itemId}` as never);
+    },
+    [router],
+  );
+  const handleRefresh = useCallback(() => {
+    void refresh();
+  }, [refresh]);
   const renderDeleteAction = useCallback(
     (item: SupplierItemRow) => {
       if (!item.canDelete) {
@@ -137,66 +158,21 @@ export function SupplierQueuePanel({ isDesktop }: SupplierQueuePanelProps) {
 
   const renderMobileItem = useCallback(
     ({ item }: { item: SupplierItemRow }) => (
-      <Animated.View
-        className="px-1"
-        entering={reducedMotion ? undefined : FadeInUp.duration(TIMING.quick)}>
-        <View className="overflow-hidden rounded-[28px] border border-[#16355f] bg-[#07172d]">
-          <PressableScale
-            activeScale={0.985}
-            onPress={() => router.push(`/(app)/item/${item.id}` as never)}>
-            <View className="absolute -right-10 -top-10 h-28 w-28 rounded-full bg-tato-accent/10" />
-            <View className="p-4">
-              <View className="flex-row gap-3">
-                <Image className="h-[84px] w-[84px] rounded-[22px]" source={{ uri: item.thumbUrl }} />
-                <View className="min-w-0 flex-1">
-                  <View className="flex-row items-start justify-between gap-3">
-                    <View className="min-w-0 flex-1">
-                      <Text className="text-[18px] font-sans-bold leading-6 text-tato-text" numberOfLines={2}>
-                        {item.title}
-                      </Text>
-                      <Text className="mt-1 text-sm leading-6 text-tato-muted" numberOfLines={2}>
-                        {item.subtitle}
-                      </Text>
-                    </View>
-                    <Text className="font-mono text-[15px] font-semibold text-tato-accent">
-                      {formatMoney(item.askPriceCents, item.currencyCode, 2)}
-                    </Text>
-                  </View>
-
-                  <View className="mt-3 flex-row flex-wrap gap-2">
-                    <StatusPill status={item.status} />
-                    <View className="rounded-full border border-[#1c3d6e] bg-[#0d223f] px-2.5 py-1">
-                      <Text className="font-mono text-[11px] uppercase tracking-[1px] text-[#9cb7e1]">
-                        {item.brokerActivity} activity
-                      </Text>
-                    </View>
-                    <View className="rounded-full border border-[#17355f] bg-[#091a31] px-2.5 py-1">
-                      <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-muted">
-                        Qty {item.quantity}
-                      </Text>
-                    </View>
-                  </View>
-                </View>
-              </View>
-
-              <View className="mt-4 flex-row items-center justify-between border-t border-[#16355f] pt-3">
-                <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-dim">
-                  SKU {item.sku}
-                </Text>
-                <Text className="font-mono text-[11px] uppercase tracking-[1px] text-[#9cb7e1]">
-                  Open Item
-                </Text>
-              </View>
-            </View>
-          </PressableScale>
-
-          <View className="border-t border-[#16355f] px-4 py-3">
-            {renderDeleteAction(item)}
-          </View>
-        </View>
-      </Animated.View>
+      <SupplierQueueItemCard
+        deleting={deletingItemId === item.id}
+        item={item}
+        onDelete={handleDeleteItem}
+        onOpenItem={handleOpenItemById}
+        reducedMotion={reducedMotion}
+      />
     ),
-    [reducedMotion, renderDeleteAction, router],
+    [deletingItemId, handleDeleteItem, handleOpenItemById, reducedMotion],
+  );
+  const handleOpenItem = useCallback(
+    (item: SupplierItemRow) => {
+      handleOpenItemById(item.id);
+    },
+    [handleOpenItemById],
   );
 
   const keyExtractor = useCallback((item: SupplierItemRow) => item.id, []);
@@ -274,7 +250,7 @@ export function SupplierQueuePanel({ isDesktop }: SupplierQueuePanelProps) {
             <View className="flex-[2]">
               <View className="mb-3 flex-row items-center justify-between gap-4">
                 <Text className="font-sans-bold text-xl text-tato-text">Live Inventory</Text>
-                <StatusFilterBar activeFilter={activeFilter} onFilterChange={setActiveFilter} />
+                <StatusFilterBar activeFilter={activeFilter} onFilterChange={handleFilterChange} />
               </View>
               {actionFeedback ? (
                 <View
@@ -298,7 +274,7 @@ export function SupplierQueuePanel({ isDesktop }: SupplierQueuePanelProps) {
               ) : (
                 <InventoryTable
                   items={filteredItems}
-                  onItemPress={(item) => router.push(`/(app)/item/${item.id}` as never)}
+                  onItemPress={handleOpenItem}
                   renderActions={renderDeleteAction}
                   variant="desktop"
                 />
@@ -387,7 +363,7 @@ export function SupplierQueuePanel({ isDesktop }: SupplierQueuePanelProps) {
         <View className="gap-3">
           <View className="gap-3">
             <Text className="font-sans-bold text-xl text-tato-text">Live Inventory</Text>
-            <StatusFilterBar activeFilter={activeFilter} onFilterChange={setActiveFilter} />
+            <StatusFilterBar activeFilter={activeFilter} onFilterChange={handleFilterChange} />
           </View>
           {actionFeedback ? (
             <View
@@ -411,7 +387,7 @@ export function SupplierQueuePanel({ isDesktop }: SupplierQueuePanelProps) {
           ) : (
             <InventoryTable
               items={filteredItems}
-              onItemPress={(item) => router.push(`/(app)/item/${item.id}` as never)}
+              onItemPress={handleOpenItem}
               renderActions={renderDeleteAction}
               variant="tablet"
             />
@@ -462,11 +438,16 @@ export function SupplierQueuePanel({ isDesktop }: SupplierQueuePanelProps) {
 
   // --- Mobile layout ---
   return (
-    <FlatList
+    <FlashList
       data={hasError ? [] : filteredItems}
+      ItemSeparatorComponent={() => <View style={{ height: 16 }} />}
       keyExtractor={keyExtractor}
       renderItem={renderMobileItem}
-      contentContainerClassName="gap-4 pb-36"
+      contentContainerStyle={{ paddingBottom: 144 }}
+      onRefresh={() => {
+        handleRefresh();
+      }}
+      refreshing={refreshing}
       showsVerticalScrollIndicator={false}
       ListEmptyComponent={
         <PhonePanel className="mx-1" padded="lg">
@@ -549,7 +530,7 @@ export function SupplierQueuePanel({ isDesktop }: SupplierQueuePanelProps) {
                 {filteredItems.length} visible
               </Text>
             </View>
-            <StatusFilterBar activeFilter={activeFilter} compact onFilterChange={setActiveFilter} scrollable />
+            <StatusFilterBar activeFilter={activeFilter} compact onFilterChange={handleFilterChange} scrollable />
           </View>
           {actionFeedback ? (
             <PhonePanel

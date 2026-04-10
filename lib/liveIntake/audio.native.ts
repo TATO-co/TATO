@@ -232,14 +232,14 @@ export async function captureFrameAsBase64(cameraRef: {
     base64?: boolean;
     skipProcessing?: boolean;
   }) => Promise<{ base64?: string; uri: string } | undefined>;
-}) {
+}, options?: { quality?: number }) {
   if (!cameraRef.takePictureAsync) {
     return null;
   }
 
   try {
     const photo = await cameraRef.takePictureAsync({
-      quality: 0.4,
+      quality: options?.quality ?? 0.4,
       base64: true,
       skipProcessing: Platform.OS === 'android',
     });

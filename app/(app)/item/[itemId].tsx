@@ -6,15 +6,16 @@ import { useEffect, useMemo, useState } from 'react';
 import { Share } from 'react-native';
 import {
   ActivityIndicator,
-  Image,
   KeyboardAvoidingView,
   Platform,
   Pressable,
   ScrollView,
+  StyleSheet,
   Text,
   TextInput,
   View,
 } from 'react-native';
+import { Image } from 'expo-image';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { useAuth } from '@/components/providers/AuthProvider';
@@ -412,7 +413,13 @@ export default function ItemDetailsScreen() {
             ) : null}
 
             <View className="overflow-hidden rounded-[24px] border border-tato-line bg-tato-panel">
-              <Image className="h-[320px] w-full" resizeMode="cover" source={{ uri: activePhotoUrl ?? detail.imageUrl }} />
+              <Image
+                cachePolicy="disk"
+                contentFit="cover"
+                source={{ uri: activePhotoUrl ?? detail.imageUrl }}
+                style={styles.heroImage}
+                transition={120}
+              />
               <View className="p-5">
                 <View className="flex-row flex-wrap gap-2">
                   {fromLiveIntake ? (
@@ -465,7 +472,13 @@ export default function ItemDetailsScreen() {
                           }`}
                           key={`${photoUrl}-${index}`}
                           onPress={() => setSelectedPhotoIndex(index)}>
-                          <Image className="h-20 w-20" resizeMode="cover" source={{ uri: photoUrl }} />
+                          <Image
+                            cachePolicy="disk"
+                            contentFit="cover"
+                            source={{ uri: photoUrl }}
+                            style={styles.photoThumb}
+                            transition={100}
+                          />
                         </Pressable>
                       ))}
                     </ScrollView>
@@ -563,7 +576,13 @@ export default function ItemDetailsScreen() {
                           key={`${photoUrl}-${index}`}>
                           <View className={`gap-3 ${!isPhone ? 'flex-row items-center' : ''}`}>
                             <Pressable className={!isPhone ? 'w-[124px]' : ''} onPress={() => setSelectedPhotoIndex(index)}>
-                              <Image className="h-24 w-full rounded-[16px]" resizeMode="cover" source={{ uri: photoUrl }} />
+                              <Image
+                                cachePolicy="disk"
+                                contentFit="cover"
+                                source={{ uri: photoUrl }}
+                                style={styles.supplierPhoto}
+                                transition={100}
+                              />
                             </Pressable>
                             <View className="flex-1">
                               <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-dim">
@@ -922,3 +941,19 @@ export default function ItemDetailsScreen() {
     </SafeAreaView>
   );
 }
+
+const styles = StyleSheet.create({
+  heroImage: {
+    height: 320,
+    width: '100%',
+  },
+  photoThumb: {
+    height: 80,
+    width: 80,
+  },
+  supplierPhoto: {
+    borderRadius: 16,
+    height: 96,
+    width: '100%',
+  },
+});

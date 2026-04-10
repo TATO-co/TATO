@@ -20,7 +20,23 @@ import {
 } from '@/lib/liveIntake/audio.native';
 import { canCreateLiveDraft, getLiveDraftCreateBlockers } from '@/lib/liveIntake/platform';
 import { readTrimmedString } from '@/lib/liveIntake/normalize';
-import { looksLikeLiveDraftReadyClaim } from '@/lib/liveIntake/speech';
+import {
+  looksLikeLiveDraftReadyClaim,
+  looksLikeLiveVisualActionRequest,
+  referencesLiveNextBestAction,
+} from '@/lib/liveIntake/speech';
+import {
+  buildAutoObserveDecisionPrompt,
+  buildAutoObserveNextBestActionPrompt,
+  buildIdentifyRefreshPrompt,
+  buildMissingFieldCorrectionPrompt,
+  LIVE_AUTO_OBSERVE_DECISION_TIMEOUT_MS,
+  LIVE_AUTO_OBSERVE_SETTLE_MS,
+  LIVE_AUTO_OBSERVE_REPEAT_COOLDOWN_MS,
+  getLiveFrameRate,
+  getNativeFrameCaptureQuality,
+  LIVE_FRESH_VIEW_SETTLE_MS,
+} from '@/lib/liveIntake/session';
 import {
   buildLiveDraftDescription,
   getMissingLiveDraftRequiredFieldDetails,
@@ -47,8 +63,6 @@ import type {
   LiveTranscriptEntry,
 } from '@/lib/liveIntake/types';
 
-const STEADY_FRAME_RATE = 2; // Lower than web due to native photo capture overhead
-const BURST_FRAME_RATE = 5;
 const BURST_DURATION_MS = 2000;
 const MAX_RECONNECT_ATTEMPTS = 2;
 const STRUCTURED_UPDATE_TIMEOUT_MS = 7000;
@@ -146,7 +160,7 @@ export function useLiveIntakeSession(args: UseLiveIntakeSessionArgs) {
 
   const sessionRef = useRef<Session | null>(null);
   const micCleanupRef = useRef<(() => Promise<void>) | null>(null);
-  const frameIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const frameTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const burstTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const manualCloseRef = useRef(false);
@@ -156,14 +170,20 @@ export function useLiveIntakeSession(args: UseLiveIntakeSessionArgs) {
   const reconnectAttemptRef = useRef(0);
   const pendingUserTranscriptIdRef = useRef<string | null>(null);
   const pendingAgentTranscriptIdRef = useRef<string | null>(null);
+  const burstModeRef = useRef(false);
+  const lastAutoObserveActionRef = useRef<string | null>(null);
+  const lastAutoObserveAtRef = useRef(0);
   const hasRequestedKickoffRef = useRef(false);
   const readyToPostAnnouncedRef = useRef(false);
   const draftCorrectionSignatureRef = useRef<string | null>(null);
+  const pendingPromptTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const structuredUpdateTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastMeaningfulDraftUpdateAtRef = useRef(0);
   const pendingStructuredUpdateRef = useRef<{ requestedAt: number; labels: string[] } | null>(null);
   const spokenReadyGuardTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const spokenReadyGuardSignatureRef = useRef<string | null>(null);
+  const autoObserveDecisionTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingAutoObserveDecisionRef = useRef<{ action: string; attempt: number } | null>(null);
 
   const [cameraGranted, setCameraGranted] = useState(false);
   const [microphoneGranted, setMicrophoneGranted] = useState(false);
@@ -181,7 +201,9 @@ export function useLiveIntakeSession(args: UseLiveIntakeSessionArgs) {
   const [postedItems, setPostedItems] = useState<LivePostedItem[]>([]);
 
   const resetLiveState = () => {
+    clearPendingPrompt();
     clearSpokenReadyGuard();
+    clearAutoObserveDecisionWatchdog();
     const nextDraftState = createInitialLiveDraftState();
     setBootstrap(null);
     draftStateRef.current = nextDraftState;
@@ -199,13 +221,19 @@ export function useLiveIntakeSession(args: UseLiveIntakeSessionArgs) {
     reconnectAttemptRef.current = 0;
     readyToPostAnnouncedRef.current = false;
     draftCorrectionSignatureRef.current = null;
+    burstModeRef.current = false;
+    lastAutoObserveActionRef.current = null;
+    lastAutoObserveAtRef.current = 0;
     lastMeaningfulDraftUpdateAtRef.current = 0;
     pendingStructuredUpdateRef.current = null;
     spokenReadyGuardSignatureRef.current = null;
+    pendingAutoObserveDecisionRef.current = null;
   };
 
   const resetDraftForNextItem = () => {
+    clearPendingPrompt();
     clearSpokenReadyGuard();
+    clearAutoObserveDecisionWatchdog();
     const nextDraftState = createInitialLiveDraftState();
     draftStateRef.current = nextDraftState;
     setDraftState(nextDraftState);
@@ -218,8 +246,12 @@ export function useLiveIntakeSession(args: UseLiveIntakeSessionArgs) {
     hasRequestedKickoffRef.current = false;
     readyToPostAnnouncedRef.current = false;
     draftCorrectionSignatureRef.current = null;
+    burstModeRef.current = false;
+    lastAutoObserveActionRef.current = null;
+    lastAutoObserveAtRef.current = 0;
     pendingStructuredUpdateRef.current = null;
     spokenReadyGuardSignatureRef.current = null;
+    pendingAutoObserveDecisionRef.current = null;
   };
 
   const refreshAvailability = useCallback(async () => {
@@ -231,9 +263,9 @@ export function useLiveIntakeSession(args: UseLiveIntakeSessionArgs) {
   }, [args.supplierId]);
 
   const clearFrameLoop = () => {
-    if (frameIntervalRef.current != null) {
-      clearInterval(frameIntervalRef.current);
-      frameIntervalRef.current = null;
+    if (frameTimeoutRef.current != null) {
+      clearTimeout(frameTimeoutRef.current);
+      frameTimeoutRef.current = null;
     }
   };
 
@@ -245,12 +277,20 @@ export function useLiveIntakeSession(args: UseLiveIntakeSessionArgs) {
     reconnectQueuedRef.current = false;
   };
 
+  const clearPendingPrompt = () => {
+    if (pendingPromptTimeoutRef.current != null) {
+      clearTimeout(pendingPromptTimeoutRef.current);
+      pendingPromptTimeoutRef.current = null;
+    }
+  };
+
   const clearBurstMode = () => {
     if (burstTimeoutRef.current != null) {
       clearTimeout(burstTimeoutRef.current);
       burstTimeoutRef.current = null;
     }
 
+    burstModeRef.current = false;
     setBurstMode(false);
     setDraftState((current) => mergeLiveDraftState(current, { captureMode: 'steady' }));
   };
@@ -268,6 +308,15 @@ export function useLiveIntakeSession(args: UseLiveIntakeSessionArgs) {
       clearTimeout(spokenReadyGuardTimeoutRef.current);
       spokenReadyGuardTimeoutRef.current = null;
     }
+  };
+
+  const clearAutoObserveDecisionWatchdog = () => {
+    if (autoObserveDecisionTimeoutRef.current != null) {
+      clearTimeout(autoObserveDecisionTimeoutRef.current);
+      autoObserveDecisionTimeoutRef.current = null;
+    }
+
+    pendingAutoObserveDecisionRef.current = null;
   };
 
   const appendTranscriptEntry = useCallback((speaker: LiveTranscriptEntry['speaker'], text: string) => {
@@ -315,25 +364,139 @@ export function useLiveIntakeSession(args: UseLiveIntakeSessionArgs) {
     }, STRUCTURED_UPDATE_TIMEOUT_MS);
   }, [appendTranscriptEntry]);
 
+  const activateBurstMode = () => {
+    burstModeRef.current = true;
+    setBurstMode(true);
+    setDraftState((current) => mergeLiveDraftState(current, { captureMode: 'burst' }));
+
+    if (burstTimeoutRef.current != null) {
+      clearTimeout(burstTimeoutRef.current);
+    }
+
+    burstTimeoutRef.current = setTimeout(() => {
+      clearBurstMode();
+    }, BURST_DURATION_MS);
+  };
+
+  const queuePromptAfterFreshFrames = useCallback((args: {
+    text: string;
+    expectedLabels?: string[];
+    failureMessage?: string | null;
+    settleMs?: number;
+    onSent?: () => void;
+  }) => {
+    clearPendingPrompt();
+    activateBurstMode();
+
+    pendingPromptTimeoutRef.current = setTimeout(() => {
+      pendingPromptTimeoutRef.current = null;
+
+      const activeSession = sessionRef.current;
+      if (!activeSession) {
+        if (args.failureMessage) {
+          setCreateDraftError(args.failureMessage);
+        }
+        return;
+      }
+
+      try {
+        activeSession.sendClientContent({
+          turns: [
+            {
+              role: 'user',
+              parts: [{ text: args.text }],
+            },
+          ],
+          turnComplete: true,
+        });
+
+        if (args.expectedLabels?.length) {
+          startStructuredUpdateWatchdog(args.expectedLabels);
+        }
+
+        args.onSent?.();
+      } catch {
+        if (args.failureMessage) {
+          setCreateDraftError(args.failureMessage);
+        }
+      }
+    }, args.settleMs ?? LIVE_FRESH_VIEW_SETTLE_MS);
+  }, [startStructuredUpdateWatchdog]);
+
+  const scheduleAutoObserveDecisionWatchdog = useCallback((action: string, attempt = 0) => {
+    clearAutoObserveDecisionWatchdog();
+    pendingAutoObserveDecisionRef.current = { action, attempt };
+    autoObserveDecisionTimeoutRef.current = setTimeout(() => {
+      const pendingDecision = pendingAutoObserveDecisionRef.current;
+      autoObserveDecisionTimeoutRef.current = null;
+
+      if (!pendingDecision) {
+        return;
+      }
+
+      clearAutoObserveDecisionWatchdog();
+
+      if (pendingDecision.attempt >= 1) {
+        appendTranscriptEntry(
+          'system',
+          `TATO still has not clearly confirmed whether it got "${pendingDecision.action}". Try reframing the view or using re-scan if the draft stays stuck.`,
+        );
+        return;
+      }
+
+      queuePromptAfterFreshFrames({
+        text: buildAutoObserveDecisionPrompt(pendingDecision.action),
+        failureMessage: null,
+        settleMs: LIVE_FRESH_VIEW_SETTLE_MS,
+        onSent: () => scheduleAutoObserveDecisionWatchdog(pendingDecision.action, pendingDecision.attempt + 1),
+      });
+    }, LIVE_AUTO_OBSERVE_DECISION_TIMEOUT_MS);
+  }, [appendTranscriptEntry, queuePromptAfterFreshFrames]);
+
   const sendMissingFieldCorrection = useCallback((missingFieldLabels: string[], missingFieldPaths: string[]) => {
-    if (!sessionRef.current) {
+    queuePromptAfterFreshFrames({
+      text: buildMissingFieldCorrectionPrompt({ missingFieldLabels, missingFieldPaths }),
+      expectedLabels: missingFieldLabels,
+      failureMessage: 'Unable to ask TATO for another pass right now. Try reconnecting the live session.',
+    });
+  }, [queuePromptAfterFreshFrames]);
+
+  const maybeQueueAutoObservationForNextBestAction = useCallback((args: {
+    previousAction: string | null;
+    nextAction: string | null | undefined;
+    draftReady: boolean | undefined;
+    allowRepeat?: boolean;
+  }) => {
+    const nextAction = typeof args.nextAction === 'string' ? args.nextAction.trim() : '';
+    const previousAction = typeof args.previousAction === 'string' ? args.previousAction.trim() : '';
+    const normalizedNextAction = nextAction.toLowerCase();
+    const normalizedPreviousAction = previousAction.toLowerCase();
+    const normalizedLastAutoObserveAction = lastAutoObserveActionRef.current?.toLowerCase() ?? '';
+
+    if (!nextAction || args.draftReady) {
       return;
     }
 
-    sessionRef.current.sendClientContent({
-      turns: [
-        {
-          role: 'user',
-          parts: [{
-            text:
-              `Before you answer out loud, call publish_intake_state with the freshest draft state. The UI still shows these required fields as missing: ${missingFieldLabels.join(', ')} (${missingFieldPaths.join(', ')}). ` +
-              'Re-check the current camera view, update publish_intake_state with any corrected fields, and if something is still missing leave draftReady=false, set draftBlockers, and ask for one specific next view. Do not say the draft is ready until the structured tool state reflects it.',
-          }],
-        },
-      ],
-      turnComplete: true,
+    if (!args.allowRepeat && normalizedNextAction === normalizedPreviousAction) {
+      return;
+    }
+
+    if (
+      normalizedNextAction === normalizedLastAutoObserveAction
+      && Date.now() - lastAutoObserveAtRef.current < LIVE_AUTO_OBSERVE_REPEAT_COOLDOWN_MS
+    ) {
+      return;
+    }
+
+    lastAutoObserveActionRef.current = nextAction;
+    lastAutoObserveAtRef.current = Date.now();
+    queuePromptAfterFreshFrames({
+      text: buildAutoObserveNextBestActionPrompt(nextAction),
+      failureMessage: null,
+      settleMs: LIVE_AUTO_OBSERVE_SETTLE_MS,
+      onSent: () => scheduleAutoObserveDecisionWatchdog(nextAction),
     });
-  }, []);
+  }, [queuePromptAfterFreshFrames, scheduleAutoObserveDecisionWatchdog]);
 
   const scheduleSpokenReadyGuard = useCallback((agentText: string) => {
     if (!looksLikeLiveDraftReadyClaim(agentText)) {
@@ -366,19 +529,14 @@ export function useLiveIntakeSession(args: UseLiveIntakeSessionArgs) {
       );
       setCreateDraftError(SPOKEN_READY_GUARD_ERROR_MESSAGE);
 
-      try {
-        sendMissingFieldCorrection(
-          latestMissingRequiredFields.map((field) => field.label),
-          latestMissingRequiredFields.map((field) => field.fieldPath),
-        );
-        startStructuredUpdateWatchdog(latestMissingRequiredFields.map((field) => field.label));
-      } catch {
-        // Ignore send errors — the session may have disconnected
-      }
+      sendMissingFieldCorrection(
+        latestMissingRequiredFields.map((field) => field.label),
+        latestMissingRequiredFields.map((field) => field.fieldPath),
+      );
 
       spokenReadyGuardTimeoutRef.current = null;
     }, SPOKEN_READY_GUARD_TIMEOUT_MS);
-  }, [appendTranscriptEntry, sendMissingFieldCorrection, startStructuredUpdateWatchdog]);
+  }, [appendTranscriptEntry, sendMissingFieldCorrection]);
 
   const isMeaningfulDraftPatch = (patch: LiveDraftPatch) => (
     patch.candidateItems !== undefined
@@ -406,14 +564,10 @@ export function useLiveIntakeSession(args: UseLiveIntakeSessionArgs) {
           `Draft still needs ${formatHumanList(missingRequiredFields.map((field) => field.label))} before the post actions appear.`,
         );
 
-        try {
-          sendMissingFieldCorrection(
-            missingRequiredFields.map((field) => field.label),
-            missingRequiredFields.map((field) => field.fieldPath),
-          );
-        } catch {
-          // Ignore send errors — the session may have disconnected
-        }
+        sendMissingFieldCorrection(
+          missingRequiredFields.map((field) => field.label),
+          missingRequiredFields.map((field) => field.fieldPath),
+        );
       }
 
       if (missingRequiredFields.length === 0) {
@@ -469,32 +623,14 @@ export function useLiveIntakeSession(args: UseLiveIntakeSessionArgs) {
     manualCloseRef.current = true;
     hasRequestedKickoffRef.current = false;
     clearReconnectLoop();
+    clearPendingPrompt();
     clearBurstMode();
     clearStructuredUpdateWatchdog();
     clearSpokenReadyGuard();
+    clearAutoObserveDecisionWatchdog();
     await closeTransport();
     resetLiveState();
     setConnectionState('idle');
-  };
-
-  const activateBurstMode = (reason: 'identify' | 'tool' | 'resolve') => {
-    setBurstMode(true);
-    setDraftState((current) => mergeLiveDraftState(current, { captureMode: 'burst' }));
-
-    if (burstTimeoutRef.current != null) {
-      clearTimeout(burstTimeoutRef.current);
-    }
-
-    burstTimeoutRef.current = setTimeout(() => {
-      clearBurstMode();
-    }, BURST_DURATION_MS);
-
-    if (reason === 'identify' && sessionRef.current) {
-      sessionRef.current.sendClientContent({
-        turns: 'Refresh the item identification and condition using this close-up view.',
-        turnComplete: true,
-      });
-    }
   };
 
   const scheduleFrameLoop = () => {
@@ -506,7 +642,9 @@ export function useLiveIntakeSession(args: UseLiveIntakeSessionArgs) {
 
       if (activeSession && camera) {
         try {
-          const frame = await captureFrameAsBase64(camera);
+          const frame = await captureFrameAsBase64(camera, {
+            quality: getNativeFrameCaptureQuality(burstModeRef.current),
+          });
           if (frame) {
             activeSession.sendRealtimeInput({ video: frame });
           }
@@ -514,10 +652,12 @@ export function useLiveIntakeSession(args: UseLiveIntakeSessionArgs) {
           captureException(frameError, { flow: 'liveIntake.nativeFrameLoop' });
         }
       }
+
+      const frameRate = getLiveFrameRate('native', burstModeRef.current);
+      frameTimeoutRef.current = setTimeout(tick, Math.round(1000 / frameRate));
     };
 
-    const frameRate = burstMode ? BURST_FRAME_RATE : STEADY_FRAME_RATE;
-    frameIntervalRef.current = setInterval(tick, Math.round(1000 / frameRate));
+    frameTimeoutRef.current = setTimeout(tick, 80);
   };
 
   const handleToolCall = (call: FunctionCall) => {
@@ -530,10 +670,14 @@ export function useLiveIntakeSession(args: UseLiveIntakeSessionArgs) {
       return;
     }
 
+    const previousNextBestAction = draftStateRef.current.nextBestAction;
+
     if (isMeaningfulDraftPatch(patch)) {
       lastMeaningfulDraftUpdateAtRef.current = Date.now();
+      clearPendingPrompt();
       clearStructuredUpdateWatchdog();
       clearSpokenReadyGuard();
+      clearAutoObserveDecisionWatchdog();
       spokenReadyGuardSignatureRef.current = null;
       setCreateDraftError((current) =>
         current === STRUCTURED_UPDATE_TIMEOUT_MESSAGE || current === SPOKEN_READY_GUARD_ERROR_MESSAGE
@@ -545,7 +689,15 @@ export function useLiveIntakeSession(args: UseLiveIntakeSessionArgs) {
     applyDraftPatch(patch);
 
     if (patch.captureMode === 'burst') {
-      activateBurstMode('tool');
+      activateBurstMode();
+    }
+
+    if ('nextBestAction' in patch) {
+      maybeQueueAutoObservationForNextBestAction({
+        previousAction: previousNextBestAction,
+        nextAction: patch.nextBestAction,
+        draftReady: patch.draftReady,
+      });
     }
 
     if (sessionRef.current && call.id) {
@@ -641,6 +793,35 @@ export function useLiveIntakeSession(args: UseLiveIntakeSessionArgs) {
 
         if (outputTranscription.finished) {
           scheduleSpokenReadyGuard(outputText);
+
+          const pendingAutoObserveAction = pendingAutoObserveDecisionRef.current?.action;
+          if (
+            pendingAutoObserveAction
+            && (
+              referencesLiveNextBestAction(outputText, pendingAutoObserveAction)
+              || looksLikeLiveVisualActionRequest(outputText)
+              || looksLikeLiveDraftReadyClaim(outputText)
+            )
+          ) {
+            clearAutoObserveDecisionWatchdog();
+          }
+
+          const currentNextBestAction = draftStateRef.current.nextBestAction;
+          if (
+            currentNextBestAction
+            && !draftStateRef.current.draftReady
+            && (
+              referencesLiveNextBestAction(outputText, currentNextBestAction)
+              || looksLikeLiveVisualActionRequest(outputText)
+            )
+          ) {
+            maybeQueueAutoObservationForNextBestAction({
+              previousAction: currentNextBestAction,
+              nextAction: currentNextBestAction,
+              draftReady: false,
+              allowRepeat: true,
+            });
+          }
         }
       }
     }
@@ -810,7 +991,11 @@ export function useLiveIntakeSession(args: UseLiveIntakeSessionArgs) {
   };
 
   const requestIdentifyBurst = () => {
-    activateBurstMode('identify');
+    setCreateDraftError(null);
+    queuePromptAfterFreshFrames({
+      text: buildIdentifyRefreshPrompt(),
+      failureMessage: 'Unable to ask TATO for another visual pass right now. Try reconnecting the live session.',
+    });
   };
 
   const requestMissingFieldResolution = () => {
@@ -825,21 +1010,14 @@ export function useLiveIntakeSession(args: UseLiveIntakeSessionArgs) {
     }
 
     setCreateDraftError(null);
-    activateBurstMode('resolve');
     appendTranscriptEntry(
       'system',
       `Re-checking ${formatHumanList(missingRequiredFields.map((field) => field.label))} now.`,
     );
-    startStructuredUpdateWatchdog(missingRequiredFields.map((field) => field.label));
-
-    try {
-      sendMissingFieldCorrection(
-        missingRequiredFields.map((field) => field.label),
-        missingRequiredFields.map((field) => field.fieldPath),
-      );
-    } catch {
-      setCreateDraftError('Unable to ask TATO for another pass right now. Try reconnecting the live session.');
-    }
+    sendMissingFieldCorrection(
+      missingRequiredFields.map((field) => field.label),
+      missingRequiredFields.map((field) => field.fieldPath),
+    );
   };
 
   const confirmConditionGrade = (grade: LiveConditionGrade) => {

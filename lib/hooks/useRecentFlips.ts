@@ -1,21 +1,23 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 
-import { fetchRecentFlips } from '@/lib/repositories/tato';
 import { useAuth } from '@/components/providers/AuthProvider';
 import type { RecentFlip } from '@/lib/models';
+import { tatoQueryKeys } from '@/lib/query/keys';
+import { fetchRecentFlips } from '@/lib/repositories/tato';
 
 export function useRecentFlips() {
   const { user } = useAuth();
-  const [flips, setFlips] = useState<RecentFlip[]>([]);
+  const flipsQuery = useQuery({
+    queryKey: tatoQueryKeys.recentFlips(user?.id),
+    queryFn: () => fetchRecentFlips(user?.id ?? null),
+    enabled: Boolean(user?.id),
+    staleTime: 20 * 1000,
+  });
 
-  const load = useCallback(async () => {
-    const data = await fetchRecentFlips(user?.id ?? null);
-    setFlips(data);
-  }, [user?.id]);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
-
-  return { flips, refresh: load };
+  return {
+    flips: flipsQuery.data ?? ([] as RecentFlip[]),
+    refresh: async () => {
+      await flipsQuery.refetch();
+    },
+  };
 }

@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
-import { createClaim, fetchBrokerFeed } from '@/lib/repositories/tato';
 import { useAuth } from '@/components/providers/AuthProvider';
 import { trackEvent } from '@/lib/analytics';
 import type { BrokerFeedItem } from '@/lib/models';
+import { tatoQueryKeys } from '@/lib/query/keys';
+import { createClaim, fetchBrokerFeed } from '@/lib/repositories/tato';
 import { supabase } from '@/lib/supabase';
 
 type ClaimState = 'idle' | 'pending' | 'claimed' | 'error';
@@ -14,37 +16,21 @@ export type BrokerFeedStateItem = BrokerFeedItem & {
 
 export function useBrokerFeed() {
   const { user } = useAuth();
-  const [items, setItems] = useState<BrokerFeedStateItem[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const queryClient = useQueryClient();
   const [claimStateById, setClaimStateById] = useState<Record<string, ClaimState>>({});
   const [claimErrorById, setClaimErrorById] = useState<Record<string, string | undefined>>({});
+  const queryKey = tatoQueryKeys.brokerFeed(user?.id);
 
-  const load = useCallback(async (asRefresh = false) => {
-    if (asRefresh) {
-      setRefreshing(true);
-      trackEvent('refresh_feed');
-    } else {
-      setLoading(true);
-    }
-
-    try {
-      const data = await fetchBrokerFeed();
-      setItems(data);
-      setError(null);
-    } catch (loadError) {
-      const message = loadError instanceof Error ? loadError.message : 'Unable to load broker feed.';
-      setError(message);
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
-  }, []);
+  const feedQuery = useQuery({
+    queryKey,
+    queryFn: () => fetchBrokerFeed(),
+    staleTime: 15 * 1000,
+  });
 
   useEffect(() => {
-    load();
-  }, [load]);
+    setClaimStateById({});
+    setClaimErrorById({});
+  }, [user?.id]);
 
   useEffect(() => {
     const sb = supabase;
@@ -52,28 +38,75 @@ export function useBrokerFeed() {
       return;
     }
 
+    const invalidateFeed = () => {
+      void queryClient.invalidateQueries({ queryKey });
+    };
+
     const channel = sb
       .channel(`broker-feed:${user?.id ?? 'anon'}`)
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'items' },
-        () => {
-          load(true);
-        },
+        invalidateFeed,
       )
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'claims' },
-        () => {
-          load(true);
-        },
+        invalidateFeed,
       )
       .subscribe();
 
     return () => {
       sb.removeChannel(channel);
     };
-  }, [load, user?.id]);
+  }, [queryClient, queryKey, user?.id]);
+
+  const claimMutation = useMutation({
+    mutationFn: async (item: BrokerFeedStateItem) => {
+      const result = await createClaim({
+        brokerId: user!.id,
+        itemId: item.id,
+        hubId: item.hubId!,
+        claimDepositCents: item.claimDepositCents,
+      });
+
+      if (!result.ok) {
+        throw new Error(result.message);
+      }
+
+      return result;
+    },
+    onMutate: (item) => {
+      trackEvent('claim_attempt', {
+        itemId: item.id,
+        hubId: item.hubId,
+        claimDepositCents: item.claimDepositCents,
+      });
+      setClaimStateById((current) => ({ ...current, [item.id]: 'pending' }));
+      setClaimErrorById((current) => ({ ...current, [item.id]: undefined }));
+    },
+    onError: (error, item) => {
+      const message = error instanceof Error ? error.message : 'Unable to create claim.';
+      setClaimStateById((current) => ({ ...current, [item.id]: 'error' }));
+      setClaimErrorById((current) => ({ ...current, [item.id]: message }));
+      trackEvent('claim_error', { itemId: item.id, message });
+    },
+    onSuccess: (result, item) => {
+      setClaimStateById((current) => ({ ...current, [item.id]: 'claimed' }));
+      setClaimErrorById((current) => ({
+        ...current,
+        [item.id]:
+          'feeIntentError' in result && result.feeIntentError
+            ? `Claim created, but fee payment setup failed: ${result.feeIntentError}`
+            : undefined,
+      }));
+      trackEvent('claim_success', { itemId: item.id });
+      void queryClient.invalidateQueries({ queryKey: tatoQueryKeys.brokerClaims(user?.id) });
+    },
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey });
+    },
+  });
 
   const claimItem = useCallback(
     async (item: BrokerFeedStateItem) => {
@@ -95,35 +128,9 @@ export function useBrokerFeed() {
         return;
       }
 
-      trackEvent('claim_attempt', { itemId: item.id, hubId: item.hubId, claimDepositCents: item.claimDepositCents });
-      setClaimStateById((current) => ({ ...current, [item.id]: 'pending' }));
-      setClaimErrorById((current) => ({ ...current, [item.id]: undefined }));
-
-      const result = await createClaim({
-        brokerId: user.id,
-        itemId: item.id,
-        hubId: item.hubId,
-        claimDepositCents: item.claimDepositCents,
-      });
-
-      if (!result.ok) {
-        setClaimStateById((current) => ({ ...current, [item.id]: 'error' }));
-        setClaimErrorById((current) => ({ ...current, [item.id]: result.message }));
-        trackEvent('claim_error', { itemId: item.id, message: result.message });
-        return;
-      }
-
-      setClaimStateById((current) => ({ ...current, [item.id]: 'claimed' }));
-      setClaimErrorById((current) => ({
-        ...current,
-        [item.id]:
-          'feeIntentError' in result && result.feeIntentError
-            ? `Claim created, but fee payment setup failed: ${result.feeIntentError}`
-            : undefined,
-      }));
-      trackEvent('claim_success', { itemId: item.id });
+      claimMutation.mutate(item);
     },
-    [claimStateById, user?.id],
+    [claimMutation, claimStateById, user?.id],
   );
 
   const claimedCount = useMemo(
@@ -132,14 +139,16 @@ export function useBrokerFeed() {
   );
 
   return {
-    items,
-    loading,
-    refreshing,
-    error,
+    items: feedQuery.data ?? [],
+    loading: feedQuery.isPending,
+    refreshing: feedQuery.isRefetching,
+    error: feedQuery.error instanceof Error ? feedQuery.error.message : null,
     claimStateById,
     claimErrorById,
     claimedCount,
-    refresh: () => load(true),
+    refresh: async () => {
+      await feedQuery.refetch();
+    },
     claimItem,
   };
 }

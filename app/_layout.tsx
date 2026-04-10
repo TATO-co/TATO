@@ -3,6 +3,7 @@ import 'react-native-reanimated';
 import 'react-native-url-polyfill/auto';
 import '../global.css';
 
+import { QueryClientProvider } from '@tanstack/react-query';
 import { useFonts } from 'expo-font';
 import { Stack, usePathname, useRouter, useSegments } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
@@ -10,9 +11,20 @@ import { useEffect, useRef } from 'react';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
+import { 
+  Outfit_400Regular, 
+  Outfit_600SemiBold, 
+  Outfit_700Bold 
+} from '@expo-google-fonts/outfit';
+import { 
+  BricolageGrotesque_700Bold, 
+  BricolageGrotesque_800ExtraBold 
+} from '@expo-google-fonts/bricolage-grotesque';
+
 import { AuthProvider, useAuth } from '@/components/providers/AuthProvider';
 import { initializeTelemetry } from '@/lib/analytics';
 import { resolveRootRedirectTarget } from '@/lib/auth-helpers';
+import { queryClient } from '@/lib/query/client';
 
 export { ErrorBoundary } from 'expo-router';
 
@@ -28,6 +40,7 @@ function RootNavigator() {
   const segments = useSegments();
   const { configured, loading, isAuthenticated, preferredRoute, profile, profileError } = useAuth();
   const splashHiddenRef = useRef(false);
+  const browserPathname = typeof window === 'undefined' ? null : window.location.pathname;
 
   // Keep the native splash visible until auth state is fully settled.
   // Without this, React state updates across await boundaries can
@@ -37,6 +50,7 @@ function RootNavigator() {
     loading || (isAuthenticated && !profile && !profileError)
   );
   const redirectTarget = resolveRootRedirectTarget({
+    browserPathname,
     configured,
     isAuthenticated,
     pathname,
@@ -77,6 +91,11 @@ export default function RootLayout() {
     Inter_500Medium: require('@expo-google-fonts/inter/500Medium/Inter_500Medium.ttf'),
     Inter_600SemiBold: require('@expo-google-fonts/inter/600SemiBold/Inter_600SemiBold.ttf'),
     Inter_700Bold: require('@expo-google-fonts/inter/700Bold/Inter_700Bold.ttf'),
+    Outfit_400Regular,
+    Outfit_600SemiBold,
+    Outfit_700Bold,
+    BricolageGrotesque_700Bold,
+    BricolageGrotesque_800ExtraBold,
   });
 
   useEffect(() => {
@@ -96,9 +115,11 @@ export default function RootLayout() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
-        <AuthProvider>
-          <RootNavigator />
-        </AuthProvider>
+        <QueryClientProvider client={queryClient}>
+          <AuthProvider>
+            <RootNavigator />
+          </AuthProvider>
+        </QueryClientProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>
   );

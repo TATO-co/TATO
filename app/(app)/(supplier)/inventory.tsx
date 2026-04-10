@@ -1,6 +1,8 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useState } from 'react';
-import { ActivityIndicator, Image, Pressable, RefreshControl, ScrollView, Text, View } from 'react-native';
+import { startTransition, useCallback, useMemo, useState } from 'react';
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { FlashList } from '@shopify/flash-list';
+import { Image } from 'expo-image';
 import Animated, { FadeInUp } from 'react-native-reanimated';
 
 import { ModeShell } from '@/components/layout/ModeShell';
@@ -36,17 +38,113 @@ function filterMatches(filter: StatusFilter, status: SupplierItemStatus): boolea
 export default function SupplierInventoryScreen() {
   const router = useRouter();
   const { from } = useLocalSearchParams<{ from?: string }>();
-  const { items, loading, error, refresh } = useSupplierDashboard();
+  const { items, loading, refreshing, error, refresh } = useSupplierDashboard();
   const { isPhone, isTablet } = useViewportInfo();
   const [activeFilter, setActiveFilter] = useState<StatusFilter>('all');
-  const [refreshing, setRefreshing] = useState(false);
   const fromLiveIntake = from === 'live-intake';
   const completionCopy = getLiveIntakeCompletionCopy('ready_for_claim');
 
-  const filteredItems = items.filter((item) => filterMatches(activeFilter, item.status));
-  const availableCount = items.filter((item) => item.status === 'available').length;
-  const claimedCount = items.filter((item) => item.status === 'claimed').length;
-  const pendingCount = items.filter((item) => item.status === 'pending_pickup').length;
+  const statusCounts = useMemo(() => {
+    return items.reduce(
+      (current, item) => {
+        current[item.status] += 1;
+        return current;
+      },
+      {
+        available: 0,
+        claimed: 0,
+        pending_pickup: 0,
+      } as Record<SupplierItemStatus, number>,
+    );
+  }, [items]);
+  const filteredItems = useMemo(
+    () => items.filter((item) => filterMatches(activeFilter, item.status)),
+    [activeFilter, items],
+  );
+  const availableCount = statusCounts.available;
+  const claimedCount = statusCounts.claimed;
+  const pendingCount = statusCounts.pending_pickup;
+  const handleFilterChange = useCallback((filter: StatusFilter) => {
+    startTransition(() => setActiveFilter(filter));
+  }, []);
+  const handleOpenItem = useCallback(
+    (item: typeof items[number]) => {
+      router.push(`/(app)/item/${item.id}` as never);
+    },
+    [router],
+  );
+  const handleRefresh = useCallback(() => {
+    void refresh();
+  }, [refresh]);
+
+  const renderMobileItem = useCallback(
+    ({ item, index }: { item: (typeof filteredItems)[number]; index: number }) => {
+      const status = statusLabel(item.status);
+      return (
+        <Animated.View
+          className="overflow-hidden rounded-[28px] border border-[#16355f] bg-[#07172d]"
+          entering={FadeInUp.duration(TIMING.quick).delay(Math.min(index * 35, TIMING.slow))}>
+          <Pressable onPress={() => router.push(`/(app)/item/${item.id}` as never)}>
+            <View className="absolute -right-10 -top-10 h-28 w-28 rounded-full bg-tato-accent/10" />
+            <View className="p-4">
+              <View className="flex-row gap-3">
+                <Image
+                  cachePolicy="disk"
+                  contentFit="cover"
+                  source={{ uri: item.thumbUrl }}
+                  style={styles.inventoryThumb}
+                  transition={120}
+                />
+                <View className="min-w-0 flex-1">
+                  <View className="flex-row items-start justify-between gap-3">
+                    <View className="min-w-0 flex-1">
+                      <Text className="text-[18px] font-sans-bold leading-6 text-tato-text" numberOfLines={2}>
+                        {item.title}
+                      </Text>
+                      <Text className="mt-1 text-sm leading-6 text-tato-muted" numberOfLines={2}>
+                        {item.subtitle}
+                      </Text>
+                    </View>
+                    <Text className="font-mono text-[15px] font-semibold text-tato-accent">
+                      {formatMoney(item.askPriceCents, item.currencyCode, 2)}
+                    </Text>
+                  </View>
+
+                  <View className="mt-3 flex-row flex-wrap gap-2">
+                    <Text
+                      className="rounded-full border px-2.5 py-1 text-[11px] font-semibold"
+                      style={{ color: status.color, borderColor: status.border, backgroundColor: status.bg }}>
+                      {status.text}
+                    </Text>
+                    <View className="rounded-full border border-[#1c3d6e] bg-[#0d223f] px-2.5 py-1">
+                      <Text className="font-mono text-[11px] uppercase tracking-[1px] text-[#9cb7e1]">
+                        {item.brokerActivity} demand
+                      </Text>
+                    </View>
+                    <View className="rounded-full border border-[#17355f] bg-[#091a31] px-2.5 py-1">
+                      <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-muted">
+                        Qty {item.quantity}
+                      </Text>
+                    </View>
+                  </View>
+                </View>
+              </View>
+
+              <View className="mt-4 flex-row items-center justify-between border-t border-[#16355f] pt-3">
+                <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-dim">
+                  SKU {item.sku}
+                </Text>
+                <Text className="font-mono text-[11px] uppercase tracking-[1px] text-[#9cb7e1]">
+                  Open detail
+                </Text>
+              </View>
+            </View>
+          </Pressable>
+        </Animated.View>
+      );
+    },
+    [router],
+  );
 
   return (
     <ModeShell
@@ -94,12 +192,12 @@ export default function SupplierInventoryScreen() {
           ) : null}
           <View className={`gap-3 ${isTablet ? '' : 'flex-row items-center justify-between'}`}>
             <Text className="font-sans-bold text-2xl text-tato-text">Inventory Management</Text>
-            <StatusFilterBar activeFilter={activeFilter} onFilterChange={setActiveFilter} />
+            <StatusFilterBar activeFilter={activeFilter} onFilterChange={handleFilterChange} />
           </View>
           {filteredItems.length ? (
             <InventoryTable
               items={filteredItems}
-              onItemPress={(item) => router.push(`/(app)/item/${item.id}` as never)}
+              onItemPress={handleOpenItem}
               variant={isTablet ? 'tablet' : 'desktop'}
             />
           ) : (
@@ -109,143 +207,89 @@ export default function SupplierInventoryScreen() {
           )}
         </ScrollView>
       ) : (
-        <ScrollView
-          className="mt-2 flex-1"
-          contentContainerClassName="gap-4 pb-36"
-          refreshControl={
-            <RefreshControl
-              colors={['#1e6dff']}
-              onRefresh={async () => {
-                setRefreshing(true);
-                await refresh();
-                setRefreshing(false);
-              }}
-              refreshing={refreshing}
-              tintColor="#1e6dff"
-            />
-          }>
-          {fromLiveIntake ? (
-            <PhonePanel gradientTone="accent" padded="lg">
-              <PhoneEyebrow tone="accent">{completionCopy.eyebrow}</PhoneEyebrow>
-              <Text className="mt-3 text-[30px] font-sans-bold leading-[34px] text-tato-text">
-                {completionCopy.inventoryHeading}
-              </Text>
-              <Text className="mt-3 text-sm leading-7 text-tato-muted">{completionCopy.inventoryDetail}</Text>
-            </PhonePanel>
-          ) : null}
-          <PhonePanel gradientTone="accent" padded="lg">
-            <PhoneEyebrow>Inventory Management</PhoneEyebrow>
-            <Text className="mt-3 text-[30px] font-sans-bold leading-[34px] text-tato-text">
-              {filteredItems.length} Items
-            </Text>
-
-            <View className="mt-5 flex-row gap-3">
-              <View className="flex-1 rounded-[24px] border border-[#17355f] bg-[#0f2140] px-4 py-3">
-                <PhoneEyebrow>Available</PhoneEyebrow>
-                <Text className="mt-2 text-[28px] font-sans-bold text-tato-text">{availableCount}</Text>
-              </View>
-              <View className="flex-1 rounded-[24px] border border-[#17355f] bg-[#0f2140] px-4 py-3">
-                <PhoneEyebrow>Claimed + pickup</PhoneEyebrow>
-                <Text className="mt-2 text-[28px] font-sans-bold text-tato-text">
-                  {claimedCount + pendingCount}
+        <FlashList
+          data={filteredItems}
+          ItemSeparatorComponent={() => <View style={{ height: 16 }} />}
+          keyExtractor={(item) => item.id}
+          renderItem={renderMobileItem}
+          contentContainerStyle={{ paddingBottom: 144 }}
+          onRefresh={() => {
+            handleRefresh();
+          }}
+          refreshing={refreshing}
+          showsVerticalScrollIndicator={false}
+          ListHeaderComponent={
+            <View className="mt-2 gap-4 pb-4">
+              {fromLiveIntake ? (
+                <PhonePanel gradientTone="accent" padded="lg">
+                  <PhoneEyebrow tone="accent">{completionCopy.eyebrow}</PhoneEyebrow>
+                  <Text className="mt-3 text-[30px] font-sans-bold leading-[34px] text-tato-text">
+                    {completionCopy.inventoryHeading}
+                  </Text>
+                  <Text className="mt-3 text-sm leading-7 text-tato-muted">{completionCopy.inventoryDetail}</Text>
+                </PhonePanel>
+              ) : null}
+              <PhonePanel gradientTone="accent" padded="lg">
+                <PhoneEyebrow>Inventory Management</PhoneEyebrow>
+                <Text className="mt-3 text-[30px] font-sans-bold leading-[34px] text-tato-text">
+                  {filteredItems.length} Items
                 </Text>
+
+                <View className="mt-5 flex-row gap-3">
+                  <View className="flex-1 rounded-[24px] border border-[#17355f] bg-[#0f2140] px-4 py-3">
+                    <PhoneEyebrow>Available</PhoneEyebrow>
+                    <Text className="mt-2 text-[28px] font-sans-bold text-tato-text">{availableCount}</Text>
+                  </View>
+                  <View className="flex-1 rounded-[24px] border border-[#17355f] bg-[#0f2140] px-4 py-3">
+                    <PhoneEyebrow>Claimed + pickup</PhoneEyebrow>
+                    <Text className="mt-2 text-[28px] font-sans-bold text-tato-text">
+                      {claimedCount + pendingCount}
+                    </Text>
+                  </View>
+                </View>
+
+                <View className="mt-5 flex-row gap-3">
+                  <PhoneActionButton className="flex-1" label="Refresh Queue" onPress={handleRefresh} />
+                  <PhoneActionButton
+                    className="flex-1"
+                    label="Open Intake"
+                    onPress={() => router.push('/(app)/(supplier)/intake' as never)}
+                    variant="secondary"
+                  />
+                </View>
+              </PhonePanel>
+
+              <View className="gap-3">
+                <View className="flex-row items-end justify-between gap-3">
+                  <View className="flex-1">
+                    <PhoneEyebrow>Status Filter</PhoneEyebrow>
+                    <Text className="mt-2 text-[22px] font-sans-bold text-tato-text">
+                      Filter
+                    </Text>
+                  </View>
+                  <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-dim">
+                    {items.length} total
+                  </Text>
+                </View>
+                <StatusFilterBar activeFilter={activeFilter} compact onFilterChange={handleFilterChange} scrollable />
               </View>
             </View>
-
-            <View className="mt-5 flex-row gap-3">
-              <PhoneActionButton className="flex-1" label="Refresh Queue" onPress={refresh} />
-              <PhoneActionButton
-                className="flex-1"
-                label="Open Intake"
-                onPress={() => router.push('/(app)/(supplier)/intake' as never)}
-                variant="secondary"
-              />
-            </View>
-          </PhonePanel>
-
-          <View className="gap-3">
-            <View className="flex-row items-end justify-between gap-3">
-              <View className="flex-1">
-                <PhoneEyebrow>Status Filter</PhoneEyebrow>
-                <Text className="mt-2 text-[22px] font-sans-bold text-tato-text">
-                  Filter
-                </Text>
-              </View>
-              <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-dim">
-                {items.length} total
-              </Text>
-            </View>
-            <StatusFilterBar activeFilter={activeFilter} compact onFilterChange={setActiveFilter} scrollable />
-          </View>
-
-          {filteredItems.length ? (
-            filteredItems.map((item, index) => {
-              const status = statusLabel(item.status);
-              return (
-                <Animated.View
-                  className="overflow-hidden rounded-[28px] border border-[#16355f] bg-[#07172d]"
-                  entering={FadeInUp.duration(TIMING.quick).delay(Math.min(index * 35, TIMING.slow))}
-                  key={item.id}>
-                  <Pressable onPress={() => router.push(`/(app)/item/${item.id}` as never)}>
-                    <View className="absolute -right-10 -top-10 h-28 w-28 rounded-full bg-tato-accent/10" />
-                    <View className="p-4">
-                      <View className="flex-row gap-3">
-                        <Image className="h-[84px] w-[84px] rounded-[22px]" source={{ uri: item.thumbUrl }} />
-                        <View className="min-w-0 flex-1">
-                          <View className="flex-row items-start justify-between gap-3">
-                            <View className="min-w-0 flex-1">
-                              <Text className="text-[18px] font-sans-bold leading-6 text-tato-text" numberOfLines={2}>
-                                {item.title}
-                              </Text>
-                              <Text className="mt-1 text-sm leading-6 text-tato-muted" numberOfLines={2}>
-                                {item.subtitle}
-                              </Text>
-                            </View>
-                            <Text className="font-mono text-[15px] font-semibold text-tato-accent">
-                              {formatMoney(item.askPriceCents, item.currencyCode, 2)}
-                            </Text>
-                          </View>
-
-                          <View className="mt-3 flex-row flex-wrap gap-2">
-                            <Text
-                              className="rounded-full border px-2.5 py-1 text-[11px] font-semibold"
-                              style={{ color: status.color, borderColor: status.border, backgroundColor: status.bg }}>
-                              {status.text}
-                            </Text>
-                            <View className="rounded-full border border-[#1c3d6e] bg-[#0d223f] px-2.5 py-1">
-                              <Text className="font-mono text-[11px] uppercase tracking-[1px] text-[#9cb7e1]">
-                                {item.brokerActivity} demand
-                              </Text>
-                            </View>
-                            <View className="rounded-full border border-[#17355f] bg-[#091a31] px-2.5 py-1">
-                              <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-muted">
-                                Qty {item.quantity}
-                              </Text>
-                            </View>
-                          </View>
-                        </View>
-                      </View>
-
-                      <View className="mt-4 flex-row items-center justify-between border-t border-[#16355f] pt-3">
-                        <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-dim">
-                          SKU {item.sku}
-                        </Text>
-                        <Text className="font-mono text-[11px] uppercase tracking-[1px] text-[#9cb7e1]">
-                          Open detail
-                        </Text>
-                      </View>
-                    </View>
-                  </Pressable>
-                </Animated.View>
-              );
-            })
-          ) : (
+          }
+          ListEmptyComponent={
             <PhonePanel padded="lg">
               <Text className="text-center text-base text-tato-muted">No items match this filter.</Text>
             </PhonePanel>
-          )}
-        </ScrollView>
+          }
+        />
       )}
     </ModeShell>
   );
 }
+
+const styles = StyleSheet.create({
+  inventoryThumb: {
+    borderRadius: 22,
+    height: 84,
+    width: 84,
+  },
+});

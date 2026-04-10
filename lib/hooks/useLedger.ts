@@ -1,48 +1,32 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 
-import { fetchLedger, type LedgerEntry } from '@/lib/repositories/tato';
 import { useAuth } from '@/components/providers/AuthProvider';
+import { tatoQueryKeys } from '@/lib/query/keys';
+import { fetchLedger, type LedgerEntry } from '@/lib/repositories/tato';
 import { supabase } from '@/lib/supabase';
 
 export function useLedger() {
   const { user } = useAuth();
-  const [entries, setEntries] = useState<LedgerEntry[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const load = useCallback(
-    async (asRefresh = false) => {
-      if (asRefresh) {
-        setRefreshing(true);
-      } else {
-        setLoading(true);
-      }
-
-      try {
-        const data = await fetchLedger(user?.id ?? null);
-        setEntries(data);
-        setError(null);
-      } catch (loadError) {
-        const message = loadError instanceof Error ? loadError.message : 'Unable to load ledger.';
-        setError(message);
-      } finally {
-        setLoading(false);
-        setRefreshing(false);
-      }
-    },
-    [user?.id],
-  );
-
-  useEffect(() => {
-    load();
-  }, [load]);
+  const queryClient = useQueryClient();
+  const queryKey = tatoQueryKeys.ledger(user?.id);
+  const ledgerQuery = useQuery({
+    queryKey,
+    queryFn: () => fetchLedger(user?.id ?? null),
+    enabled: Boolean(user?.id),
+    staleTime: 20 * 1000,
+  });
 
   useEffect(() => {
     const sb = supabase;
     if (!sb || !user?.id) {
       return;
     }
+
+    const invalidateLedger = () => {
+      void queryClient.invalidateQueries({ queryKey });
+      void queryClient.invalidateQueries({ queryKey: tatoQueryKeys.recentFlips(user.id) });
+    };
 
     const channel = sb
       .channel(`ledger:${user.id}`)
@@ -54,9 +38,7 @@ export function useLedger() {
           table: 'transactions',
           filter: `broker_id=eq.${user.id}`,
         },
-        () => {
-          load(true);
-        },
+        invalidateLedger,
       )
       .on(
         'postgres_changes',
@@ -66,17 +48,16 @@ export function useLedger() {
           table: 'transactions',
           filter: `supplier_id=eq.${user.id}`,
         },
-        () => {
-          load(true);
-        },
+        invalidateLedger,
       )
       .subscribe();
 
     return () => {
       sb.removeChannel(channel);
     };
-  }, [load, user?.id]);
+  }, [queryClient, queryKey, user?.id]);
 
+  const entries = ledgerQuery.data ?? ([] as LedgerEntry[]);
   const summary = useMemo(() => {
     return entries.reduce(
       (acc, entry) => {
@@ -94,10 +75,12 @@ export function useLedger() {
 
   return {
     entries,
-    loading,
-    refreshing,
-    error,
+    loading: Boolean(user?.id) && ledgerQuery.isPending,
+    refreshing: ledgerQuery.isRefetching,
+    error: ledgerQuery.error instanceof Error ? ledgerQuery.error.message : null,
     summary,
-    refresh: () => load(true),
+    refresh: async () => {
+      await ledgerQuery.refetch();
+    },
   };
 }

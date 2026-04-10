@@ -60,6 +60,14 @@ function readBootstrapPublicPath() {
   }
 }
 
+function readBrowserPathname() {
+  if (typeof window === 'undefined') {
+    return '/';
+  }
+
+  return window.location.pathname || '/';
+}
+
 export default function WelcomeRoute() {
   const router = useRouter();
   const {
@@ -70,11 +78,20 @@ export default function WelcomeRoute() {
     profile,
     profileError,
   } = useAuth();
-  const bootstrapPublicPath = useMemo(() => readBootstrapPublicPath(), []);
+  const browserPathname = useMemo(() => readBrowserPathname(), []);
+  const isBrowserRootEntry = browserPathname === '/';
+  const bootstrapPublicPath = useMemo(
+    () => (isBrowserRootEntry ? readBootstrapPublicPath() : null),
+    [isBrowserRootEntry],
+  );
 
   const settling = configured && (loading || (isAuthenticated && !profile && !profileError));
 
   useEffect(() => {
+    if (!isBrowserRootEntry) {
+      return;
+    }
+
     if (bootstrapPublicPath) {
       router.replace(bootstrapPublicPath as never);
       return;
@@ -87,7 +104,11 @@ export default function WelcomeRoute() {
     if (configured && isAuthenticated) {
       router.replace(toPublicPath(preferredRoute) as never);
     }
-  }, [bootstrapPublicPath, configured, isAuthenticated, preferredRoute, router, settling]);
+  }, [bootstrapPublicPath, configured, isAuthenticated, isBrowserRootEntry, preferredRoute, router, settling]);
+
+  if (!isBrowserRootEntry) {
+    return null;
+  }
 
   if (bootstrapPublicPath || (configured && isAuthenticated && !settling)) {
     return null;

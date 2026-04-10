@@ -14,6 +14,7 @@ import {
 import { AuthAccessCard } from '@/components/auth/AuthAccessCard';
 import { RecentFlipsTicker } from '@/components/ui/RecentFlipsTicker';
 import { PressableScale } from '@/components/ui/PressableScale';
+import { StaggeredReveal } from '@/components/ui/StaggeredReveal';
 import { useViewportInfo } from '@/lib/constants';
 import type { RecentFlip } from '@/lib/models';
 
@@ -23,41 +24,6 @@ const welcomeFlips: RecentFlip[] = [
   { title: 'PlayStation lot', payoutCents: 11200, agoLabel: '1h ago', currencyCode: 'USD' },
   { title: 'Stokke crib set', payoutCents: 9700, agoLabel: '2h ago', currencyCode: 'USD' },
 ];
-
-const flowSteps = [
-  {
-    step: '01',
-    label: 'Source Inventory',
-    title: 'Bring the floor into one intake rhythm.',
-    body: 'TATO starts where the inventory actually lives: back rooms, lockups, dealer drops, resale pulls, and fast local supply.',
-  },
-  {
-    step: '02',
-    label: 'Talk / Scan Intake',
-    title: 'Let the item tell the story while you catalog.',
-    body: 'Photo capture and live intake turn raw observations into structured, broker-facing records without making operators stop and type every detail.',
-  },
-  {
-    step: '03',
-    label: 'Broker-Ready Queue',
-    title: 'Only the right opportunities rise.',
-    body: 'Condition, floor pricing, demand cues, and claim readiness surface the items that are clean enough to move and valuable enough to matter.',
-  },
-  {
-    step: '04',
-    label: 'Claim And Settle',
-    title: 'Move from discovery to payout with control.',
-    body: 'Brokers claim what they can win, suppliers keep visibility, and settlement stays inside one controlled operating loop.',
-  },
-];
-
-function SectionEyebrow({ children }: { children: string }) {
-  return (
-    <Text className="font-mono text-[11px] uppercase tracking-[2px] text-[#9ec4ff]">
-      {children}
-    </Text>
-  );
-}
 
 function SectionHeading({
   eyebrow,
@@ -71,14 +37,14 @@ function SectionHeading({
   centered?: boolean;
 }) {
   return (
-    <View className={`w-full max-w-[800px] ${centered ? 'mx-auto items-center' : ''}`}>
-      <Text className={`font-mono text-[12px] font-bold uppercase tracking-[4px] text-tato-accent ${centered ? 'text-center' : ''}`}>
+    <View className={`w-full max-w-[850px] ${centered ? 'mx-auto items-center' : ''}`}>
+      <Text className={`font-mono text-[13px] font-bold uppercase tracking-[4px] text-tato-accent ${centered ? 'text-center' : ''}`}>
         {eyebrow}
       </Text>
-      <Text className={`mt-4 text-[38px] font-sans-bold leading-[46px] text-tato-text tracking-tight ${centered ? 'text-center' : ''}`}>
+      <Text className={`mt-6 text-[44px] font-outfit-bold leading-[52px] text-tato-text tracking-tight ${centered ? 'text-center' : ''}`}>
         {title}
       </Text>
-      <Text className={`mt-4 text-[18px] leading-[30px] text-[#A3B8CC] font-medium ${centered ? 'text-center' : ''}`}>
+      <Text className={`mt-6 text-[19px] leading-[34px] text-tato-muted font-medium ${centered ? 'text-center' : ''}`}>
         {description}
       </Text>
     </View>
@@ -93,124 +59,15 @@ function SignalPill({
   tone?: 'neutral' | 'accent' | 'profit' | 'warn';
 }) {
   const toneClasses = {
-    neutral: 'border-[#21436f] bg-[#0f223f] text-[#bfd0ec]',
-    accent: 'border-tato-accent/30 bg-[#12315d] text-tato-accent',
-    profit: 'border-tato-profit/25 bg-[#0d2a29] text-tato-profit',
-    warn: 'border-tato-warn/25 bg-[#2d2413] text-tato-warn',
+    neutral: 'border-tato-line/40 bg-tato-deep/60 text-tato-muted',
+    accent: 'border-tato-accent/30 bg-tato-accent/10 text-tato-accent',
+    profit: 'border-tato-profit/30 bg-tato-profit/10 text-tato-profit',
+    warn: 'border-tato-warn/30 bg-tato-warn/10 text-tato-warn',
   } as const;
 
   return (
-    <View className={`rounded-full border px-3 py-2 ${toneClasses[tone]}`}>
-      <Text className="font-mono text-[10px] uppercase tracking-[1.4px]">{label}</Text>
-    </View>
-  );
-}
-
-function FlowCard({
-  step,
-  label,
-  title,
-  body,
-  index,
-}: {
-  step: string;
-  label: string;
-  title: string;
-  body: string;
-  index: number;
-}) {
-  // Create varying sizes for the bento grid effect
-  const isLarge = index === 0 || index === 3;
-  
-  return (
-    <View className={`${isLarge ? 'basis-[60%]' : 'basis-[35%]'} flex-1 grow overflow-hidden rounded-[36px] border border-white/10 bg-[#08162b]/60 p-8`} style={Platform.select({ web: { backdropFilter: 'blur(16px)' } as never, default: { shadowColor: '#1e6dff', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.12, shadowRadius: 16, elevation: 4 } })}>
-      <LinearGradient
-        className="absolute inset-0"
-        colors={['rgba(30, 109, 255, 0.08)', 'transparent']}
-        locations={[0, 0.4]}
-      />
-      <View className="flex-row items-center justify-between">
-        <Text className="font-mono text-[11px] font-bold uppercase tracking-[2px] text-tato-accent">
-          {label}
-        </Text>
-        <Text className="font-mono text-[32px] font-bold text-white/10">{step}</Text>
-      </View>
-      <View className="flex-1 justify-end mt-4">
-        <Text className="text-[28px] font-sans-bold leading-[34px] text-tato-text tracking-tight">
-          {title}
-        </Text>
-        <Text className="mt-3 text-[16px] leading-[26px] text-tato-muted font-medium">
-          {body}
-        </Text>
-      </View>
-    </View>
-  );
-}
-
-function PerspectiveCard({
-  eyebrow,
-  title,
-  body,
-  points,
-  tone,
-}: {
-  eyebrow: string;
-  title: string;
-  body: string;
-  points: string[];
-  tone: 'supplier' | 'broker';
-}) {
-  const gradient =
-    tone === 'supplier'
-      ? (['rgba(30, 201, 149, 0.12)', 'transparent'] as const)
-      : (['rgba(30, 109, 255, 0.12)', 'transparent'] as const);
-
-  return (
-    <View className="flex-1 overflow-hidden rounded-[40px] border border-white/10 bg-[#08162b]/60 p-8" style={Platform.select({ web: { backdropFilter: 'blur(16px)' } as never, default: { shadowColor: tone === 'supplier' ? '#1ec995' : '#1e6dff', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.12, shadowRadius: 16, elevation: 4 } })}>
-      <LinearGradient className="absolute inset-0" colors={gradient} locations={[0, 0.5]} />
-      <View className="relative">
-        <Text className={`font-mono text-[12px] font-bold uppercase tracking-[3px] ${tone === 'supplier' ? 'text-tato-profit' : 'text-tato-accent'}`}>
-          {eyebrow}
-        </Text>
-        <Text className="mt-5 text-[34px] font-sans-bold leading-[42px] text-tato-text tracking-tight">
-          {title}
-        </Text>
-        <Text className="mt-5 text-[17px] leading-[28px] text-[#A3B8CC] font-medium">
-          {body}
-        </Text>
-        <View className="mt-8 gap-4">
-          {points.map((point) => (
-            <View className="flex-row items-baseline gap-4" key={point}>
-              <View className={`mt-1.5 h-2 w-2 rounded-full ${tone === 'supplier' ? 'bg-tato-profit shadow-[0_0_8px_rgba(30,201,149,0.8)]' : 'bg-tato-accent shadow-[0_0_8px_rgba(30,109,255,0.8)]'}`} />
-              <Text className="flex-1 text-[16px] leading-[26px] text-tato-text font-medium">
-                {point}
-              </Text>
-            </View>
-          ))}
-        </View>
-      </View>
-    </View>
-  );
-}
-
-function ProofCard({
-  eyebrow,
-  title,
-  children,
-}: {
-  eyebrow: string;
-  title: string;
-  children: ReactNode;
-}) {
-  return (
-    <View className="flex-1 rounded-[36px] border border-white/10 bg-[#08162b]/60 p-8" style={Platform.select({ web: { backdropFilter: 'blur(16px)' } as never, default: { shadowColor: '#1e6dff', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.1, shadowRadius: 12, elevation: 4 } })}>
-      <Text className="font-mono text-[12px] font-bold uppercase tracking-[3px] text-[#9ec4ff]">
-        {eyebrow}
-      </Text>
-      <Text className="mt-4 text-[26px] font-sans-bold leading-[32px] text-tato-text tracking-tight">
-        {title}
-      </Text>
-      <View className="mt-8">{children}</View>
+    <View className={`rounded-full border px-3 py-1.5 ${toneClasses[tone]}`}>
+      <Text className="font-mono text-[10px] uppercase tracking-[1.2px] font-bold">{label}</Text>
     </View>
   );
 }
@@ -219,11 +76,11 @@ function TopRail({ stacked }: { stacked: boolean }) {
   return (
     <View className={`${stacked ? 'gap-4 mt-2' : 'flex-row items-center justify-between w-full mt-4'}`}>
       <View className="flex-row items-center gap-4">
-        <View className="h-10 w-10 items-center justify-center rounded-[14px] border border-white/20 bg-gradient-to-br from-white/10 to-transparent shadow-sm">
-          <Text className="font-sans-bold text-[20px] text-white">T</Text>
+        <View className="h-12 w-12 items-center justify-center rounded-[18px] border border-tato-cyber/30 bg-tato-deep/80 shadow-[0_0_15px_rgba(0,242,255,0.2)]">
+          <Text className="font-outfit-bold text-[24px] text-tato-cyber">T</Text>
         </View>
         <View>
-          <Text className="font-mono text-[10px] font-bold uppercase tracking-[4px] text-tato-text">
+          <Text className="font-outfit-bold text-[14px] uppercase tracking-[4px] text-tato-text">
             TATO
           </Text>
         </View>
@@ -234,8 +91,8 @@ function TopRail({ stacked }: { stacked: boolean }) {
           <PressableScale
             accessibilityLabel="Open direct sign-in"
             accessibilityRole="link"
-            className="flex-row items-center gap-2 rounded-full border border-white/10 bg-white/5 px-5 py-2.5 shadow-sm hover:bg-white/10 transition-colors">
-            <Text className="font-mono text-[10px] font-bold uppercase tracking-[2px] text-white">
+            className="flex-row items-center gap-2 rounded-full border border-tato-cyber/20 bg-tato-cyber/5 px-6 py-3 shadow-sm hover:bg-tato-cyber/10 transition-colors">
+            <Text className="font-mono text-[11px] font-bold uppercase tracking-[2px] text-tato-cyber">
               Direct Sign-In
             </Text>
           </PressableScale>
@@ -247,20 +104,12 @@ function TopRail({ stacked }: { stacked: boolean }) {
 
 export function WelcomeRootScreen() {
   const scrollRef = useRef<ScrollView>(null);
-  const reveal = useRef(new Animated.Value(0)).current;
   const drift = useRef(new Animated.Value(0)).current;
   const [flowY, setFlowY] = useState(0);
   const [accessY, setAccessY] = useState(0);
   const { isDesktop, isWideDesktop, isPhone, pageGutter } = useViewportInfo();
 
   useEffect(() => {
-    Animated.timing(reveal, {
-      toValue: 1,
-      duration: 720,
-      easing: Easing.out(Easing.cubic),
-      useNativeDriver: true,
-    }).start();
-
     const loop = Animated.loop(
       Animated.sequence([
         Animated.timing(drift, {
@@ -280,19 +129,7 @@ export function WelcomeRootScreen() {
 
     loop.start();
     return () => loop.stop();
-  }, [drift, reveal]);
-
-  const heroStyle = {
-    opacity: reveal,
-    transform: [
-      {
-        translateY: reveal.interpolate({
-          inputRange: [0, 1],
-          outputRange: [40, 0],
-        }),
-      },
-    ],
-  };
+  }, [drift]);
 
   const floatingStyle = {
     transform: [
@@ -316,18 +153,21 @@ export function WelcomeRootScreen() {
   const maxWidth = isWideDesktop ? 1260 : isDesktop ? 1180 : 980;
 
   return (
-    <View className="flex-1 bg-tato-base">
-      <LinearGradient
-        className="absolute inset-0"
-        colors={['#020711', '#061428', '#081b34', '#030a16']}
-        locations={[0, 0.22, 0.62, 1]}
-      />
-      <View className="absolute -left-16 top-24 h-56 w-56 rounded-full bg-[#0e4cad]/22" />
-      <View className="absolute right-0 top-0 h-72 w-72 rounded-full bg-white/6" />
-      <View
-        className="absolute bottom-20 h-72 w-72 rounded-full bg-tato-profit/7"
-        style={{ left: '50%', marginLeft: -144 }}
-      />
+    <View className="flex-1 bg-tato-deep">
+      {/* Cinematic Background Layering */}
+      <View className="absolute inset-0">
+        <LinearGradient
+          className="absolute inset-0"
+          colors={['#030a16', '#010409', '#010409']}
+          locations={[0, 0.4, 1]}
+        />
+        <View className="absolute -left-16 top-24 h-[600px] w-[600px] rounded-full bg-tato-cyber/10 blur-[120px]" />
+        <View className="absolute -right-32 bottom-32 h-[500px] w-[500px] rounded-full bg-tato-accent/10 blur-[100px]" />
+        
+        {Platform.OS === 'web' && (
+          <View className="absolute inset-0 bg-[#000] opacity-[0.03]" style={{ backgroundImage: 'radial-gradient(#fff 0.5px, transparent 0.5px)', backgroundSize: '24px 24px' }} />
+        )}
+      </View>
 
       <ScrollView
         ref={scrollRef}
@@ -339,271 +179,180 @@ export function WelcomeRootScreen() {
         }}
         showsVerticalScrollIndicator={false}>
         <View className="mx-auto w-full" style={{ maxWidth }}>
-          <TopRail stacked={isPhone} />
+          <StaggeredReveal index={0}>
+            <TopRail stacked={isPhone} />
+          </StaggeredReveal>
 
-          <Animated.View
-            className={`${isDesktop ? 'mt-32 py-12' : 'mt-16 py-6'} mb-8`}
-            style={heroStyle}>
-            {/* Volumetric glow effects (web-only, native uses solid bg instead) */}
-            {Platform.OS === 'web' ? (
-              <>
-                <View className="absolute right-0 -top-20 h-[600px] w-[600px] rounded-full bg-[#1e6dff]/10 blur-[120px]" pointerEvents="none" />
-                <View className="absolute -left-32 top-32 h-[500px] w-[500px] rounded-full bg-[#1ec995]/10 blur-[100px]" pointerEvents="none" />
-              </>
-            ) : (
-              <>
-                <View className="absolute right-0 -top-20 h-[400px] w-[400px] rounded-full bg-[#1e6dff]/6" pointerEvents="none" />
-                <View className="absolute -left-32 top-32 h-[300px] w-[300px] rounded-full bg-[#1ec995]/6" pointerEvents="none" />
-              </>
-            )}
+          <View className={`${isDesktop ? 'mt-40' : 'mt-20'} items-center`}>
+            <StaggeredReveal index={1}>
+              <Text className={`${isPhone ? 'text-[54px] leading-[60px]' : 'text-[92px] leading-[96px]'} font-display text-center text-tato-text tracking-[(-0.04em)]`}>
+                Turn your inventory into cash, instantly.
+              </Text>
+            </StaggeredReveal>
+            
+            <StaggeredReveal index={2}>
+              <Text className={`${isPhone ? 'text-[19px] leading-[34px]' : 'text-[24px] leading-[40px]'} mt-10 max-w-[700px] text-center text-tato-muted font-outfit font-medium`}>
+                TATO helps you catalog your back stock and find buyers in seconds. No spreadsheets, no typing, just fast-moving inventory.
+              </Text>
+            </StaggeredReveal>
 
-            <View className={`relative ${isDesktop ? 'flex-row items-center gap-16' : 'gap-12'}`}>
-              <View className={`${isDesktop ? 'max-w-[660px] flex-1' : 'w-full'}`}>
-                <Text className={`${isPhone ? 'text-[44px] leading-[48px]' : 'text-[72px] leading-[76px]'} font-sans-bold text-tato-text tracking-tight`}>
-                  Where raw intake becomes broker conviction.
-                </Text>
-                <Text className={`${isPhone ? 'text-[17px] leading-[28px]' : 'text-[20px] leading-[32px]'} mt-6 max-w-[600px] text-[#A3B8CC] font-medium`}>
-                  {isPhone
-                    ? 'Intake instantly, price accurately, and clear inventory the moment it\'s ready.'
-                    : 'Stop losing margin in the back room. TATO unites fragmented supply with surgical brokerage, giving you the tools to intake instantly, price accurately, and clear inventory the moment it\'s ready.'
-                  }
-                </Text>
-
-                <View className={`${isPhone ? 'mt-8 flex-col gap-4' : 'mt-10 flex-row gap-4'}`}>
-                  <PressableScale
-                    accessibilityLabel="See the flow"
-                    accessibilityRole="button"
-                    className="rounded-full bg-[#1e6dff] hover:bg-[#1e6dff]/90 px-8 py-4 shadow-[0_0_24px_rgba(30,109,255,0.4)] transition-all"
-                    onPress={() => scrollToSection(flowY)}>
-                    <Text className="text-center font-mono text-[13px] font-bold uppercase tracking-[2px] text-white">
-                      See the Platform
-                    </Text>
-                  </PressableScale>
-                  <PressableScale
-                    accessibilityLabel="Access workspace"
-                    accessibilityRole="button"
-                    className="rounded-full border border-[#2a518b]/60 bg-[#0d1e37]/80 hover:bg-[#122a4d] px-8 py-4 shadow-sm transition-colors"
-                    onPress={() => scrollToSection(accessY)}>
-                    <Text className="text-center font-mono text-[13px] font-bold uppercase tracking-[2px] text-tato-text">
-                      Enter Workspace
-                    </Text>
-                  </PressableScale>
-                </View>
-
-                <View className={`${isPhone ? 'mt-8 flex-col gap-3' : 'mt-10 flex-row flex-wrap gap-3'}`}>
-                  <SignalPill label="Vision Intake" tone="profit" />
-                  <SignalPill label="Broker Liquidity" tone="accent" />
-                  <SignalPill label="Settled Payouts" tone="warn" />
-                </View>
-              </View>
-
-              <Animated.View
-                className={`${isDesktop ? 'w-[440px]' : 'w-full'} rounded-[36px] border border-white/10 bg-[#08162b]/60 p-6`}
-                style={[floatingStyle, Platform.select({ web: { backdropFilter: 'blur(16px)' } as never, default: { shadowColor: '#1e6dff', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.15, shadowRadius: 20, elevation: 6 } })]}>
-                <Text className="font-mono text-[11px] font-bold uppercase tracking-[3px] text-[#9ec4ff]">
-                  System Telemetry
-                </Text>
-
-                <View className="mt-6 rounded-[28px] border border-white/5 bg-gradient-to-b from-[#0a1d37] to-[#061222] p-5 shadow-inner">
-                  <View className="flex-row items-start justify-between">
-                    <View>
-                      <Text className="font-mono text-[10px] font-bold uppercase tracking-[2px] text-tato-profit">
-                        Supplier Console
-                      </Text>
-                      <Text className="mt-2 text-[26px] font-sans-bold text-tato-text tracking-tight">
-                        Live Capture Active
-                      </Text>
-                    </View>
-                    <View className="h-2 w-2 rounded-full bg-tato-profit shadow-[0_0_8px_rgba(30,201,149,0.8)] animate-pulse" />
-                  </View>
-                  <Text className="mt-4 text-[15px] leading-[26px] text-tato-muted">
-                    Camera and voice stream directly into structured, floor-priced drafts before the operator even puts the item down.
+            <StaggeredReveal index={3} style={{ marginTop: 60, width: '100%', maxWidth: 640 }}>
+              <View className={`${isPhone ? 'flex-col gap-5' : 'flex-row gap-5'} justify-center w-full`}>
+                <PressableScale
+                  accessibilityLabel="I am a Supplier"
+                  accessibilityRole="button"
+                  className="flex-1 rounded-full bg-tato-accent hover:bg-tato-accent/90 px-10 py-6 border border-white/10 shadow-[0_0_40px_rgba(30,109,255,0.25)] transition-all"
+                  onPress={() => scrollToSection(flowY)}>
+                  <Text className="text-center font-mono text-[14px] font-bold uppercase tracking-[3px] text-white">
+                    I have inventory
                   </Text>
-                  <View className="mt-5 flex-row flex-wrap gap-2">
-                    <SignalPill label="Condition 94%" tone="profit" />
-                    <SignalPill label="Floor locked" tone="accent" />
-                    <SignalPill label="Queue ready" tone="warn" />
-                  </View>
-                </View>
+                </PressableScale>
+                <PressableScale
+                  accessibilityLabel="I am a Broker"
+                  accessibilityRole="button"
+                  className="flex-1 rounded-full border border-tato-line bg-tato-line/20 hover:bg-tato-line/40 px-10 py-6 shadow-sm transition-colors"
+                  onPress={() => scrollToSection(accessY)}>
+                  <Text className="text-center font-mono text-[14px] font-bold uppercase tracking-[3px] text-tato-text">
+                    I want to flip
+                  </Text>
+                </PressableScale>
+              </View>
+            </StaggeredReveal>
+          </View>
 
-                <View className="mt-4 rounded-[28px] border border-white/5 bg-gradient-to-b from-[#091a30] to-[#050e1c] p-5 shadow-inner">
-                  <View className="flex-row items-center justify-between">
-                    <View>
-                      <Text className="font-mono text-[10px] font-bold uppercase tracking-[2px] text-tato-accent">
-                        Broker Hunt
-                      </Text>
-                      <Text className="mt-2 text-[26px] font-sans-bold text-tato-text tracking-tight">
-                        Targeted Liquidity
-                      </Text>
-                    </View>
-                    <Text className="font-mono text-[24px] text-white/20 font-bold">18k</Text>
-                  </View>
-                  <View className="mt-5 gap-3">
-                    <View className="flex-row items-center justify-between rounded-[20px] border border-white/5 bg-[#0e1d35] px-4 py-3">
-                      <Text className="text-[15px] font-medium text-tato-text">Vintage Canon Lens</Text>
-                      <Text className="font-mono text-[11px] font-bold uppercase tracking-[1.5px] text-tato-accent">Fee +42</Text>
-                    </View>
-                    <View className="flex-row items-center justify-between rounded-[20px] border border-white/5 bg-[#0e1d35] px-4 py-3">
-                      <Text className="text-[15px] font-medium text-tato-text">Herman Miller Aeron</Text>
-                      <Text className="font-mono text-[11px] font-bold uppercase tracking-[1.5px] text-tato-profit">Match 96%</Text>
-                    </View>
-                  </View>
-                </View>
-              </Animated.View>
-            </View>
-          </Animated.View>
-
-          <View className="mt-6">
+          <View className="mt-32">
             <RecentFlipsTicker flips={welcomeFlips} />
           </View>
 
-          <View className="mt-24" onLayout={captureSection(setFlowY)}>
-            <SectionHeading
-              centered
-              description="From raw discovery to closed payout, TATO handles the entire lifecycle of recommerce. Intake faster, price smarter, and clear inventory with confidence."
-              eyebrow="The Operating Loop"
-              title="One unified rhythm from supply to settlement."
-            />
+          {/* The Split Funnel Details */}
+          <View className="mt-40" onLayout={captureSection(setFlowY)}>
+            <View className={`${isDesktop ? 'flex-row gap-10' : 'flex-col gap-6'}`}>
+              {/* Supplier Path */}
+              <View className="flex-1 overflow-hidden rounded-[48px] border border-white/10 bg-tato-panelSoft/20 p-10" style={Platform.select({ web: { backdropFilter: 'blur(40px)' } as never })}>
+                <View className="h-14 w-14 items-center justify-center rounded-2xl bg-tato-profit/10 border border-tato-profit/20">
+                  <Text className="font-outfit-bold text-2xl text-tato-profit">S</Text>
+                </View>
+                <Text className="mt-8 text-[38px] font-outfit-bold leading-[46px] text-tato-text">
+                  Get paid for what's in the back.
+                </Text>
+                <Text className="mt-6 text-[18px] leading-[32px] text-tato-muted font-medium">
+                  Catalog your stock faster than you can type. Just point your camera and talk—we'll turn your items into professional listings that buyers actually want.
+                </Text>
+                <View className="mt-10 gap-5">
+                  <View className="flex-row items-center gap-4">
+                    <View className="h-2 w-2 rounded-full bg-tato-profit" />
+                    <Text className="text-tato-text font-medium text-[16px]">Catalog items in under a minute</Text>
+                  </View>
+                  <View className="flex-row items-center gap-4">
+                    <View className="h-2 w-2 rounded-full bg-tato-profit" />
+                    <Text className="text-tato-text font-medium text-[16px]">Locked-in pricing you can trust</Text>
+                  </View>
+                </View>
+              </View>
 
-            <View className={`${isDesktop ? 'mt-12 flex-row flex-wrap gap-6' : 'mt-8 gap-5'}`}>
-              {flowSteps.map((item, index) => (
-                <FlowCard
-                  body={item.body}
-                  index={index}
-                  key={item.step}
-                  label={item.label}
-                  step={item.step}
-                  title={item.title}
-                />
-              ))}
+              {/* Broker Path */}
+              <View className="flex-1 overflow-hidden rounded-[48px] border border-white/10 bg-tato-panelSoft/20 p-10" style={Platform.select({ web: { backdropFilter: 'blur(40px)' } as never })}>
+                <View className="h-14 w-14 items-center justify-center rounded-2xl bg-tato-cyber/10 border border-tato-cyber/20">
+                  <Text className="font-outfit-bold text-2xl text-tato-cyber">B</Text>
+                </View>
+                <Text className="mt-8 text-[38px] font-outfit-bold leading-[46px] text-tato-text">
+                  Find your next big flip.
+                </Text>
+                <Text className="mt-6 text-[18px] leading-[32px] text-tato-muted font-medium">
+                  Stop hunting through low-quality ads. Get a direct feed of real inventory from reliable sellers, ready for you to claim and move for a profit.
+                </Text>
+                <View className="mt-10 gap-5">
+                  <View className="flex-row items-center gap-4">
+                    <View className="h-2 w-2 rounded-full bg-tato-cyber" />
+                    <Text className="text-tato-text font-medium text-[16px]">Verified items, ready to move</Text>
+                  </View>
+                  <View className="flex-row items-center gap-4">
+                    <View className="h-2 w-2 rounded-full bg-tato-cyber" />
+                    <Text className="text-tato-text font-medium text-[16px]">Instant payouts to your wallet</Text>
+                  </View>
+                </View>
+              </View>
             </View>
           </View>
 
-          <View className="mt-24">
+          {/* The Proof / Evidence Section */}
+          <View className="mt-40">
             <SectionHeading
               centered
-              eyebrow="Two Perspectives"
-              title="Built for the supplier moment and the broker moment."
-              description="TATO is strongest when both sides feel seen: suppliers need faster, cleaner intake; brokers need sharper opportunities with enough confidence to act."
+              eyebrow="Real Results"
+              title="Built for speed."
+              description="TATO isn't just another marketplace. We've built a faster way to handle the gear you move every day, removing every bit of friction from the process."
             />
 
-            <View className={`${isDesktop ? 'mt-12 flex-row gap-6' : 'mt-8 gap-5'}`}>
-              <PerspectiveCard
-                body="Supplier-side work should feel like disciplined capture, not clerical drag. TATO turns speech, photos, and fast judgment into records that are already useful downstream."
-                eyebrow="Supplier Side"
-                points={[
-                  'Run live intake when the item is easier to explain than to type.',
-                  'Keep inventory, pricing, and payout visibility in one place.',
-                  'Stay close to downstream movement without losing control of the source record.',
-                ]}
-                title="Catalog the real-world item before the moment goes cold."
-                tone="supplier"
-              />
-              <PerspectiveCard
-                body="Broker-side work should feel like a selective surface, not a cluttered list. The Hunt exists to expose the claimable spread, the condition confidence, and the next best move."
-                eyebrow="Broker Side"
-                points={[
-                  'Open a queue that is already shaped by claim readiness and margin.',
-                  'See enough signal to know what deserves your fee and attention.',
-                  'Carry the opportunity from claim into wallet and settlement.',
-                ]}
-                title="Hunt for the listings worth moving now."
-                tone="broker"
-              />
-            </View>
-          </View>
-
-          <View className="mt-24">
-            <SectionHeading
-              centered
-              eyebrow="Signals And Proof"
-              title="Data that drives conviction."
-              description="Know exactly when an item is ready to move, and watch the platform reconcile payouts automatically across the entire supply chain."
-            />
-
-            <View className={`${isDesktop ? 'mt-12 flex-row gap-6' : 'mt-8 gap-5'}`}>
-              <ProofCard eyebrow="Queue Readiness" title="The handoff is visible before it happens.">
-                <View className="gap-4">
-                  <View className="rounded-[24px] border border-white/5 bg-[#0a182d] p-5 shadow-inner">
+            <View className={`${isDesktop ? 'mt-20 flex-row items-center gap-20' : 'mt-16 gap-12'}`}>
+              <View className="flex-1">
+                <View className="rounded-[36px] border border-white/10 bg-tato-panelSoft/30 p-8" style={Platform.select({ web: { backdropFilter: 'blur(32px)' } as never })}>
+                  <Text className="font-mono text-[11px] font-bold uppercase tracking-[3px] text-tato-cyber">
+                    Live Status
+                  </Text>
+                  <View className="mt-8 rounded-[24px] border border-white/5 bg-tato-deep p-6">
                     <View className="flex-row items-center justify-between">
-                      <Text className="text-[17px] font-sans-bold text-tato-text tracking-tight">Sony A7 kit</Text>
-                      <SignalPill label="Ready for claim" tone="profit" />
+                      <Text className="text-[20px] font-outfit-bold text-tato-text">Sony A7 kit</Text>
+                      <SignalPill label="Ready" tone="profit" />
                     </View>
-                    <Text className="mt-3 text-[15px] leading-[26px] text-[#A3B8CC]">
-                      Title, condition, price floor, and image coverage all clear the threshold.
+                    <Text className="mt-4 text-[15px] leading-[26px] text-tato-muted">
+                      Every item is checked and verified automatically so you know exactly what you're getting.
                     </Text>
-                  </View>
-                  <View className="flex-row flex-wrap gap-2 px-1">
-                    <SignalPill label="Images verified" tone="accent" />
-                    <SignalPill label="Shippable" tone="neutral" />
-                    <SignalPill label="High demand" tone="warn" />
-                  </View>
-                </View>
-              </ProofCard>
-
-              <ProofCard eyebrow="Settlement Control" title="Money movement stays legible.">
-                <View className="gap-3">
-                  {[
-                    ['Claim fee captured', 'Broker action cleared'],
-                    ['Supplier payout pending', 'Awaiting settlement window'],
-                    ['Platform fee reconciled', 'Audit-safe ledger state'],
-                  ].map(([title, detail]) => (
-                    <View className="rounded-[24px] border border-white/5 bg-[#0a182d] px-5 py-4 shadow-inner" key={title}>
-                      <Text className="font-sans-semibold text-[16px] text-tato-text tracking-tight">{title}</Text>
-                      <Text className="mt-1.5 text-[14px] leading-[22px] text-[#A3B8CC] font-medium">{detail}</Text>
+                    <View className="mt-6 flex-row gap-2">
+                      <SignalPill label="Photos 94%" tone="accent" />
+                      <SignalPill label="Ready to ship" tone="neutral" />
                     </View>
-                  ))}
+                  </View>
                 </View>
-              </ProofCard>
+              </View>
+
+              <View className="flex-1">
+                <Text className="font-outfit-bold text-[32px] text-tato-text leading-[40px]">
+                  Simple, fast, and reliable.
+                </Text>
+                <Text className="mt-6 text-[18px] leading-[32px] text-tato-muted font-medium">
+                  We've removed the manual work of writing ads and hunting for buyers. TATO handles the boring stuff so you can focus on your business.
+                </Text>
+                <Link href="/sign-in" asChild>
+                  <PressableScale
+                    accessibilityLabel="Enter the workspace"
+                    accessibilityRole="link"
+                    className="mt-10 self-start px-8 py-4 bg-white/5 border border-white/10 rounded-full">
+                    <Text className="font-mono text-[12px] font-bold uppercase tracking-[2px] text-tato-text">
+                      Start Now
+                    </Text>
+                  </PressableScale>
+                </Link>
+              </View>
             </View>
           </View>
 
-          <View className="mt-32 mb-12" onLayout={captureSection(setAccessY)}>
-            <View className={`${isDesktop ? 'flex-row items-center gap-16' : 'gap-10'}`}>
-              <View className={`${isDesktop ? 'max-w-[560px] flex-1' : 'w-full'}`}>
-                <Text className="font-mono text-[12px] font-bold uppercase tracking-[4px] text-tato-accent">
-                  System Access
-                </Text>
-                <Text className={`${isPhone ? 'text-[44px] leading-[48px]' : 'text-[56px] leading-[62px]'} mt-5 font-sans-bold text-tato-text tracking-tight`}>
-                  Enter the workspace.
-                </Text>
-                <Text className={`${isPhone ? 'text-[17px] leading-[28px]' : 'text-[18px] leading-[30px]'} mt-6 text-[#A3B8CC] font-medium`}>
-                  Securely authenticate to access your specialized environment. The platform automatically calibrates your interface based on your role—whether you are capturing supply or sourcing inventory.
-                </Text>
-
-                <View className="mt-10 gap-4">
-                  <View className="rounded-[28px] border border-white/5 bg-[#0a182d] p-6 shadow-inner">
-                    <Text className="font-mono text-[11px] font-bold uppercase tracking-[3px] text-tato-accent">
-                      Unified Identity
-                    </Text>
-                    <Text className="mt-3 text-[15px] leading-[26px] text-tato-muted">
-                      Your single TATO identity seamlessly spans both the supplier intake tools and the broker hunting queue.
-                    </Text>
-                  </View>
-
-                  <Link href="/sign-in" asChild>
-                    <PressableScale
-                      accessibilityLabel="Open the direct sign-in route"
-                      accessibilityRole="link"
-                      className="rounded-full border border-white/10 bg-[#0d1e37]/80 px-8 py-5 mt-2 hover:bg-[#122a4d] transition-colors">
-                      <Text className="text-center font-mono text-[13px] font-bold uppercase tracking-[2px] text-tato-text">
-                        Try Direct Sign-In
-                      </Text>
-                    </PressableScale>
-                  </Link>
+          {/* Simplified Footer Access */}
+          <View className="mt-60 mb-20" onLayout={captureSection(setAccessY)}>
+            <LinearGradient
+              className="rounded-[48px] border border-white/10 overflow-hidden"
+              colors={['rgba(255,255,255,0.03)', 'transparent']}
+            >
+              <View className={`${isDesktop ? 'flex-row items-center p-20' : 'p-10'} gap-10`}>
+                <View className="flex-1">
+                  <Text className="font-display text-[48px] leading-[54px] text-tato-text">
+                    Ready to move more gear?
+                  </Text>
+                  <Text className="mt-8 text-[19px] leading-[34px] text-tato-muted font-medium max-w-[500px]">
+                    Join the sellers and buyers already winning with TATO. Step inside and see how fast you can grow.
+                  </Text>
+                </View>
+                <View className={`${isDesktop ? 'w-[400px]' : 'w-full'}`}>
+                  <AuthAccessCard
+                    description="One account for everything you do."
+                    eyebrow="Get Started"
+                    showMonogram
+                    title="Come on in."
+                    variant="welcome"
+                  />
                 </View>
               </View>
-
-              <View className={`${isDesktop ? 'w-[460px]' : 'w-full'}`}>
-                <AuthAccessCard
-                  description="Use the shared TATO sign-in flow to open your supplier dashboard, broker workspace, or both."
-                  eyebrow="Access Workspace"
-                  showMonogram
-                  title="Step inside TATO."
-                  variant="welcome"
-                />
-              </View>
-            </View>
+            </LinearGradient>
           </View>
         </View>
       </ScrollView>

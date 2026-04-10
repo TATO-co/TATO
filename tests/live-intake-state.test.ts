@@ -161,12 +161,62 @@ describe('live intake state helpers', () => {
     const description = buildLiveDraftDescription(state);
 
     expect(description).toContain('Dyson V11 Torque Drive Cordless Vacuum');
-    expect(description).toContain('Marketplace profile: Dyson · V11 · Vacuums.');
-    expect(description).toContain('Visible buyer-facing details:');
-    expect(description).toContain('Condition read: Good.');
-    expect(description).toContain('Pricing guidance:');
-    expect(description).toContain('Identification confidence: Dyson V11 Torque Drive (88% primary match).');
-    expect(description).toContain('Alternate matches considered: Dyson V10 Animal (42%).');
-    expect(description).toContain('Still worth verifying before sale: serial sticker, charger close-up.');
+    expect(description).toContain('Live Intake Overview:');
+    expect(description).toContain('Live intake identified this item as Dyson V11 Vacuums.');
+    expect(description).toContain('Item Details:');
+    expect(description).toContain('Brand: Dyson');
+    expect(description).toContain('Model: V11');
+    expect(description).toContain('Visible Buyer-Facing Details:');
+    expect(description).toContain('Live scan noted: Torque Drive Cordless Vacuum.');
+    expect(description).toContain('Color: nickel / blue');
+    expect(description).toContain('Battery Included: Yes');
+    expect(description).toContain('Condition Summary:');
+    expect(description).toContain('Overall condition appears Good.');
+    expect(description).toContain('Visible wear and notes: wand scuffs, dust bin scratches.');
+    expect(description).toContain('Not Yet Verified During Live Intake:');
+    expect(description).toContain('Serial sticker');
+    expect(description).toContain('Charger close-up');
+    expect(description).not.toContain('Pricing guidance:');
+    expect(description).not.toContain('Identification confidence:');
+    expect(description).not.toContain('Alternate matches considered:');
+    expect(description).not.toContain('Recommended next capture:');
+  });
+
+  it('still produces a fuller description when the live draft is sparse', () => {
+    const state = {
+      ...createEmptyLiveDraftState(),
+      bestGuess: {
+        title: 'Apple iPhone 12 Pro 256GB Gold Cracked Back and Screen',
+        brand: 'Apple',
+        model: 'iPhone 12 Pro',
+        category: 'Smartphone',
+        attributes: {},
+      },
+      condition: {
+        proposedGrade: 'parts' as const,
+        confidence: 'medium' as const,
+        signals: [],
+      },
+      pricing: {
+        floorPriceCents: 18000,
+        suggestedListPriceCents: 24900,
+        rationale: 'Damaged devices still have parts value.',
+        currencyCode: 'USD' as const,
+      },
+      draftReady: false,
+    };
+
+    const description = buildLiveDraftDescription(state);
+
+    expect(description).toContain('Apple iPhone 12 Pro 256GB Gold Cracked Back and Screen');
+    expect(description).toContain('Live Intake Overview:');
+    expect(description).toContain('Live intake identified this item as Apple iPhone 12 Pro Smartphone.');
+    expect(description).toContain('Visible specifics called out during the scan include 256GB Gold.');
+    expect(description).toContain('Visible Buyer-Facing Details:');
+    expect(description).toContain('Live scan noted: 256GB Gold.');
+    expect(description).toContain('Condition Summary:');
+    expect(description).toContain('Overall condition appears Parts.');
+    expect(description).toContain('Visible wear and notes: cracked back and screen.');
+    expect(description).toContain('Only visible condition cues from the live camera pass are reflected here');
   });
 });

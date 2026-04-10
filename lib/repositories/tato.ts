@@ -33,6 +33,7 @@ import {
   type SupplierItemUpdatePayload,
 } from '@/lib/item-detail';
 import { classifyLiveWorkflowError } from '@/lib/liveIntake/errors';
+import { MAX_STILL_PHOTO_SET_SIZE } from '@/lib/stillPhotoIntake';
 import { supabase } from '@/lib/supabase';
 
 type BrokerFeedRecord = {
@@ -195,6 +196,11 @@ export type SalePaymentIntentResult =
       ok: false;
       message: string;
     };
+
+type IngestionPhotoInput = {
+  uri: string;
+  mimeType?: string;
+};
 
 function requireSupabase() {
   if (!supabase) {
@@ -478,27 +484,60 @@ async function uploadSupplierItemPhoto(args: {
   imageUri: string;
   mimeType?: string;
 }) {
-  const client = requireSupabase();
   const fileExt = inferImageExtension(args.imageUri, args.mimeType);
   const storageKey = `${args.supplierId}/${args.itemId}/photo-${Date.now()}.${fileExt}`;
   const storagePath = `items/${storageKey}`;
+  await uploadImageToStorage({
+    bucket: 'items',
+    storageKey,
+    imageUri: args.imageUri,
+    mimeType: args.mimeType,
+    upsert: false,
+  });
+
+  return storagePath;
+}
+
+async function uploadImageToStorage(args: {
+  bucket: string;
+  storageKey: string;
+  imageUri: string;
+  mimeType?: string;
+  upsert: boolean;
+}) {
+  const client = requireSupabase();
   const response = await fetch(args.imageUri);
   const blob = await response.blob();
 
-  const { error } = await client.storage.from('items').upload(storageKey, blob, {
-    upsert: false,
+  const { error } = await client.storage.from(args.bucket).upload(args.storageKey, blob, {
+    upsert: args.upsert,
     contentType: args.mimeType ?? blob.type ?? 'image/jpeg',
   });
 
   if (error) {
     throw error;
   }
-
-  return storagePath;
 }
 
 function toMutationMessage(data: MutationErrorResponse | null | undefined, fallback: string) {
   return data?.message ?? fallback;
+}
+
+function toRepositoryErrorMessage(error: unknown, fallback: string) {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (
+    error
+    && typeof error === 'object'
+    && 'message' in error
+    && typeof error.message === 'string'
+  ) {
+    return error.message;
+  }
+
+  return fallback;
 }
 
 function buildRecentFlips(entries: LedgerEntry[]) {
@@ -1462,8 +1501,7 @@ export async function fetchLedger(userId: string | null): Promise<LedgerEntry[]>
 
 export async function runIngestionPipeline(args: {
   supplierId: string;
-  imageUri: string;
-  mimeType?: string;
+  photos: IngestionPhotoInput[];
   hubId?: string;
   currencyCode?: CurrencyCode;
 }): Promise<IngestionPipelineResult> {
@@ -1471,17 +1509,25 @@ export async function runIngestionPipeline(args: {
     return { ok: false, message: 'Supplier identity is required.' };
   }
 
-  if (!args.imageUri) {
-    return { ok: false, message: 'Image capture is required.' };
+  if (!args.photos.length) {
+    return { ok: false, message: 'Add at least one photo before running ingestion.' };
+  }
+
+  if (args.photos.length > MAX_STILL_PHOTO_SET_SIZE) {
+    return {
+      ok: false,
+      message: `A maximum of ${MAX_STILL_PHOTO_SET_SIZE} photos is supported per item.`,
+    };
   }
 
   const client = requireSupabase();
-  const fileExt = inferImageExtension(args.imageUri, args.mimeType);
+  const primaryPhoto = args.photos[0]!;
+  const fileExt = inferImageExtension(primaryPhoto.uri, primaryPhoto.mimeType);
 
   const { data: startData, error: startError } = await client.functions.invoke('start-ingestion', {
     body: {
       hubId: args.hubId,
-      mimeType: args.mimeType ?? 'image/jpeg',
+      mimeType: primaryPhoto.mimeType ?? 'image/jpeg',
       fileExtension: fileExt,
       currencyCode: args.currencyCode ?? 'USD',
       requestKey: createRequestKey('ingestion'),
@@ -1505,33 +1551,45 @@ export async function runIngestionPipeline(args: {
   const storageKey = startData.storageKey as string;
   const storageBucket = startData.storageBucket as string;
   const storagePath = startData.storagePath as string;
+  const uploadedStoragePaths: string[] = [];
 
   try {
-    const response = await fetch(args.imageUri);
-    const blob = await response.blob();
+    for (const [index, photo] of args.photos.entries()) {
+      const isPrimaryPhoto = index === 0;
+      const supplementalSuffix = `${Date.now()}-${index + 1}`;
+      const supplementalStorageKey = `${args.supplierId}/${itemId}/detail-${supplementalSuffix}.${inferImageExtension(photo.uri, photo.mimeType)}`;
+      const nextStorageKey = isPrimaryPhoto ? storageKey : supplementalStorageKey;
+      const nextStoragePath = isPrimaryPhoto ? storagePath : `items/${supplementalStorageKey}`;
 
-    const { error: uploadError } = await client.storage.from(storageBucket).upload(storageKey, blob, {
-      upsert: true,
-      contentType: args.mimeType ?? blob.type ?? 'image/jpeg',
-    });
-
-    if (uploadError) {
-      await client.from('items').update({ ingestion_ai_status: 'failed' }).eq('id', itemId);
-      return { ok: false, message: uploadError.message };
+      await uploadImageToStorage({
+        bucket: storageBucket,
+        storageKey: nextStorageKey,
+        imageUri: photo.uri,
+        mimeType: photo.mimeType,
+        upsert: isPrimaryPhoto,
+      });
+      uploadedStoragePaths.push(nextStoragePath);
     }
 
-    await client
+    const { error: updateError } = await client
       .from('items')
       .update({
-        primary_photo_path: storagePath,
-        photo_paths: [storagePath],
+        primary_photo_path: uploadedStoragePaths[0] ?? null,
+        photo_paths: uploadedStoragePaths,
       })
       .eq('id', itemId);
+
+    if (updateError) {
+      throw updateError;
+    }
   } catch (uploadFailure) {
     await client.from('items').update({ ingestion_ai_status: 'failed' }).eq('id', itemId);
+    if (uploadedStoragePaths.length) {
+      await removeStoragePaths(uploadedStoragePaths);
+    }
     return {
       ok: false,
-      message: uploadFailure instanceof Error ? uploadFailure.message : 'Unable to upload the captured image.',
+      message: toRepositoryErrorMessage(uploadFailure, 'Unable to upload the selected photos.'),
     };
   }
 
@@ -1545,6 +1603,7 @@ export async function runIngestionPipeline(args: {
   }
 
   if (!ingestionData?.ok || !ingestionData?.analysis) {
+    await client.from('items').update({ ingestion_ai_status: 'failed' }).eq('id', itemId);
     return {
       ok: false,
       message: toMutationMessage(ingestionData as MutationErrorResponse, 'Gemini ingestion did not return an analysis payload.'),

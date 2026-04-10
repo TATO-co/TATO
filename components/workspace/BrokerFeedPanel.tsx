@@ -1,16 +1,14 @@
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
-import { useMemo, useState } from 'react';
-import { FlatList, Pressable, RefreshControl, ScrollView, Text, View } from 'react-native';
+import { startTransition, useCallback, useDeferredValue, useMemo } from 'react';
+import { Pressable, ScrollView, Text, View } from 'react-native';
+import { FlashList } from '@shopify/flash-list';
 import Animated, { FadeInUp } from 'react-native-reanimated';
 
 import {
   BrokerDesktopControlsDrawer,
   brokerDesktopFocusOrder,
   type BrokerDesktopControlEntry,
-  type BrokerDesktopFocus,
-  type BrokerDesktopSort,
-  type BrokerShippingMode,
 } from '@/components/workspace/BrokerDesktopControlsDrawer';
 import { BrokerProductGridCard } from '@/components/workspace/BrokerProductGridCard';
 import { FeedState } from '@/components/ui/FeedState';
@@ -21,6 +19,7 @@ import { useViewportInfo } from '@/lib/constants';
 import { useBrokerFeed, type BrokerFeedStateItem } from '@/lib/hooks/useBrokerFeed';
 import { useRecentFlips } from '@/lib/hooks/useRecentFlips';
 import { brokerCategories, formatMoney, type BrokerCategory } from '@/lib/models';
+import { type BrokerWorkspaceFocus, useWorkspaceUiStore } from '@/lib/stores/workspace-ui';
 import { useReducedMotionPreference } from '@/lib/hooks/useReducedMotionPreference';
 import { TIMING } from '@/lib/ui';
 
@@ -30,13 +29,6 @@ type BrokerFeedPanelProps = {
   desktopControlsEntry?: BrokerDesktopControlEntry;
   onOpenDesktopControls?: (entry: BrokerDesktopControlEntry) => void;
   onCloseDesktopControls?: () => void;
-};
-
-const defaultDesktopFocusFilters: Record<BrokerDesktopFocus, boolean> = {
-  Nearby: true,
-  'Best Payout': false,
-  Electronics: false,
-  Shippable: false,
 };
 
 function matchesCategory(category: BrokerCategory, item: BrokerFeedStateItem) {
@@ -60,7 +52,7 @@ function matchesElectronics(item: BrokerFeedStateItem) {
   return title.includes('iphone') || title.includes('sony') || title.includes('macbook') || title.includes('airpods');
 }
 
-function matchesDesktopPresetFilter(filter: BrokerDesktopFocus, item: BrokerFeedStateItem) {
+function matchesDesktopPresetFilter(filter: BrokerWorkspaceFocus, item: BrokerFeedStateItem) {
   if (filter === 'Nearby') {
     return item.city === 'St. Louis' || item.city === 'Chicago';
   }
@@ -118,20 +110,32 @@ export function BrokerFeedPanel({
   const useAdvancedFeedMode = resolvedDesktop || isTablet;
   const router = useRouter();
   const reducedMotion = useReducedMotionPreference();
-
-  const [activeCategory, setActiveCategory] = useState<BrokerCategory>('Nearby');
-  const [searchQuery, setSearchQuery] = useState('');
-  const [selectedCities, setSelectedCities] = useState<string[]>([]);
-  const [desktopFocusFilters, setDesktopFocusFilters] = useState<Record<BrokerDesktopFocus, boolean>>(() => ({
-    ...defaultDesktopFocusFilters,
-  }));
-  const [desktopSort, setDesktopSort] = useState<BrokerDesktopSort>('Newest');
-  const [shippingMode, setShippingMode] = useState<BrokerShippingMode>('all');
-  const [minBrokerPayoutCents, setMinBrokerPayoutCents] = useState(0);
-  const [minAiConfidence, setMinAiConfidence] = useState(0);
-  const { items, loading, error, claimStateById, claimErrorById, claimedCount, refresh, claimItem } = useBrokerFeed();
-  const [refreshing, setRefreshing] = useState(false);
+  const activeCategory = useWorkspaceUiStore((state) => state.broker.activeCategory) as BrokerCategory;
+  const searchQuery = useWorkspaceUiStore((state) => state.broker.searchQuery);
+  const selectedCities = useWorkspaceUiStore((state) => state.broker.selectedCities);
+  const desktopFocusFilters = useWorkspaceUiStore((state) => state.broker.desktopFocusFilters);
+  const desktopSort = useWorkspaceUiStore((state) => state.broker.desktopSort);
+  const shippingMode = useWorkspaceUiStore((state) => state.broker.shippingMode);
+  const minBrokerPayoutCents = useWorkspaceUiStore((state) => state.broker.minBrokerPayoutCents);
+  const minAiConfidence = useWorkspaceUiStore((state) => state.broker.minAiConfidence);
+  const setBrokerActiveCategory = useWorkspaceUiStore((state) => state.setBrokerActiveCategory);
+  const setBrokerSearchQuery = useWorkspaceUiStore((state) => state.setBrokerSearchQuery);
+  const toggleBrokerCity = useWorkspaceUiStore((state) => state.toggleBrokerCity);
+  const toggleBrokerFocusFilter = useWorkspaceUiStore((state) => state.toggleBrokerFocusFilter);
+  const setBrokerShippingMode = useWorkspaceUiStore((state) => state.setBrokerShippingMode);
+  const setBrokerMinBrokerPayoutCents = useWorkspaceUiStore((state) => state.setBrokerMinBrokerPayoutCents);
+  const setBrokerMinAiConfidence = useWorkspaceUiStore((state) => state.setBrokerMinAiConfidence);
+  const setBrokerSort = useWorkspaceUiStore((state) => state.setBrokerSort);
+  const resetBrokerDesktopControls = useWorkspaceUiStore((state) => state.resetBrokerDesktopControls);
+  const { items, loading, refreshing, error, claimStateById, claimErrorById, claimedCount, refresh, claimItem } = useBrokerFeed();
   const { flips } = useRecentFlips();
+  const deferredSearchQuery = useDeferredValue(searchQuery);
+  const deferredSelectedCities = useDeferredValue(selectedCities);
+  const deferredDesktopFocusFilters = useDeferredValue(desktopFocusFilters);
+  const deferredDesktopSort = useDeferredValue(desktopSort);
+  const deferredShippingMode = useDeferredValue(shippingMode);
+  const deferredMinBrokerPayoutCents = useDeferredValue(minBrokerPayoutCents);
+  const deferredMinAiConfidence = useDeferredValue(minAiConfidence);
 
   const compactDesktop = useAdvancedFeedMode && (isTablet || (resolvedDesktop && !isWideDesktop));
   const stackHero = resolvedDesktop && width < 1380;
@@ -139,7 +143,7 @@ export function BrokerFeedPanel({
   const showDualInsightRow = resolvedDesktop && width >= 1260;
   const desktopGridColumns = isTablet ? 2 : !resolvedDesktop ? 1 : width >= 1520 ? 3 : width >= 1180 ? 2 : 1;
   const drawerWidth = isTablet ? Math.min(420, Math.max(340, width * 0.52)) : width >= 1520 ? 420 : 380;
-  const normalizedSearchQuery = searchQuery.trim().toLowerCase();
+  const normalizedSearchQuery = deferredSearchQuery.trim().toLowerCase();
 
   const cityOptions = useMemo(() => {
     const counts = items.reduce<Record<string, number>>((current, item) => {
@@ -162,37 +166,37 @@ export function BrokerFeedPanel({
           }
         }
 
-        if (selectedCities.length && !selectedCities.includes(item.city)) {
+        if (deferredSelectedCities.length && !deferredSelectedCities.includes(item.city)) {
           return false;
         }
 
-        const enabledFocusFilters = brokerDesktopFocusOrder.filter((filter) => desktopFocusFilters[filter]);
+        const enabledFocusFilters = brokerDesktopFocusOrder.filter((filter) => deferredDesktopFocusFilters[filter]);
         if (enabledFocusFilters.length && !enabledFocusFilters.every((filter) => matchesDesktopPresetFilter(filter, item))) {
           return false;
         }
 
-        if (shippingMode === 'local' && item.shippable) {
+        if (deferredShippingMode === 'local' && item.shippable) {
           return false;
         }
 
-        if (shippingMode === 'shippable' && !item.shippable) {
+        if (deferredShippingMode === 'shippable' && !item.shippable) {
           return false;
         }
 
-        if (item.estimatedBrokerPayoutCents < minBrokerPayoutCents) {
+        if (item.estimatedBrokerPayoutCents < deferredMinBrokerPayoutCents) {
           return false;
         }
 
-        if (item.aiIngestionConfidence < minAiConfidence) {
+        if (item.aiIngestionConfidence < deferredMinAiConfidence) {
           return false;
         }
 
         return true;
       });
 
-      if (desktopSort === 'Best Payout') {
+      if (deferredDesktopSort === 'Best Payout') {
         sorted.sort((left, right) => right.estimatedBrokerPayoutCents - left.estimatedBrokerPayoutCents);
-      } else if (desktopSort === 'Best AI') {
+      } else if (deferredDesktopSort === 'Best AI') {
         sorted.sort((left, right) => right.aiIngestionConfidence - left.aiIngestionConfidence);
       }
 
@@ -202,28 +206,55 @@ export function BrokerFeedPanel({
     return items.filter((item) => matchesCategory(activeCategory, item));
   }, [
     activeCategory,
-    desktopFocusFilters,
-    desktopSort,
+    deferredDesktopFocusFilters,
+    deferredDesktopSort,
+    deferredMinAiConfidence,
+    deferredMinBrokerPayoutCents,
+    deferredSelectedCities,
+    deferredShippingMode,
     items,
-    minAiConfidence,
-    minBrokerPayoutCents,
     normalizedSearchQuery,
-    resolvedDesktop,
-    selectedCities,
-    shippingMode,
+    useAdvancedFeedMode,
   ]);
 
   const totalPotential = useMemo(
-    () => activeItems.reduce((sum, item) => sum + item.estimatedBrokerPayoutCents, 0),
+    () => activeItems.reduce(
+      (current, item) => {
+        current.totalPotential += item.estimatedBrokerPayoutCents;
+        current.totalClaimDeposit += item.claimDepositCents;
+        if (item.shippable) {
+          current.shippableCount += 1;
+        }
+        return current;
+      },
+      {
+        shippableCount: 0,
+        totalClaimDeposit: 0,
+        totalPotential: 0,
+      },
+    ),
     [activeItems],
   );
   const reportingCurrency = activeItems[0]?.currencyCode ?? 'USD';
   const averageClaimFee = useMemo(
-    () => (activeItems.length ? Math.round(activeItems.reduce((sum, item) => sum + item.claimDepositCents, 0) / activeItems.length) : 0),
-    [activeItems],
+    () => (activeItems.length ? Math.round(totalPotential.totalClaimDeposit / activeItems.length) : 0),
+    [activeItems.length, totalPotential.totalClaimDeposit],
   );
-  const shippableCount = useMemo(() => activeItems.filter((item) => item.shippable).length, [activeItems]);
+  const shippableCount = totalPotential.shippableCount;
   const featuredItem = activeItems[0] ?? items[0] ?? null;
+  const totalPotentialPayout = totalPotential.totalPotential;
+  const handleClaimItem = useCallback((item: BrokerFeedStateItem) => {
+    void claimItem(item);
+  }, [claimItem]);
+  const handleOpenItem = useCallback((itemId: string) => {
+    router.push(`/(app)/item/${itemId}` as never);
+  }, [router]);
+  const handleRefresh = useCallback(() => {
+    void refresh();
+  }, [refresh]);
+  const handleSelectCategory = useCallback((category: BrokerCategory) => {
+    startTransition(() => setBrokerActiveCategory(category));
+  }, [setBrokerActiveCategory]);
 
   const activeDesktopTokens = useMemo(() => {
     if (!useAdvancedFeedMode) {
@@ -253,29 +284,6 @@ export function BrokerFeedPanel({
     selectedCities,
     shippingMode,
   ]);
-
-  const clearDesktopControls = () => {
-    setSearchQuery('');
-    setSelectedCities([]);
-    setDesktopFocusFilters({ ...defaultDesktopFocusFilters });
-    setDesktopSort('Newest');
-    setShippingMode('all');
-    setMinBrokerPayoutCents(0);
-    setMinAiConfidence(0);
-  };
-
-  const toggleCity = (city: string) => {
-    setSelectedCities((current) =>
-      current.includes(city) ? current.filter((value) => value !== city) : [...current, city],
-    );
-  };
-
-  const toggleDesktopFocusFilter = (filter: BrokerDesktopFocus) => {
-    setDesktopFocusFilters((current) => ({
-      ...current,
-      [filter]: !current[filter],
-    }));
-  };
 
   const gridCardWidth = desktopGridColumns === 1 ? '100%' : desktopGridColumns === 2 ? '47.5%' : '31.5%';
 
@@ -381,7 +389,7 @@ export function BrokerFeedPanel({
                 </Text>
 
                 <View className="mt-6 flex-row flex-wrap gap-4">
-                  <SnapshotMetric label="Projected Broker Payout" tone="profit" value={formatMoney(totalPotential, reportingCurrency, 0)} />
+                  <SnapshotMetric label="Projected Broker Payout" tone="profit" value={formatMoney(totalPotentialPayout, reportingCurrency, 0)} />
                   <SnapshotMetric label="Open Claims" tone="accent" value={`${claimedCount}`} />
                   <SnapshotMetric label="Avg. Claim Deposit" value={formatMoney(averageClaimFee, reportingCurrency, 2)} />
                 </View>
@@ -411,7 +419,7 @@ export function BrokerFeedPanel({
 
                     <Pressable
                       className="mt-5 rounded-full bg-tato-accent px-4 py-3 hover:bg-tato-accentStrong focus:bg-tato-accentStrong"
-                      onPress={() => router.push(`/(app)/item/${featuredItem.id}`)}>
+                      onPress={() => handleOpenItem(featuredItem.id)}>
                       <Text className="text-center font-mono text-[11px] font-bold uppercase tracking-[1px] text-white">
                         Review top item
                       </Text>
@@ -451,7 +459,7 @@ export function BrokerFeedPanel({
               </Pressable>
               <Pressable
                 className="rounded-full border border-tato-line bg-[#0b1b33] px-4 py-2.5 hover:bg-tato-panelSoft focus:bg-tato-panelSoft"
-                onPress={refresh}>
+                onPress={handleRefresh}>
                 <Text className="font-mono text-[11px] font-semibold uppercase tracking-[1px] text-tato-text">
                   Refresh feed
                 </Text>
@@ -477,8 +485,8 @@ export function BrokerFeedPanel({
                             claimError={claimErrorById[item.id]}
                             claimState={claimState}
                             item={item}
-                            onClaim={() => claimItem(item)}
-                            onOpenItem={(id) => router.push(`/(app)/item/${id}`)}
+                            onClaim={handleClaimItem}
+                            onOpenItem={handleOpenItem}
                           />
                         </Animated.View>
                       );
@@ -509,8 +517,8 @@ export function BrokerFeedPanel({
                           claimState={claimState}
                           compactDesktop={compactDesktop}
                           item={item}
-                          onClaim={() => claimItem(item)}
-                          onOpenItem={(id) => router.push(`/(app)/item/${id}`)}
+                          onClaim={handleClaimItem}
+                          onOpenItem={handleOpenItem}
                         />
                       </Animated.View>
                     );
@@ -528,15 +536,15 @@ export function BrokerFeedPanel({
           focusFilters={desktopFocusFilters}
           minAiConfidence={minAiConfidence}
           minBrokerPayoutCents={minBrokerPayoutCents}
-          onChangeSearchQuery={setSearchQuery}
-          onClear={clearDesktopControls}
+          onChangeSearchQuery={setBrokerSearchQuery}
+          onClear={resetBrokerDesktopControls}
           onClose={onCloseDesktopControls ?? (() => undefined)}
-          onSetMinAiConfidence={setMinAiConfidence}
-          onSetMinBrokerPayoutCents={setMinBrokerPayoutCents}
-          onSetShippingMode={setShippingMode}
-          onSetSort={setDesktopSort}
-          onToggleCity={toggleCity}
-          onToggleFocusFilter={toggleDesktopFocusFilter}
+          onSetMinAiConfidence={setBrokerMinAiConfidence}
+          onSetMinBrokerPayoutCents={setBrokerMinBrokerPayoutCents}
+          onSetShippingMode={setBrokerShippingMode}
+          onSetSort={setBrokerSort}
+          onToggleCity={toggleBrokerCity}
+          onToggleFocusFilter={toggleBrokerFocusFilter}
           open={desktopControlsOpen}
           resultCount={activeItems.length}
           searchQuery={searchQuery}
@@ -568,7 +576,7 @@ export function BrokerFeedPanel({
               </View>
 
               <View className="flex-row flex-wrap gap-4">
-                <SnapshotMetric label="Projected Broker Payout" tone="profit" value={formatMoney(totalPotential, reportingCurrency, 0)} />
+                <SnapshotMetric label="Projected Broker Payout" tone="profit" value={formatMoney(totalPotentialPayout, reportingCurrency, 0)} />
                 <SnapshotMetric label="Open Claims" tone="accent" value={`${claimedCount}`} />
                 <SnapshotMetric label="Avg. Claim Deposit" value={formatMoney(averageClaimFee, reportingCurrency, 2)} />
               </View>
@@ -595,7 +603,7 @@ export function BrokerFeedPanel({
                     </View>
                     <Pressable
                       className="mt-5 rounded-full bg-tato-accent px-4 py-3 hover:bg-tato-accentStrong focus:bg-tato-accentStrong"
-                      onPress={() => router.push(`/(app)/item/${featuredItem.id}`)}>
+                      onPress={() => handleOpenItem(featuredItem.id)}>
                       <Text className="text-center font-mono text-[11px] font-bold uppercase tracking-[1px] text-white">
                         Review top item
                       </Text>
@@ -635,8 +643,8 @@ export function BrokerFeedPanel({
                   </Text>
                 </Pressable>
                 <Pressable
-                  className="rounded-full border border-tato-line bg-[#0b1b33] px-4 py-2.5 hover:bg-tato-panelSoft focus:bg-tato-panelSoft"
-                  onPress={refresh}>
+                className="rounded-full border border-tato-line bg-[#0b1b33] px-4 py-2.5 hover:bg-tato-panelSoft focus:bg-tato-panelSoft"
+                  onPress={handleRefresh}>
                   <Text className="font-mono text-[11px] font-semibold uppercase tracking-[1px] text-tato-text">
                     Refresh feed
                   </Text>
@@ -664,8 +672,8 @@ export function BrokerFeedPanel({
                         claimState={claimState}
                         compactDesktop
                         item={item}
-                        onClaim={() => claimItem(item)}
-                        onOpenItem={(id) => router.push(`/(app)/item/${id}`)}
+                        onClaim={handleClaimItem}
+                        onOpenItem={handleOpenItem}
                       />
                     </Animated.View>
                   );
@@ -682,15 +690,15 @@ export function BrokerFeedPanel({
           focusFilters={desktopFocusFilters}
           minAiConfidence={minAiConfidence}
           minBrokerPayoutCents={minBrokerPayoutCents}
-          onChangeSearchQuery={setSearchQuery}
-          onClear={clearDesktopControls}
+          onChangeSearchQuery={setBrokerSearchQuery}
+          onClear={resetBrokerDesktopControls}
           onClose={onCloseDesktopControls ?? (() => undefined)}
-          onSetMinAiConfidence={setMinAiConfidence}
-          onSetMinBrokerPayoutCents={setMinBrokerPayoutCents}
-          onSetShippingMode={setShippingMode}
-          onSetSort={setDesktopSort}
-          onToggleCity={toggleCity}
-          onToggleFocusFilter={toggleDesktopFocusFilter}
+          onSetMinAiConfidence={setBrokerMinAiConfidence}
+          onSetMinBrokerPayoutCents={setBrokerMinBrokerPayoutCents}
+          onSetShippingMode={setBrokerShippingMode}
+          onSetSort={setBrokerSort}
+          onToggleCity={toggleBrokerCity}
+          onToggleFocusFilter={toggleBrokerFocusFilter}
           open={desktopControlsOpen}
           resultCount={activeItems.length}
           searchQuery={searchQuery}
@@ -702,41 +710,47 @@ export function BrokerFeedPanel({
     );
   }
 
-  const renderItem = ({ item, index }: { item: BrokerFeedStateItem; index: number }) => {
-    const claimState = claimStateById[item.id] ?? 'idle';
-    return (
-      <SwipeClaimCard
-        claimed={claimState === 'claimed'}
-        claimError={claimErrorById[item.id]}
-        claimState={claimState}
-        index={index}
-        item={item}
-        onClaim={() => claimItem(item)}
-        onOpenItem={(openItemId) => router.push(`/(app)/item/${openItemId}`)}
-      />
-    );
-  };
+  const renderItem = useCallback(
+    ({ item, index }: { item: BrokerFeedStateItem; index: number }) => {
+      const claimState = claimStateById[item.id] ?? 'idle';
+      return (
+        <SwipeClaimCard
+          claimed={claimState === 'claimed'}
+          claimError={claimErrorById[item.id]}
+          claimState={claimState}
+          index={index}
+          item={item}
+          onClaim={handleClaimItem}
+          onOpenItem={handleOpenItem}
+        />
+      );
+    },
+    [claimErrorById, claimStateById, handleClaimItem, handleOpenItem],
+  );
 
-  const listHeader = (
-    <View className="mb-4 border-b border-tato-line pb-2">
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerClassName="gap-6 px-1">
-        {brokerCategories.map((category) => {
-          const selected = category === activeCategory;
-          return (
-            <Pressable
-              className="rounded-md px-1 hover:bg-tato-panelSoft focus:bg-tato-panelSoft"
-              key={category}
-              onPress={() => setActiveCategory(category)}>
-              <View className={`pb-3 ${selected ? 'border-b-2 border-tato-accent' : ''}`}>
-                <Text className={`font-mono text-base font-semibold ${selected ? 'text-tato-text' : 'text-tato-muted'}`}>
-                  {category}
-                </Text>
-              </View>
-            </Pressable>
-          );
-        })}
-      </ScrollView>
-    </View>
+  const listHeader = useMemo(
+    () => (
+      <View className="mb-4 border-b border-tato-line pb-2">
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerClassName="gap-6 px-1">
+          {brokerCategories.map((category) => {
+            const selected = category === activeCategory;
+            return (
+              <Pressable
+                className="rounded-md px-1 hover:bg-tato-panelSoft focus:bg-tato-panelSoft"
+                key={category}
+                onPress={() => handleSelectCategory(category)}>
+                <View className={`pb-3 ${selected ? 'border-b-2 border-tato-accent' : ''}`}>
+                  <Text className={`font-mono text-base font-semibold ${selected ? 'text-tato-text' : 'text-tato-muted'}`}>
+                    {category}
+                  </Text>
+                </View>
+              </Pressable>
+            );
+          })}
+        </ScrollView>
+      </View>
+    ),
+    [activeCategory, handleSelectCategory],
   );
 
   return (
@@ -744,23 +758,16 @@ export function BrokerFeedPanel({
       {hasError || isEmpty ? (
         <FeedState error={error} empty={isEmpty} emptyLabel="No items match this filter yet." onRetry={refresh} />
       ) : (
-        <FlatList
-          contentContainerClassName="gap-4 pb-36"
+        <FlashList
           data={activeItems}
+          ItemSeparatorComponent={() => <View style={{ height: 16 }} />}
           keyExtractor={(item) => item.id}
           ListHeaderComponent={listHeader}
-          refreshControl={
-            <RefreshControl
-              colors={['#1e6dff']}
-              onRefresh={async () => {
-                setRefreshing(true);
-                await refresh();
-                setRefreshing(false);
-              }}
-              refreshing={refreshing}
-              tintColor="#1e6dff"
-            />
-          }
+          contentContainerStyle={{ paddingBottom: 144 }}
+          onRefresh={() => {
+            handleRefresh();
+          }}
+          refreshing={refreshing}
           renderItem={renderItem}
           showsVerticalScrollIndicator={false}
         />

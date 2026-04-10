@@ -1,6 +1,7 @@
 import { LinearGradient } from 'expo-linear-gradient';
-import { useMemo, useState } from 'react';
-import { Image, Pressable, Text, View } from 'react-native';
+import { memo, useMemo, useState } from 'react';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Image } from 'expo-image';
 import Animated, { FadeIn, FadeOut } from 'react-native-reanimated';
 
 import { PressableScale } from '@/components/ui/PressableScale';
@@ -14,7 +15,7 @@ type BrokerProductGridCardProps = {
   claimState: ClaimState;
   claimError?: string;
   compactDesktop?: boolean;
-  onClaim: () => void;
+  onClaim: (item: BrokerFeedStateItem) => void;
   onOpenItem: (id: string) => void;
 };
 
@@ -30,7 +31,7 @@ function aiGuidance(item: BrokerFeedStateItem) {
   return 'Gemini confidence is softer here. Verify bundled parts and condition in the detail view before claiming.';
 }
 
-export function BrokerProductGridCard({
+function BrokerProductGridCardInner({
   item,
   claimState,
   claimError,
@@ -46,6 +47,7 @@ export function BrokerProductGridCard({
   const projectedListPriceCents = useMemo(() => item.estimatedSalePriceCents, [item.estimatedSalePriceCents]);
   const brokerPayoutCents = useMemo(() => item.estimatedBrokerPayoutCents, [item.estimatedBrokerPayoutCents]);
   const summaryTone = item.shippable ? 'National listing candidate' : `Pickup-first play in ${item.city}`;
+  const handleClaim = () => onClaim(item);
 
   return (
     <PressableScale
@@ -72,7 +74,13 @@ export function BrokerProductGridCard({
           </View>
         </View>
 
-        <Image className="h-full w-full" resizeMode="contain" source={{ uri: item.imageUrl }} />
+        <Image
+          cachePolicy="disk"
+          contentFit="contain"
+          source={{ uri: item.imageUrl }}
+          style={styles.cardImage}
+          transition={120}
+        />
 
         <View className="absolute bottom-4 left-4">
           <View className="rounded-full border border-white/10 bg-black/40 px-3 py-1.5">
@@ -178,7 +186,7 @@ export function BrokerProductGridCard({
             disabled={!canClaim}
             onPress={(event) => {
               event.stopPropagation();
-              onClaim();
+              handleClaim();
             }}>
             <Text className="text-center text-sm font-bold text-white">
               {isPending ? 'Claiming...' : isClaimed ? 'Claimed' : claimState === 'error' ? 'Retry Claim' : 'Claim Item'}
@@ -191,3 +199,12 @@ export function BrokerProductGridCard({
     </PressableScale>
   );
 }
+
+const styles = StyleSheet.create({
+  cardImage: {
+    height: '100%',
+    width: '100%',
+  },
+});
+
+export const BrokerProductGridCard = memo(BrokerProductGridCardInner);

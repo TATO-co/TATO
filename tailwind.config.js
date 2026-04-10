@@ -7,6 +7,8 @@ module.exports = {
       colors: {
         tato: {
           base: '#030a16',
+          deep: '#010409',
+          cyber: '#00f2ff',
           panel: '#09172d',
           panelSoft: '#12243f',
           line: '#1c3358',
@@ -32,6 +34,11 @@ module.exports = {
         'sans-semibold': ['Inter_600SemiBold', 'Inter', 'System'],
         'sans-bold': ['Inter_700Bold', 'Inter', 'System'],
         mono: ['SpaceMono'],
+        'outfit': ['Outfit_400Regular', 'Outfit', 'System'],
+        'outfit-semibold': ['Outfit_600SemiBold', 'Outfit', 'System'],
+        'outfit-bold': ['Outfit_700Bold', 'Outfit', 'System'],
+        'display': ['BricolageGrotesque_800ExtraBold', 'System'],
+        'display-bold': ['BricolageGrotesque_700Bold', 'System'],
       },
     },
   },

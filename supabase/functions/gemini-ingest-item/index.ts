@@ -1,6 +1,8 @@
 import { serve } from 'https://deno.land/std@0.224.0/http/server.ts';
 import { encodeBase64 } from 'https://deno.land/std@0.224.0/encoding/base64.ts';
 
+import { buildGeminiIngestionRequest } from '../../../lib/ingestion/gemini.ts';
+import { MAX_STILL_PHOTO_SET_SIZE } from '../../../lib/stillPhotoIntake.ts';
 import { writeAuditEvent } from '../_shared/audit.ts';
 import { corsHeaders } from '../_shared/cors.ts';
 import { createCorrelationId, failure, success } from '../_shared/responses.ts';
@@ -80,54 +82,17 @@ const INGESTION_MODEL = Deno.env.get('GEMINI_INGESTION_MODEL') ?? 'gemini-2.0-fl
 
 async function runGemini(args: {
   apiKey: string;
-  imageBase64: string;
-  mimeType: string;
+  photos: Array<{
+    imageBase64: string;
+    mimeType: string;
+  }>;
 }) {
-  const prompt = [
-    'You are an expert recommerce catalog analyst for physical goods.',
-    'Return only valid JSON with this exact shape:',
-    '{',
-    '  "item_title": "string",',
-    '  "description": "string",',
-    '  "condition_summary": "string",',
-    '  "floor_price_cents": number,',
-    '  "suggested_list_price_cents": number,',
-    '  "confidence": number,',
-    '  "attributes": {"key":"value"},',
-    '  "market_snapshot": {"velocity":"low|medium|high","notes":"string"}',
-    '}',
-    'Rules:',
-    '- Use only information visible in the photo.',
-    '- Keep title highly specific for resale search intent.',
-    '- floor_price_cents should be a conservative minimum.',
-    '- suggested_list_price_cents should exceed floor_price_cents when possible.',
-    '- confidence must be between 0 and 1.',
-  ].join('\n');
-
   const response = await fetch(
     `https://generativelanguage.googleapis.com/v1beta/models/${INGESTION_MODEL}:generateContent?key=${args.apiKey}`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        generationConfig: {
-          responseMimeType: 'application/json',
-        },
-        contents: [
-          {
-            role: 'user',
-            parts: [
-              { text: prompt },
-              {
-                inline_data: {
-                  mime_type: args.mimeType,
-                  data: args.imageBase64,
-                },
-              },
-            ],
-          },
-        ],
-      }),
+      body: JSON.stringify(buildGeminiIngestionRequest({ photos: args.photos })),
     },
   );
 
@@ -202,35 +167,47 @@ serve(async (req) => {
       return failure(correlationId, 'forbidden', 'Forbidden: supplier mismatch.', 403);
     }
 
-    const photoPath = item.primary_photo_path ?? item.photo_paths?.[0] ?? null;
-    if (!photoPath) {
+    const photoPaths = item.photo_paths?.filter(Boolean) ?? [];
+    const analysisPhotoPaths = (photoPaths.length ? photoPaths : [item.primary_photo_path]).filter(
+      (value): value is string => typeof value === 'string' && value.length > 0,
+    ).slice(0, MAX_STILL_PHOTO_SET_SIZE);
+
+    if (!analysisPhotoPaths.length) {
       await admin.from('items').update({ ingestion_ai_status: 'failed' }).eq('id', item.id);
       return failure(correlationId, 'missing_image', 'No image found for this item.', 400);
     }
 
-    const parsed = parseStoragePath(photoPath);
-    if (!parsed) {
-      await admin.from('items').update({ ingestion_ai_status: 'failed' }).eq('id', item.id);
-      return failure(correlationId, 'invalid_storage_path', 'Invalid storage path on item.', 400);
+    const photos: Array<{ imageBase64: string; mimeType: string }> = [];
+
+    for (const photoPath of analysisPhotoPaths) {
+      const parsed = parseStoragePath(photoPath);
+      if (!parsed) {
+        await admin.from('items').update({ ingestion_ai_status: 'failed' }).eq('id', item.id);
+        return failure(correlationId, 'invalid_storage_path', 'Invalid storage path on item.', 400);
+      }
+
+      const { data: imageFile, error: downloadError } = await admin.storage
+        .from(parsed.bucket)
+        .download(parsed.objectPath);
+
+      if (downloadError || !imageFile) {
+        await admin.from('items').update({ ingestion_ai_status: 'failed' }).eq('id', item.id);
+        return failure(
+          correlationId,
+          'image_download_failed',
+          downloadError?.message ?? 'Unable to download item image.',
+          500,
+        );
+      }
+
+      const mimeType = imageFile.type || 'image/jpeg';
+      const bytes = new Uint8Array(await imageFile.arrayBuffer());
+      photos.push({
+        imageBase64: encodeBase64(bytes),
+        mimeType,
+      });
     }
 
-    const { data: imageFile, error: downloadError } = await admin.storage
-      .from(parsed.bucket)
-      .download(parsed.objectPath);
-
-    if (downloadError || !imageFile) {
-      await admin.from('items').update({ ingestion_ai_status: 'failed' }).eq('id', item.id);
-      return failure(
-        correlationId,
-        'image_download_failed',
-        downloadError?.message ?? 'Unable to download item image.',
-        500,
-      );
-    }
-
-    const mimeType = imageFile.type || 'image/jpeg';
-    const bytes = new Uint8Array(await imageFile.arrayBuffer());
-    const imageBase64 = encodeBase64(bytes);
     const geminiApiKey = Deno.env.get('GEMINI_API_KEY');
     if (!geminiApiKey) {
       await admin.from('items').update({ ingestion_ai_status: 'failed' }).eq('id', item.id);
@@ -242,7 +219,7 @@ serve(async (req) => {
       );
     }
 
-    const analysis = await runGemini({ apiKey: geminiApiKey, imageBase64, mimeType });
+    const analysis = await runGemini({ apiKey: geminiApiKey, photos });
 
     const { error: updateError } = await admin
       .from('items')

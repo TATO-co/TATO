@@ -1,49 +1,32 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useEffect } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 
-import { fetchBrokerClaims } from '@/lib/repositories/tato';
 import { useAuth } from '@/components/providers/AuthProvider';
 import type { ClaimSnapshot } from '@/lib/models';
+import { tatoQueryKeys } from '@/lib/query/keys';
+import { fetchBrokerClaims } from '@/lib/repositories/tato';
 import { supabase } from '@/lib/supabase';
 
 export function useBrokerClaims() {
   const { user } = useAuth();
-  const [claims, setClaims] = useState<ClaimSnapshot[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const load = useCallback(
-    async (asRefresh = false) => {
-      if (asRefresh) {
-        setRefreshing(true);
-      } else {
-        setLoading(true);
-      }
-
-      try {
-        const data = await fetchBrokerClaims(user?.id ?? null);
-        setClaims(data);
-        setError(null);
-      } catch (loadError) {
-        const message = loadError instanceof Error ? loadError.message : 'Unable to load claims.';
-        setError(message);
-      } finally {
-        setLoading(false);
-        setRefreshing(false);
-      }
-    },
-    [user?.id],
-  );
-
-  useEffect(() => {
-    load();
-  }, [load]);
+  const queryClient = useQueryClient();
+  const queryKey = tatoQueryKeys.brokerClaims(user?.id);
+  const claimsQuery = useQuery({
+    queryKey,
+    queryFn: () => fetchBrokerClaims(user?.id ?? null),
+    enabled: Boolean(user?.id),
+    staleTime: 20 * 1000,
+  });
 
   useEffect(() => {
     const sb = supabase;
     if (!sb || !user?.id) {
       return;
     }
+
+    const invalidateClaims = () => {
+      void queryClient.invalidateQueries({ queryKey });
+    };
 
     const channel = sb
       .channel(`broker-claims:${user.id}`)
@@ -55,9 +38,7 @@ export function useBrokerClaims() {
           table: 'claims',
           filter: `broker_id=eq.${user.id}`,
         },
-        () => {
-          load(true);
-        },
+        invalidateClaims,
       )
       .on(
         'postgres_changes',
@@ -66,22 +47,22 @@ export function useBrokerClaims() {
           schema: 'public',
           table: 'items',
         },
-        () => {
-          load(true);
-        },
+        invalidateClaims,
       )
       .subscribe();
 
     return () => {
       sb.removeChannel(channel);
     };
-  }, [load, user?.id]);
+  }, [queryClient, queryKey, user?.id]);
 
   return {
-    claims,
-    loading,
-    refreshing,
-    error,
-    refresh: () => load(true),
+    claims: claimsQuery.data ?? ([] as ClaimSnapshot[]),
+    loading: Boolean(user?.id) && claimsQuery.isPending,
+    refreshing: claimsQuery.isRefetching,
+    error: claimsQuery.error instanceof Error ? claimsQuery.error.message : null,
+    refresh: async () => {
+      await claimsQuery.refetch();
+    },
   };
 }

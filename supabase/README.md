@@ -21,9 +21,9 @@ Use your preferred migration flow, or run the SQL directly in the Supabase SQL e
 - `create-claim`
   - Creates a broker claim, Stripe claim-fee intent, and transaction row in one server-owned mutation.
 - `start-ingestion`
-  - Creates an item draft server-side and returns the canonical storage path for supplier upload.
+  - Creates an item draft server-side and returns the canonical primary storage path for supplier upload.
 - `gemini-ingest-item`
-  - Reads uploaded item photo from Storage.
+  - Reads uploaded item photos from Storage (up to 5 views of the same item).
   - Calls Gemini multimodal API.
   - Writes `items.ingestion_ai_*`, title/description/pricing fields, and advances item status.
 - `create-sale-payment`

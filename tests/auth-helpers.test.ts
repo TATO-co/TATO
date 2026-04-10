@@ -338,6 +338,7 @@ describe('resolveRootRedirectTarget', () => {
   it('redirects authenticated visitors away from root to their preferred app route', () => {
     expect(
       resolveRootRedirectTarget({
+        browserPathname: '/',
         configured: true,
         isAuthenticated: true,
         pathname: '/',
@@ -350,6 +351,7 @@ describe('resolveRootRedirectTarget', () => {
   it('does not redirect when the current pathname already matches the public preferred path', () => {
     expect(
       resolveRootRedirectTarget({
+        browserPathname: '/workspace',
         configured: true,
         isAuthenticated: true,
         pathname: '/workspace',
@@ -362,6 +364,7 @@ describe('resolveRootRedirectTarget', () => {
   it('redirects authenticated auth-group routes back into the app', () => {
     expect(
       resolveRootRedirectTarget({
+        browserPathname: '/sign-in',
         configured: true,
         isAuthenticated: true,
         pathname: '/sign-in',
@@ -374,6 +377,7 @@ describe('resolveRootRedirectTarget', () => {
   it('redirects authenticated users to required auth recovery routes when needed', () => {
     expect(
       resolveRootRedirectTarget({
+        browserPathname: '/workspace',
         configured: true,
         isAuthenticated: true,
         pathname: '/workspace',
@@ -386,6 +390,7 @@ describe('resolveRootRedirectTarget', () => {
   it('redirects misconfigured routes to the configuration screen', () => {
     expect(
       resolveRootRedirectTarget({
+        browserPathname: '/workspace',
         configured: false,
         isAuthenticated: false,
         pathname: '/workspace',
@@ -398,11 +403,51 @@ describe('resolveRootRedirectTarget', () => {
   it('does not redirect when already on the configuration screen', () => {
     expect(
       resolveRootRedirectTarget({
+        browserPathname: '/configuration-required',
         configured: false,
         isAuthenticated: false,
         pathname: '/configuration-required',
         preferredRoute: '/(auth)/configuration-required',
         segments: ['(auth)', 'configuration-required'],
+      }),
+    ).toBeNull();
+  });
+
+  it('uses the browser pathname for signed-out deep links before router segments settle', () => {
+    expect(
+      resolveRootRedirectTarget({
+        browserPathname: '/claims',
+        configured: true,
+        isAuthenticated: false,
+        pathname: '/',
+        preferredRoute: '/sign-in',
+        segments: [],
+      }),
+    ).toBe('/sign-in');
+  });
+
+  it('preserves authenticated deep links before router segments settle', () => {
+    expect(
+      resolveRootRedirectTarget({
+        browserPathname: '/claims',
+        configured: true,
+        isAuthenticated: true,
+        pathname: '/',
+        preferredRoute: '/(app)/(broker)/workspace',
+        segments: [],
+      }),
+    ).toBeNull();
+  });
+
+  it('preserves authenticated deep links while async route groups are still resolving', () => {
+    expect(
+      resolveRootRedirectTarget({
+        browserPathname: '/claims',
+        configured: true,
+        isAuthenticated: true,
+        pathname: '/',
+        preferredRoute: '/(app)/(supplier)/dashboard',
+        segments: ['(app)', '(supplier)'],
       }),
     ).toBeNull();
   });

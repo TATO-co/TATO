@@ -1,7 +1,8 @@
 import { Link } from 'expo-router';
 import { PlatformIcon } from '@/components/ui/PlatformIcon';
 import { PropsWithChildren } from 'react';
-import { Image, Pressable, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Image } from 'expo-image';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { DesktopSectionNav, type DesktopSectionNavItem } from '@/components/ui/DesktopSectionNav';
@@ -50,8 +51,11 @@ export function ModeShell({
 
   const avatar = avatarUrl ? (
     <Image
-      className={`${isPhone ? 'h-[58px] w-[58px]' : 'h-12 w-12'} rounded-full border-2 border-tato-accent`}
+      cachePolicy="disk"
+      contentFit="cover"
       source={{ uri: avatarUrl }}
+      style={isPhone ? styles.phoneAvatar : styles.desktopAvatar}
+      transition={120}
     />
   ) : (
     <View className={`${isPhone ? 'h-[58px] w-[58px]' : 'h-12 w-12'} items-center justify-center rounded-full border-2 border-[#2f5ca8] bg-[#f1c39e]`}>
@@ -254,3 +258,20 @@ export function ModeShell({
     </SafeAreaView>
   );
 }
+
+const styles = StyleSheet.create({
+  desktopAvatar: {
+    borderColor: '#1e6dff',
+    borderRadius: 24,
+    borderWidth: 2,
+    height: 48,
+    width: 48,
+  },
+  phoneAvatar: {
+    borderColor: '#1e6dff',
+    borderRadius: 29,
+    borderWidth: 2,
+    height: 58,
+    width: 58,
+  },
+});

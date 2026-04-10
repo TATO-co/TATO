@@ -76,8 +76,16 @@ const config: ExpoConfig = {
     favicon: './assets/images/favicon.png',
   },
   plugins: [
-    'expo-router',
+    [
+      'expo-router',
+      {
+        asyncRoutes: {
+          web: 'production',
+        },
+      },
+    ],
     '@sentry/react-native',
+    'expo-image',
     'expo-web-browser',
     [
       'expo-audio',

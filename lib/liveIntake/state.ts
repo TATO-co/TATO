@@ -1,4 +1,4 @@
-import { formatMoney, type CurrencyCode } from '@/lib/models';
+import { type CurrencyCode } from '@/lib/models';
 
 import type {
   LiveBestGuess,
@@ -86,27 +86,100 @@ function buildObservedDetails(attributes: Record<string, unknown>) {
     .filter((entry): entry is string => Boolean(entry));
 }
 
-function summarizeIdentity(state: LiveDraftState) {
-  return [
-    state.bestGuess.brand,
-    state.bestGuess.model,
-    state.bestGuess.category,
-  ]
-    .filter(Boolean)
-    .join(' · ');
+function buildDescriptionSection(title: string, lines: string[]) {
+  if (lines.length === 0) {
+    return null;
+  }
+
+  return `${title}:\n- ${lines.join('\n- ')}`;
 }
 
-function summarizeConfidenceLabel(confidence: LiveConditionConfidence | null) {
-  switch (confidence) {
-    case 'high':
-      return 'High confidence';
-    case 'medium':
-      return 'Medium confidence';
-    case 'low':
-      return 'Low confidence';
-    default:
-      return null;
+function pushUniqueLine(lines: string[], value: string | null) {
+  if (!value) {
+    return;
   }
+
+  const normalized = value.trim();
+  if (!normalized) {
+    return;
+  }
+
+  if (lines.some((line) => line.toLowerCase() === normalized.toLowerCase())) {
+    return;
+  }
+
+  lines.push(normalized);
+}
+
+function collapseWhitespace(value: string) {
+  return value.replace(/\s+/g, ' ').trim();
+}
+
+function trimSentenceFragment(value: string) {
+  return collapseWhitespace(value).replace(/^[,;:./\-\s]+/, '').replace(/[,;:./\-\s]+$/, '');
+}
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function deriveTitleSpecifics(title: string, segments: Array<string | null | undefined>) {
+  let remainder = collapseWhitespace(title);
+  const normalizedSegments = Array.from(new Set(
+    segments
+      .map((segment) => normalizeString(segment))
+      .filter((segment): segment is string => Boolean(segment))
+      .map((segment) => collapseWhitespace(segment)),
+  )).sort((left, right) => right.length - left.length);
+
+  for (const segment of normalizedSegments) {
+    remainder = collapseWhitespace(remainder.replace(new RegExp(`\\b${escapeRegExp(segment)}\\b`, 'ig'), ' '));
+  }
+
+  return trimSentenceFragment(remainder);
+}
+
+const TITLE_CONDITION_FRAGMENT_PATTERN =
+  /\b(cracked\b.*|crack\b.*|shattered\b.*|broken\b.*|damaged\b.*|dented?\b.*|scratched?\b.*|scuffed?\b.*|chipped?\b.*|stained?\b.*|missing\b.*|worn?\b.*|wear\b.*|corrosion\b.*|corroded\b.*|parts\b.*)/i;
+
+function splitTitleSpecifics(titleSpecifics: string) {
+  const normalized = trimSentenceFragment(titleSpecifics);
+  if (!normalized) {
+    return {
+      buyerFacingSpecifics: null,
+      conditionNotes: [] as string[],
+    };
+  }
+
+  const conditionMatch = normalized.match(TITLE_CONDITION_FRAGMENT_PATTERN);
+  if (!conditionMatch) {
+    return {
+      buyerFacingSpecifics: normalized,
+      conditionNotes: [] as string[],
+    };
+  }
+
+  const conditionNote = trimSentenceFragment(conditionMatch[1]);
+  const buyerFacingSpecifics = trimSentenceFragment(normalized.replace(conditionMatch[1], ' '));
+
+  return {
+    buyerFacingSpecifics: buyerFacingSpecifics || null,
+    conditionNotes: conditionNote ? [conditionNote.toLowerCase()] : [],
+  };
+}
+
+function buildIdentityNarrative(state: LiveDraftState) {
+  const parts = [
+    normalizeString(state.bestGuess.brand),
+    normalizeString(state.bestGuess.model),
+    normalizeString(state.bestGuess.category),
+  ].filter((entry): entry is string => Boolean(entry));
+
+  if (parts.length) {
+    return parts.join(' ');
+  }
+
+  return normalizeString(state.bestGuess.title) ?? 'the scanned item';
 }
 
 function normalizeConfidence(value: unknown) {
@@ -388,76 +461,124 @@ export function summarizeConditionGrade(grade: LiveConditionGrade | null) {
 export function buildLiveDraftDescription(state: LiveDraftState) {
   const lines: string[] = [];
   const title = state.bestGuess.title.trim();
-  const identity = summarizeIdentity(state);
   const observedDetails = buildObservedDetails(state.bestGuess.attributes);
   const resolvedGrade = summarizeConditionGrade(state.confirmedConditionGrade ?? state.condition.proposedGrade);
-  const conditionConfidence = summarizeConfidenceLabel(state.condition.confidence);
+  const titleSpecifics = title
+    ? deriveTitleSpecifics(title, [
+        state.bestGuess.brand,
+        state.bestGuess.model,
+        state.bestGuess.category,
+      ])
+    : '';
+  const titleSpecificBreakdown = splitTitleSpecifics(titleSpecifics);
+  const identityLines = [
+    state.bestGuess.brand ? `Brand: ${state.bestGuess.brand}` : null,
+    state.bestGuess.model ? `Model: ${state.bestGuess.model}` : null,
+    state.bestGuess.category ? `Category: ${state.bestGuess.category}` : null,
+  ].filter((entry): entry is string => Boolean(entry));
+  const overviewLines: string[] = [];
+  const buyerFacingLines: string[] = [];
+  const conditionLines: string[] = [];
+  const conditionNotes = Array.from(new Set([
+    ...state.condition.signals,
+    ...titleSpecificBreakdown.conditionNotes,
+  ]));
 
   if (title) {
     lines.push(title);
   }
 
-  if (identity) {
-    lines.push(`Marketplace profile: ${identity}.`);
+  pushUniqueLine(overviewLines, `Live intake identified this item as ${buildIdentityNarrative(state)}.`);
+
+  if (titleSpecificBreakdown.buyerFacingSpecifics) {
+    pushUniqueLine(
+      overviewLines,
+      `Visible specifics called out during the scan include ${titleSpecificBreakdown.buyerFacingSpecifics}.`,
+    );
   }
 
-  if (observedDetails.length) {
-    lines.push(`Visible buyer-facing details:\n- ${observedDetails.join('\n- ')}`);
+  if (observedDetails.length || titleSpecificBreakdown.buyerFacingSpecifics) {
+    pushUniqueLine(
+      overviewLines,
+      'The details below capture the clearest buyer-facing facts the live camera pass could confirm for a listing draft.',
+    );
+  } else {
+    pushUniqueLine(
+      overviewLines,
+      'Additional buyer-facing configuration, bundle contents, or accessories were not confidently confirmed during this live camera pass.',
+    );
   }
 
-  if (resolvedGrade !== 'Pending' || state.condition.signals.length) {
-    const conditionLine = [`Condition read: ${resolvedGrade !== 'Pending' ? resolvedGrade : 'Needs confirmation'}.`];
-    if (conditionConfidence) {
-      conditionLine.push(`${conditionConfidence}.`);
-    }
-    if (state.condition.signals.length) {
-      conditionLine.push(`Visible wear and notes: ${state.condition.signals.join(', ')}.`);
-    }
-    lines.push(conditionLine.join(' '));
+  const overviewSection = buildDescriptionSection('Live Intake Overview', overviewLines);
+  if (overviewSection) {
+    lines.push(overviewSection);
   }
 
-  if (state.pricing.floorPriceCents != null || state.pricing.suggestedListPriceCents != null) {
-    const pricingParts: string[] = [];
-
-    if (state.pricing.floorPriceCents != null) {
-      pricingParts.push(`floor ${formatMoney(state.pricing.floorPriceCents, state.pricing.currencyCode, 2)}`);
-    }
-
-    if (state.pricing.suggestedListPriceCents != null) {
-      pricingParts.push(`suggested list ${formatMoney(state.pricing.suggestedListPriceCents, state.pricing.currencyCode, 2)}`);
-    }
-
-    const pricingLine = [`Pricing guidance: ${pricingParts.join(' / ')}.`];
-    if (state.pricing.rationale) {
-      pricingLine.push(state.pricing.rationale);
-    }
-    lines.push(pricingLine.join(' '));
-  }
-
-  if (state.candidateItems.length > 0) {
-    const primaryCandidate = state.candidateItems[0];
-    if (primaryCandidate) {
-      lines.push(
-        `Identification confidence: ${primaryCandidate.title} (${Math.round(primaryCandidate.confidence * 100)}% primary match).`,
-      );
+  if (identityLines.length) {
+    const identitySection = buildDescriptionSection('Item Details', identityLines);
+    if (identitySection) {
+      lines.push(identitySection);
     }
   }
 
-  if (state.candidateItems.length > 1) {
-    const alternatives = state.candidateItems
-      .slice(1, 3)
-      .map((candidate) => `${candidate.title} (${Math.round(candidate.confidence * 100)}%)`);
-    if (alternatives.length) {
-      lines.push(`Alternate matches considered: ${alternatives.join('; ')}.`);
-    }
+  if (titleSpecificBreakdown.buyerFacingSpecifics) {
+    pushUniqueLine(
+      buyerFacingLines,
+      `Live scan noted: ${titleSpecificBreakdown.buyerFacingSpecifics}.`,
+    );
+  }
+
+  for (const observedDetail of observedDetails) {
+    pushUniqueLine(buyerFacingLines, observedDetail);
+  }
+
+  if (buyerFacingLines.length === 0) {
+    pushUniqueLine(
+      buyerFacingLines,
+      'No additional buyer-facing configuration details were confidently confirmed beyond the identification above.',
+    );
+  }
+
+  const buyerFacingSection = buildDescriptionSection('Visible Buyer-Facing Details', buyerFacingLines);
+  if (buyerFacingSection) {
+    lines.push(buyerFacingSection);
+  }
+
+  pushUniqueLine(
+    conditionLines,
+    resolvedGrade !== 'Pending'
+      ? `Overall condition appears ${resolvedGrade}.`
+      : 'Condition still needs confirmation from a clearer inspection.',
+  );
+
+  if (conditionNotes.length) {
+    pushUniqueLine(conditionLines, `Visible wear and notes: ${conditionNotes.join(', ')}.`);
+  } else if (resolvedGrade === 'Fair' || resolvedGrade === 'Parts') {
+    pushUniqueLine(
+      conditionLines,
+      `The live scan still suggests noticeable wear or damage consistent with a ${resolvedGrade.toLowerCase()} grade, even if each issue was not separately tagged during the scan.`,
+    );
+  }
+
+  pushUniqueLine(
+    conditionLines,
+    'Only visible condition cues from the live camera pass are reflected here; any functionality or completeness checks beyond the camera view still need confirmation if they matter for sale.',
+  );
+
+  const conditionSection = buildDescriptionSection('Condition Summary', conditionLines);
+  if (conditionSection) {
+    lines.push(conditionSection);
   }
 
   if (state.missingViews.length) {
-    lines.push(`Still worth verifying before sale: ${state.missingViews.join(', ')}.`);
-  }
+    const missingViewsSection = buildDescriptionSection(
+      'Not Yet Verified During Live Intake',
+      state.missingViews.map((view) => `${view.charAt(0).toUpperCase()}${view.slice(1)}`),
+    );
 
-  if (state.nextBestAction) {
-    lines.push(`Recommended next capture: ${state.nextBestAction}.`);
+    if (missingViewsSection) {
+      lines.push(missingViewsSection);
+    }
   }
 
   return lines.filter(Boolean).join('\n\n') || 'Supplier live intake completed from Gemini Live session.';
