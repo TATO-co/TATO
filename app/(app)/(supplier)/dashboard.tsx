@@ -15,7 +15,7 @@ export default function SupplierDashboardScreen() {
         {
           key: 'inventory',
           href: '/(app)/(supplier)/inventory',
-          icon: { ios: 'shippingbox', android: 'inventory_2', web: 'inventory_2' },
+          icon: { ios: 'shippingbox', android: 'inventory-2', web: 'inventory-2' },
           accessibilityLabel: 'Open supplier inventory',
         },
       ]}

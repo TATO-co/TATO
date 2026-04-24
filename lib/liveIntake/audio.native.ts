@@ -1,7 +1,17 @@
 import type { AudioStatus, RecordingOptions } from 'expo-audio';
 import { Platform } from 'react-native';
 
-const TARGET_SAMPLE_RATE = 16000;
+import {
+  base64ToBytes,
+  buildMonoPcm16Wav,
+  bytesToBase64,
+  extractMonoPcm16Wav,
+  parsePcmMimeSampleRate,
+  PCM_INPUT_SAMPLE_RATE,
+  PCM_OUTPUT_SAMPLE_RATE,
+} from '@/lib/liveIntake/pcm';
+
+const TARGET_SAMPLE_RATE = PCM_INPUT_SAMPLE_RATE;
 const CHUNK_DURATION_MS = 500;
 
 type ExpoAudioModule = typeof import('expo-audio');
@@ -23,6 +33,37 @@ async function loadExpoAudioModule() {
   }
 
   return expoAudioModulePromise;
+}
+
+async function readBlobBytes(blob: Blob) {
+  if (typeof blob.arrayBuffer === 'function') {
+    return new Uint8Array(await blob.arrayBuffer());
+  }
+
+  const buffer = await new Promise<ArrayBuffer>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      if (reader.result instanceof ArrayBuffer) {
+        resolve(reader.result);
+        return;
+      }
+
+      reject(new Error('Unable to read recorded audio bytes.'));
+    };
+    reader.onerror = () => reject(reader.error ?? new Error('Unable to read recorded audio blob.'));
+    reader.readAsArrayBuffer(blob);
+  });
+
+  return new Uint8Array(buffer);
+}
+
+async function readUriBytes(uri: string) {
+  const response = await fetch(uri);
+  if (typeof response.arrayBuffer === 'function') {
+    return new Uint8Array(await response.arrayBuffer());
+  }
+
+  return readBlobBytes(await response.blob());
 }
 
 function createRecordingOptions(expoAudio: ExpoAudioModule): RecordingOptions {
@@ -121,23 +162,13 @@ export async function startNativeMicCapture(args: {
         const uri = recording.uri ?? recording.getStatus().url;
 
         if (uri) {
-          // Read the recorded WAV file and convert to base64
-          const response = await fetch(uri);
-          const blob = await response.blob();
-          const reader = new FileReader();
-
-          const base64 = await new Promise<string>((resolve) => {
-            reader.onloadend = () => {
-              const result = reader.result as string;
-              const base64Data = result.split(',')[1] ?? '';
-              resolve(base64Data);
-            };
-            reader.readAsDataURL(blob);
-          });
+          const recordedBytes = await readUriBytes(uri);
+          const { pcmBytes, sampleRate } = extractMonoPcm16Wav(recordedBytes);
+          const base64 = bytesToBase64(pcmBytes);
 
           if (base64 && active) {
             args.onChunk({
-              mimeType: `audio/pcm;rate=${TARGET_SAMPLE_RATE}`,
+              mimeType: `audio/pcm;rate=${sampleRate}`,
               data: base64,
             });
           }
@@ -180,12 +211,17 @@ export async function startNativeMicCapture(args: {
  * This is a simplified approach; production would benefit from a streaming
  * audio player for lower latency.
  */
-export async function playAudioChunk(base64: string, _mimeType?: string) {
+export async function playAudioChunk(base64: string, mimeType?: string) {
   try {
     const expoAudio = await loadExpoAudioModule();
 
-    // Convert base64 to a data URI that expo-audio can play
-    const dataUri = `data:audio/wav;base64,${base64}`;
+    const sampleRate = parsePcmMimeSampleRate(mimeType, PCM_OUTPUT_SAMPLE_RATE);
+    const pcmBytes = base64ToBytes(base64);
+    const wavBytes = buildMonoPcm16Wav({
+      pcmBytes,
+      sampleRate,
+    });
+    const dataUri = `data:audio/wav;base64,${bytesToBase64(wavBytes)}`;
     const player = expoAudio.createAudioPlayer(
       { uri: dataUri },
       { keepAudioSessionActive: true },
@@ -193,7 +229,7 @@ export async function playAudioChunk(base64: string, _mimeType?: string) {
 
     let cleanedUp = false;
     let cleanupTimeout: ReturnType<typeof setTimeout> | null = null;
-    let subscription: { remove: () => void } | null = null;
+    let statusPoll: ReturnType<typeof setInterval> | null = null;
 
     const cleanup = () => {
       if (cleanedUp) {
@@ -204,15 +240,18 @@ export async function playAudioChunk(base64: string, _mimeType?: string) {
       if (cleanupTimeout) {
         clearTimeout(cleanupTimeout);
       }
-      subscription?.remove();
+      if (statusPoll) {
+        clearInterval(statusPoll);
+      }
       player.remove();
     };
 
-    subscription = player.addListener('playbackStatusUpdate', (status: AudioStatus) => {
+    statusPoll = setInterval(() => {
+      const status: AudioStatus = player.currentStatus;
       if (status.didJustFinish) {
         cleanup();
       }
-    });
+    }, 250);
 
     // Avoid leaking short-lived players if playback never reaches a terminal event.
     cleanupTimeout = setTimeout(cleanup, 15_000);

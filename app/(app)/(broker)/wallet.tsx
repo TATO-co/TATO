@@ -1,27 +1,33 @@
-import * as WebBrowser from 'expo-web-browser';
 import { useRouter } from 'expo-router';
 import { useState } from 'react';
 import { ActivityIndicator, Pressable, RefreshControl, ScrollView, Text, View } from 'react-native';
 import Animated, { FadeInUp } from 'react-native-reanimated';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { getDockContentPadding } from '@/components/layout/PhoneTabBar';
 import { ModeShell } from '@/components/layout/ModeShell';
 import { ResponsiveKpiGrid } from '@/components/layout/ResponsivePrimitives';
+import { ListRow, ListSection } from '@/components/primitives';
+import { SectionErrorBoundary } from '@/components/errors/SectionErrorBoundary';
+import { CurrencyDisplay } from '@/components/ui/CurrencyDisplay';
 import { PhoneActionButton, PhoneEyebrow, PhonePanel } from '@/components/ui/PhoneChrome';
 import { trackEvent } from '@/lib/analytics';
 import { useAuth } from '@/components/providers/AuthProvider';
+import { openExternalStripeFlow } from '@/lib/checkout';
 import { useViewportInfo } from '@/lib/constants';
 import { useLedger } from '@/lib/hooks/useLedger';
-import { formatMoney } from '@/lib/models';
 import { brokerDesktopNav } from '@/lib/navigation';
 import { createConnectOnboardingLink, refreshConnectStatus } from '@/lib/repositories/tato';
 import { TIMING } from '@/lib/ui';
 
 export default function WalletScreen() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const { isPhone, tier } = useViewportInfo();
   const { payoutReadiness, refreshProfile } = useAuth();
   const { entries, loading, error, summary, refresh } = useLedger();
   const [refreshing, setRefreshing] = useState(false);
+  const [stripeActionError, setStripeActionError] = useState<string | null>(null);
   const netCents = Math.round((summary.inflow - summary.outflow) * 100);
   const inflowCents = Math.round(summary.inflow * 100);
   const outflowCents = Math.round(summary.outflow * 100);
@@ -38,17 +44,30 @@ export default function WalletScreen() {
       : payoutReadiness === 'pending'
         ? 'Stripe Connect onboarding is under review.'
         : 'Complete Stripe Connect onboarding before automated payouts can settle.';
+  const phoneScrollPaddingBottom = getDockContentPadding(insets.bottom);
 
   const handleManageStripe = async () => {
     trackEvent('open_payments', { source: 'wallet_manage_stripe' });
+    setStripeActionError(null);
     const result = await createConnectOnboardingLink();
     if (result.ok) {
-      await WebBrowser.openBrowserAsync(result.url);
-      await refreshConnectStatus();
+      const opened = await openExternalStripeFlow(result.url);
+      if (!opened.ok) {
+        setStripeActionError(opened.message);
+        return;
+      }
+
+      const refreshed = await refreshConnectStatus();
+      if (!refreshed.ok) {
+        setStripeActionError(refreshed.message);
+        return;
+      }
+
       await refreshProfile();
       return;
     }
 
+    setStripeActionError(result.message);
     router.push('/(app)/payments');
   };
 
@@ -70,7 +89,8 @@ export default function WalletScreen() {
       {isPhone ? (
         <ScrollView
           className="mt-2 flex-1"
-          contentContainerClassName="gap-4 pb-36"
+          contentContainerClassName="gap-4"
+          contentContainerStyle={{ paddingBottom: phoneScrollPaddingBottom }}
           refreshControl={
             <RefreshControl
               colors={['#1e6dff']}
@@ -86,25 +106,36 @@ export default function WalletScreen() {
           <Animated.View entering={FadeInUp.duration(TIMING.quick)}>
             <PhonePanel gradientTone="profit" padded="lg">
               <PhoneEyebrow tone="profit">Available Balance</PhoneEyebrow>
-              <Text className="mt-3 text-[52px] font-sans-bold leading-[54px] text-tato-profit">
-                {formatMoney(netCents, primaryCurrency, 2)}
-              </Text>
+              <CurrencyDisplay
+                amount={netCents}
+                className="mt-3 text-[52px] font-sans-bold leading-[54px]"
+                currencyCode={primaryCurrency}
+                fractionDigits={2}
+              />
               <Text className="mt-3 text-[15px] leading-7 text-[#c4eadf]">
-                Settles daily at 5:00 PM local via Stripe Connect.
+                Moves to your connected payout account once Stripe marks funds available.
               </Text>
 
               <View className="mt-5 flex-row gap-3">
                 <View className="flex-1 rounded-[24px] border border-[#174a4a] bg-[#0d2a2a] px-4 py-3">
                   <PhoneEyebrow tone="profit">Inflow</PhoneEyebrow>
-                  <Text className="mt-2 text-[24px] font-sans-bold text-tato-text">
-                    {formatMoney(inflowCents, primaryCurrency, 2)}
-                  </Text>
+                  <CurrencyDisplay
+                    amount={inflowCents}
+                    className="mt-2 text-[24px] font-sans-bold"
+                    currencyCode={primaryCurrency}
+                    fractionDigits={2}
+                    tone="success"
+                  />
                 </View>
                 <View className="flex-1 rounded-[24px] border border-[#17355f] bg-[#0f2140] px-4 py-3">
                   <PhoneEyebrow>Outflow</PhoneEyebrow>
-                  <Text className="mt-2 text-[24px] font-sans-bold text-tato-text">
-                    {formatMoney(outflowCents, primaryCurrency, 2)}
-                  </Text>
+                  <CurrencyDisplay
+                    amount={outflowCents}
+                    className="mt-2 text-[24px] font-sans-bold"
+                    currencyCode={primaryCurrency}
+                    fractionDigits={2}
+                    tone="neutral"
+                  />
                 </View>
               </View>
 
@@ -114,24 +145,17 @@ export default function WalletScreen() {
                   Floor guarantee • Supplier 25% • Broker 60% • TATO 15% of upside
                 </Text>
                 <Text className="mt-2 text-sm leading-7 text-tato-muted">
-                  Brokers post a refundable claim deposit, then payouts settle from upside above the locked floor.
+                  Brokers post a refundable claim deposit, buyers pay through a public TATO link, and upside settles after the locked supplier floor.
                 </Text>
               </View>
             </PhonePanel>
           </Animated.View>
 
-          <PhonePanel padded="lg">
-            <PhoneEyebrow>Primary Hub</PhoneEyebrow>
-            <Text className="mt-3 text-[30px] font-sans-bold leading-[34px] text-tato-text">
-              West Loop Hub
-            </Text>
-            <Text className="mt-3 text-[15px] leading-7 text-tato-muted">
-              1015 W Fulton St, Chicago, IL
-            </Text>
-            <Text className="mt-1 text-[15px] leading-7 text-tato-muted">
-              Pickup Window: 9:00 AM - 7:00 PM
-            </Text>
-          </PhonePanel>
+          <ListSection first title="Primary Hub">
+            <ListRow label="Hub Name" value="West Loop Hub" />
+            <ListRow label="Address" value="1015 W Fulton St, Chicago, IL" />
+            <ListRow label="Pickup Window" value="9:00 AM - 7:00 PM" />
+          </ListSection>
 
           <PhonePanel gradientTone={payoutReadiness === 'enabled' ? 'accent' : 'neutral'} padded="lg">
             <PhoneEyebrow tone={payoutReadiness === 'enabled' ? 'accent' : 'muted'}>Verification</PhoneEyebrow>
@@ -141,6 +165,9 @@ export default function WalletScreen() {
             <Text className="mt-3 text-[15px] leading-7 text-tato-muted">
               {verificationDescription}
             </Text>
+            {stripeActionError ? (
+              <Text className="mt-3 text-sm leading-6 text-tato-error">{stripeActionError}</Text>
+            ) : null}
             <View className="mt-5">
               <PhoneActionButton label="Manage Stripe Connect" onPress={handleManageStripe} />
             </View>
@@ -166,35 +193,43 @@ export default function WalletScreen() {
               </Pressable>
             </View>
 
-            {loading ? (
-              <View className="items-center py-10">
-                <ActivityIndicator color="#1e6dff" />
-              </View>
-            ) : error ? (
-              <Text className="mt-4 text-sm text-[#ff8f8f]">{error}</Text>
-            ) : entries.length ? (
-              <View className="mt-4 gap-3">
-                {entries.map((entry) => (
-                  <View
-                    className="rounded-[24px] border border-[#17355f] bg-[#091a31] px-4 py-3"
-                    key={entry.id}>
-                    <View className="flex-row items-start justify-between gap-3">
-                      <View className="flex-1">
-                        <Text className="text-base font-semibold capitalize text-tato-text">{entry.label}</Text>
-                        <Text className="mt-1 font-mono text-[11px] uppercase tracking-[1px] text-tato-dim">
-                          {entry.status} • {new Date(entry.occurredAt).toLocaleString()}
-                        </Text>
+            <SectionErrorBoundary
+              action={{ label: 'Retry', onPress: () => { void refresh(); } }}
+              description="Wallet activity could not load. Pull to refresh."
+              error={error}
+              sectionName="wallet-activity"
+              title="Wallet activity unavailable">
+              {loading ? (
+                <View className="items-center py-10">
+                  <ActivityIndicator color="#1e6dff" />
+                </View>
+              ) : entries.length ? (
+                <View className="mt-4 gap-3">
+                  {entries.map((entry) => (
+                    <View
+                      className="rounded-[24px] border border-[#17355f] bg-[#091a31] px-4 py-3"
+                      key={entry.id}>
+                      <View className="flex-row items-start justify-between gap-3">
+                        <View className="flex-1">
+                          <Text className="text-base font-semibold capitalize text-tato-text">{entry.label}</Text>
+                          <Text className="mt-1 font-mono text-[11px] uppercase tracking-[1px] text-tato-dim">
+                            {entry.status} • {new Date(entry.occurredAt).toLocaleString()}
+                          </Text>
+                        </View>
+                        <CurrencyDisplay
+                          amount={entry.amountCents}
+                          className="text-base font-bold"
+                          currencyCode={entry.currencyCode}
+                          tone={entry.direction === 'in' ? 'success' : 'neutral'}
+                        />
                       </View>
-                      <Text className={`text-base font-bold ${entry.direction === 'in' ? 'text-tato-profit' : 'text-tato-accent'}`}>
-                        {entry.amountText}
-                      </Text>
                     </View>
-                  </View>
-                ))}
-              </View>
-            ) : (
-              <Text className="mt-4 text-sm text-tato-muted">No wallet activity yet.</Text>
-            )}
+                  ))}
+                </View>
+              ) : (
+                <Text className="mt-4 text-sm text-tato-muted">No wallet activity yet.</Text>
+              )}
+            </SectionErrorBoundary>
           </PhonePanel>
         </ScrollView>
       ) : (
@@ -204,8 +239,13 @@ export default function WalletScreen() {
               <Text className="text-xs uppercase tracking-[1px] text-tato-muted" style={{ fontFamily: 'SpaceMono' }}>
                 Available Balance
               </Text>
-              <Text className="mt-2 text-4xl font-bold text-tato-profit">{formatMoney(netCents, primaryCurrency, 2)}</Text>
-              <Text className="mt-2 text-sm text-tato-muted">Settles to Stripe Connect daily at 5:00 PM local.</Text>
+              <CurrencyDisplay
+                amount={netCents}
+                className="mt-2 text-4xl font-bold"
+                currencyCode={primaryCurrency}
+                fractionDigits={2}
+              />
+              <Text className="mt-2 text-sm text-tato-muted">Moves to the connected payout account once Stripe marks funds available.</Text>
             </Animated.View>
 
             <Animated.View className="rounded-[24px] border border-tato-line bg-tato-panel p-5" entering={FadeInUp.duration(TIMING.base)}>
@@ -219,12 +259,11 @@ export default function WalletScreen() {
 
           <ResponsiveKpiGrid tier={tier} columns={{ phone: 1, tablet: 2, desktop: 2, wideDesktop: 2 }}>
             <View className="rounded-[24px] border border-tato-line bg-tato-panel p-5">
-              <Text className="text-xs uppercase tracking-[1px] text-tato-muted" style={{ fontFamily: 'SpaceMono' }}>
-                Primary Hub
-              </Text>
-              <Text className="mt-2 text-2xl font-bold text-tato-text">West Loop Hub</Text>
-              <Text className="mt-2 text-sm text-tato-muted">1015 W Fulton St, Chicago, IL</Text>
-              <Text className="mt-1 text-sm text-tato-muted">Pickup Window: 9:00 AM - 7:00 PM</Text>
+              <ListSection first title="Primary Hub">
+                <ListRow label="Hub Name" value="West Loop Hub" />
+                <ListRow label="Address" value="1015 W Fulton St, Chicago, IL" />
+                <ListRow label="Pickup Window" value="9:00 AM - 7:00 PM" />
+              </ListSection>
             </View>
 
             <View className="rounded-[24px] border border-tato-line bg-tato-panel p-5">
@@ -233,6 +272,9 @@ export default function WalletScreen() {
               </Text>
               <Text className="mt-2 text-xl font-bold text-tato-text">{verificationTitle}</Text>
               <Text className="mt-2 text-sm text-tato-muted">{verificationDescription}</Text>
+              {stripeActionError ? (
+                <Text className="mt-3 text-sm leading-6 text-tato-error">{stripeActionError}</Text>
+              ) : null}
 
               <Pressable
                 className="mt-4 rounded-full border border-tato-line bg-tato-panelSoft px-4 py-3 hover:bg-[#1a3158] focus:bg-[#1a3158]"
@@ -261,34 +303,42 @@ export default function WalletScreen() {
               </Pressable>
             </View>
 
-            {loading ? (
-              <View className="items-center py-10">
-                <ActivityIndicator color="#1e6dff" />
-              </View>
-            ) : error ? (
-              <Text className="mt-4 text-sm text-[#ff8f8f]">{error}</Text>
-            ) : entries.length ? (
-              <View className="mt-4 gap-2">
-                {entries.map((entry) => (
-                  <View
-                    className={`rounded-2xl border px-4 py-3 ${!isPhone ? 'flex-row items-center justify-between' : ''}`}
-                    key={entry.id}
-                    style={{ borderColor: 'rgba(58, 86, 127, 0.6)', backgroundColor: 'rgba(14, 27, 48, 0.9)' }}>
-                    <View>
-                      <Text className="text-sm font-semibold capitalize text-tato-text">{entry.label}</Text>
-                      <Text className="mt-1 text-[11px] uppercase text-tato-dim" style={{ fontFamily: 'SpaceMono' }}>
-                        {entry.status} • {new Date(entry.occurredAt).toLocaleString()}
-                      </Text>
+            <SectionErrorBoundary
+              action={{ label: 'Retry', onPress: () => { void refresh(); } }}
+              description="Wallet activity could not load. Pull to refresh."
+              error={error}
+              sectionName="wallet-activity"
+              title="Wallet activity unavailable">
+              {loading ? (
+                <View className="items-center py-10">
+                  <ActivityIndicator color="#1e6dff" />
+                </View>
+              ) : entries.length ? (
+                <View className="mt-4 gap-2">
+                  {entries.map((entry) => (
+                    <View
+                      className={`rounded-2xl border px-4 py-3 ${!isPhone ? 'flex-row items-center justify-between' : ''}`}
+                      key={entry.id}
+                      style={{ borderColor: 'rgba(58, 86, 127, 0.6)', backgroundColor: 'rgba(14, 27, 48, 0.9)' }}>
+                      <View>
+                        <Text className="text-sm font-semibold capitalize text-tato-text">{entry.label}</Text>
+                        <Text className="mt-1 text-[11px] uppercase text-tato-dim" style={{ fontFamily: 'SpaceMono' }}>
+                          {entry.status} • {new Date(entry.occurredAt).toLocaleString()}
+                        </Text>
+                      </View>
+                      <CurrencyDisplay
+                        amount={entry.amountCents}
+                        className={`text-base font-bold ${isPhone ? 'mt-2' : ''}`}
+                        currencyCode={entry.currencyCode}
+                        tone={entry.direction === 'in' ? 'success' : 'neutral'}
+                      />
                     </View>
-                    <Text className={`text-base font-bold ${isPhone ? 'mt-2' : ''} ${entry.direction === 'in' ? 'text-tato-profit' : 'text-tato-accent'}`}>
-                        {entry.amountText}
-                    </Text>
-                  </View>
-                ))}
-              </View>
-            ) : (
-              <Text className="mt-4 text-sm text-tato-muted">No wallet activity yet.</Text>
-            )}
+                  ))}
+                </View>
+              ) : (
+                <Text className="mt-4 text-sm text-tato-muted">No wallet activity yet.</Text>
+              )}
+            </SectionErrorBoundary>
           </View>
         </ScrollView>
       )}

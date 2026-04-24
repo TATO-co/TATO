@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '@/components/providers/AuthProvider';
 import type { SupplierItem, SupplierMetric } from '@/lib/models';
 import { tatoQueryKeys } from '@/lib/query/keys';
+import { supplierDashboardQueryOptions } from '@/lib/query/workspace';
 import { deleteSupplierItem, fetchSupplierDashboard } from '@/lib/repositories/tato';
 import { supabase } from '@/lib/supabase';
 
@@ -38,10 +39,8 @@ export function useSupplierDashboard() {
   const [deletingItemId, setDeletingItemId] = useState<string | null>(null);
   const queryKey = tatoQueryKeys.supplierDashboard(user?.id);
   const dashboardQuery = useQuery({
-    queryKey,
-    queryFn: () => fetchSupplierDashboard(user?.id ?? null),
+    ...supplierDashboardQueryOptions(user?.id),
     enabled: Boolean(user?.id),
-    staleTime: 20 * 1000,
   });
 
   useEffect(() => {
@@ -130,7 +129,7 @@ export function useSupplierDashboard() {
   return {
     metrics: dashboard.metrics,
     items: dashboard.items,
-    loading: Boolean(user?.id) && dashboardQuery.isPending,
+    loading: Boolean(user?.id) && !dashboardQuery.data && dashboardQuery.isPending,
     refreshing: dashboardQuery.isRefetching,
     deletingItemId,
     error: dashboardQuery.error instanceof Error ? dashboardQuery.error.message : null,

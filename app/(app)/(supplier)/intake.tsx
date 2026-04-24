@@ -2,7 +2,9 @@ import { useRouter } from 'expo-router';
 import { PlatformIcon } from '@/components/ui/PlatformIcon';
 import { useEffect, useState } from 'react';
 import { Platform, ScrollView, Text, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { getDockContentPadding } from '@/components/layout/PhoneTabBar';
 import { ModeShell } from '@/components/layout/ModeShell';
 import { useAuth } from '@/components/providers/AuthProvider';
 import { ResponsiveKpiGrid } from '@/components/layout/ResponsivePrimitives';
@@ -50,7 +52,7 @@ const workflows: IntakeWorkflow[] = [
     actionLabel: 'Open Camera Capture',
     route: '/(app)/ingestion?entry=camera',
     accentClassName: 'border-[#21406d] bg-tato-panel',
-    icon: { ios: 'camera', android: 'photo_camera', web: 'photo_camera' },
+    icon: { ios: 'camera', android: 'photo-camera', web: 'photo-camera' },
     bullets: ['Direct camera capture', 'Same catalog schema', 'Best for single-item intake'],
   },
   {
@@ -62,13 +64,14 @@ const workflows: IntakeWorkflow[] = [
     actionLabel: 'Open Photo Upload',
     route: '/(app)/ingestion?entry=upload',
     accentClassName: 'border-[#21406d] bg-tato-panel',
-    icon: { ios: 'photo.on.rectangle', android: 'photo_library', web: 'photo_library' },
+    icon: { ios: 'photo.on.rectangle', android: 'photo-library', web: 'photo-library' },
     bullets: ['Use existing gallery photos', 'Low-bandwidth fallback', 'Useful for remote or batched review'],
   },
 ];
 
 export default function SupplierIntakeScreen() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const { user } = useAuth();
   const { isPhone, tier } = useViewportInfo();
   const isWeb = Platform.OS === 'web';
@@ -89,6 +92,7 @@ export default function SupplierIntakeScreen() {
   const liveEntryMessage = normalizeStillPhotoFallbackMessage(liveEntryState.message, Platform.OS);
   const liveReady = liveEntryState.enabled;
   const liveMissingHub = liveAvailability?.code === 'missing_hub';
+  const phoneScrollPaddingBottom = getDockContentPadding(insets.bottom);
 
   useEffect(() => {
     let cancelled = false;
@@ -138,7 +142,7 @@ export default function SupplierIntakeScreen() {
                 {
                   key: 'upload',
                   href: getStillPhotoRoute({ platform: Platform.OS, preferred: 'upload' }),
-                  icon: { ios: 'photo.on.rectangle', android: 'photo_library', web: 'photo_library' },
+                  icon: { ios: 'photo.on.rectangle', android: 'photo-library', web: 'photo-library' },
                   accessibilityLabel: 'Open photo upload',
                 },
               ]
@@ -146,13 +150,13 @@ export default function SupplierIntakeScreen() {
                 {
                   key: 'camera',
                   href: getStillPhotoRoute({ platform: Platform.OS, preferred: 'camera' }),
-                  icon: { ios: 'camera', android: 'photo_camera', web: 'photo_camera' },
+                  icon: { ios: 'camera', android: 'photo-camera', web: 'photo-camera' },
                   accessibilityLabel: 'Open camera capture',
                 },
                 {
                   key: 'upload',
                   href: getStillPhotoRoute({ platform: Platform.OS, preferred: 'upload' }),
-                  icon: { ios: 'photo.on.rectangle', android: 'photo_library', web: 'photo_library' },
+                  icon: { ios: 'photo.on.rectangle', android: 'photo-library', web: 'photo-library' },
                   accessibilityLabel: 'Open photo upload',
                 },
               ]
@@ -163,7 +167,10 @@ export default function SupplierIntakeScreen() {
       modeLabel="Supplier Mode"
       title="TATO Supplier">
       {isPhone ? (
-        <ScrollView className="mt-2 flex-1" contentContainerClassName="gap-4 pb-36">
+        <ScrollView
+          className="mt-2 flex-1"
+          contentContainerClassName="gap-4"
+          contentContainerStyle={{ paddingBottom: phoneScrollPaddingBottom }}>
           <PhonePanel gradientTone="accent" padded="lg">
             <PhoneEyebrow tone="accent">Supplier Intake</PhoneEyebrow>
             <Text className="mt-3 text-[30px] font-sans-bold leading-[34px] text-tato-text">
@@ -178,7 +185,7 @@ export default function SupplierIntakeScreen() {
 
             <View className="mt-6 flex-row gap-3">
               <PhoneActionButton
-                className="flex-1"
+                containerClassName="flex-1"
                 label={
                   liveReady
                     ? 'Start Live Intake'
@@ -203,7 +210,7 @@ export default function SupplierIntakeScreen() {
                 }}
               />
               <PhoneActionButton
-                className="flex-1"
+                containerClassName="flex-1"
                 label={isWeb ? 'Photo Upload' : liveReady ? 'Photo Capture' : 'Open Camera Capture'}
                 onPress={() => openWorkflow(stillPhotoWorkflow)}
                 variant="secondary"

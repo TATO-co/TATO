@@ -25,13 +25,13 @@ flowchart LR
 
   subgraph Supabase["Supabase Project"]
     Auth["Auth"]
-    DB["Postgres + RLS<br/>profiles, hubs, items, claims,<br/>transactions, audit_events, webhook_events"]
+    DB["Postgres + RLS<br/>profiles, hubs, items, claims,<br/>transactions, user_notifications,<br/>claim_messages, audit_events, webhook_events"]
     Storage["Storage<br/>items bucket"]
 
     subgraph Edge["Edge Functions"]
       AdminFns["Identity + admin<br/>set-user-personas, create-supplier-hub,<br/>approve-user, suspend-user,<br/>create-connect-onboarding-link,<br/>refresh-connect-status"]
       IntakeFns["Ingestion<br/>start-ingestion, gemini-ingest-item,<br/>check-live-intake-availability,<br/>start-live-intake-draft, complete-live-intake-draft"]
-      CommerceFns["Commerce<br/>create-claim, generate-broker-listing,<br/>create-sale-payment, complete-claim-payment,<br/>stripe-webhook"]
+      CommerceFns["Commerce<br/>create-claim, cancel/resume claim checkout,<br/>generate-broker-listing, save-broker-external-listing,<br/>send-claim-message, create-sale-payment,<br/>complete-claim-payment, stripe-webhook"]
     end
 
     Auth --- DB
@@ -106,14 +106,24 @@ flowchart LR
 - Broker claim and listing:
   - broker creates a claim through `create-claim`
   - the function creates the claim row, Stripe deposit intent, and transaction row together
+  - the app confirms the deposit with native PaymentSheet on iOS/Android or Payment Element on web; `resume-claim-checkout` reopens retryable embedded PaymentIntents and `cancel-claim-checkout` cancels the Stripe object, transaction, claim, and item reservation
   - broker can then call `generate-broker-listing` to produce AI listing copy and platform variants
+  - broker uses the Claim Desk Universal Listing Kit to prepare eBay, Facebook Marketplace, Mercari, OfferUp, and Nextdoor together
+  - platform cards separate assisted publish flows from future server-owned auto-list integrations and label marketplace-managed checkout paths
+  - broker saves manual marketplace listing references through `save-broker-external-listing`
+  - claim participants can coordinate through `send-claim-message`; messages are scoped to the claim and create in-app notifications for the counterpart
 - Sale payment and settlement:
   - supplier creates the final sale payment through `create-sale-payment`
   - Stripe sends webhook events back to `stripe-webhook`
-  - the webhook marks the base transaction, writes supplier/broker/platform split rows, refunds the claim deposit when appropriate, and completes the claim
+  - the webhook marks the base transaction, writes supplier/broker/platform split rows, refunds the claim deposit when appropriate, completes the claim, and writes payout/settlement notifications
+- Cross-persona visibility:
+  - server-owned claim, listing, workflow, message, and webhook paths insert `user_notifications`
+  - Supplier item detail derives a unified stock state, activity timeline, broker activity snapshot, payout access, and claim conversation from the item/claim records
 
 ## Related Docs
 
 - Live intake bootstrap contract: [live-agent-service.md](./live-agent-service.md)
 - Operational checks: [operations.md](./operations.md)
 - Incident handling: [incident-runbook.md](./incident-runbook.md)
+- Screen completion checklist: [screen-completion-checklist.md](./screen-completion-checklist.md)
+- Broker cross-listing: [cross-listing.md](./cross-listing.md)

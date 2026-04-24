@@ -1,85 +1,37 @@
 import { useRouter } from 'expo-router';
-import { LinearGradient } from 'expo-linear-gradient';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { Image } from 'expo-image';
-import Animated, { FadeInUp } from 'react-native-reanimated';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { getDockContentPadding } from '@/components/layout/PhoneTabBar';
 import { ModeShell } from '@/components/layout/ModeShell';
+import { ListRow, ListSection } from '@/components/primitives';
 import { PersonaAccessCard } from '@/components/profile/PersonaAccessCard';
+import { ProfileIdentityHeader, currencyProfileStat } from '@/components/profile/ProfileIdentityHeader';
 import { PlatformIcon } from '@/components/ui/PlatformIcon';
 import { useAuth } from '@/components/providers/AuthProvider';
-import { brokerDesktopNav } from '@/lib/navigation';
-import { TIMING } from '@/lib/ui';
 import { useViewportInfo } from '@/lib/constants';
+import { useBrokerClaims } from '@/lib/hooks/useBrokerClaims';
+import { useLedger } from '@/lib/hooks/useLedger';
+import { brokerDesktopNav } from '@/lib/navigation';
 
 async function pause(ms: number) {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function SectionCard({
-  children,
-  delay = TIMING.quick,
-}: {
-  children: React.ReactNode;
-  delay?: number;
-}) {
-  return (
-    <Animated.View
-      className="rounded-[24px] border border-tato-line bg-tato-panel p-5"
-      entering={FadeInUp.duration(delay)}>
-      {children}
-    </Animated.View>
-  );
-}
-
-function ProfileAction({
-  icon,
-  label,
-  sublabel,
-  onPress,
-  disabled,
-  destructive,
-  loading: isLoading,
-}: {
-  icon: { ios: string; android: string; web: string };
-  label: string;
-  sublabel?: string;
-  onPress?: () => void;
-  disabled?: boolean;
-  destructive?: boolean;
-  loading?: boolean;
-}) {
-  return (
-    <Pressable
-      className="flex-row items-center gap-4 rounded-[18px] border border-tato-line bg-tato-panelSoft px-4 py-3.5 active:opacity-80"
-      disabled={disabled || isLoading}
-      onPress={onPress}>
-      <View className={`h-10 w-10 items-center justify-center rounded-full ${destructive ? 'bg-[#331a1a]' : 'bg-[#0e203c]'}`}>
-        {isLoading ? (
-          <ActivityIndicator color="#edf4ff" size="small" />
-        ) : (
-          <PlatformIcon name={icon} size={18} color={destructive ? '#ff8f8f' : '#8ea4c8'} />
-        )}
-      </View>
-      <View className="flex-1">
-        <Text className={`text-sm font-semibold ${destructive ? 'text-[#ff8f8f]' : 'text-tato-text'}`}>{label}</Text>
-        {sublabel ? <Text className="mt-0.5 text-xs text-tato-muted">{sublabel}</Text> : null}
-      </View>
-      <PlatformIcon name={{ ios: 'chevron.right', android: 'chevron_right', web: 'chevron_right' }} size={16} color="#4a6a9b" />
-    </Pressable>
-  );
-}
-
 export default function ProfileScreen() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const { isPhone } = useViewportInfo();
   const { isAdmin, payoutReadiness, profile, user, signOut, switchMode } = useAuth();
+  const { claims } = useBrokerClaims();
+  const { entries } = useLedger();
   const canSupply = profile?.can_supply ?? false;
   const canBroker = profile?.can_broker ?? false;
   const [signingOut, setSigningOut] = useState(false);
   const [switchingMode, setSwitchingMode] = useState<'supplier' | null>(null);
   const [switchError, setSwitchError] = useState<string | null>(null);
+  const [qrReminders, setQrReminders] = useState(true);
 
   const hardSwapToSupplier = async () => {
     setSwitchError(null);
@@ -96,10 +48,25 @@ export default function ProfileScreen() {
     setSwitchingMode(null);
   };
 
-  const payoutStatusTone =
-    payoutReadiness === 'enabled' ? 'profit' : payoutReadiness === 'pending' ? 'accent' : 'dim';
   const payoutStatusLabel =
     payoutReadiness === 'enabled' ? 'Active' : payoutReadiness === 'pending' ? 'Pending' : 'Setup Required';
+  const payoutStatusStyle =
+    payoutReadiness === 'enabled'
+      ? styles.statusProfit
+      : payoutReadiness === 'pending'
+        ? styles.statusAccent
+        : styles.statusWarning;
+  const scrollPaddingBottom = isPhone ? getDockContentPadding(insets.bottom) : 40;
+  const personas = useMemo(() => [
+    ...(canSupply ? ['supplier' as const] : []),
+    ...(canBroker ? ['broker' as const] : []),
+  ], [canBroker, canSupply]);
+  const activeClaims = claims.filter((claim) => !['completed', 'expired', 'deposit_expired', 'cancelled'].includes(claim.status)).length;
+  const itemsSold = claims.filter((claim) => claim.status === 'completed').length;
+  const totalEarnedCents = entries
+    .filter((entry) => entry.direction === 'in')
+    .reduce((sum, entry) => sum + entry.amountCents, 0);
+  const currencyCode = entries[0]?.currencyCode ?? profile?.payout_currency_code ?? 'USD';
 
   return (
     <ModeShell
@@ -115,130 +82,91 @@ export default function ProfileScreen() {
       desktopNavItems={brokerDesktopNav}
       modeLabel="Broker Mode"
       title="The Hunt">
-      <ScrollView className="mt-2 flex-1" contentContainerClassName="gap-4 pb-36">
+      <ScrollView
+        className="mt-2 flex-1"
+        contentContainerClassName="gap-4"
+        contentContainerStyle={{ paddingBottom: scrollPaddingBottom }}>
+        <ProfileIdentityHeader
+          accent="broker"
+          displayName={profile?.display_name ?? user?.email?.split('@')[0] ?? 'TATO User'}
+          email={user?.email}
+          personas={personas}
+          stats={[
+            { label: 'Active Claims', value: String(activeClaims) },
+            { label: 'Items Sold', value: String(itemsSold) },
+            { label: 'Total Earned', value: currencyProfileStat(totalEarnedCents, currencyCode) },
+          ]}
+        />
 
-        {/* ── Identity Hero ── */}
-        <SectionCard delay={TIMING.quick}>
-          <LinearGradient
-            className="absolute inset-0 rounded-[24px]"
-            colors={['rgba(30, 109, 255, 0.06)', 'transparent']}
-            locations={[0, 0.5]}
+        <PersonaAccessCard />
+
+        <ListSection first title="Status">
+          <ListRow label="Account" value={(profile?.status ?? 'active').replace(/_/g, ' ')} />
+          <ListRow
+            label="Payout"
+            value={<Text style={[styles.statusValue, payoutStatusStyle]}>{payoutStatusLabel}</Text>}
           />
-          <View className="flex-row items-center gap-4">
-            <Image
-              cachePolicy="disk"
-              contentFit="cover"
-              source={{ uri: 'https://images.unsplash.com/photo-1502685104226-ee32379fefbe?auto=format&fit=crop&w=256&q=80' }}
-              style={styles.heroAvatar}
-              transition={120}
-            />
-            <View className="flex-1">
-              <Text className="text-2xl font-bold text-tato-text">
-                {profile?.display_name ?? user?.email?.split('@')[0] ?? 'TATO User'}
-              </Text>
-              <Text className="mt-1 font-mono text-[11px] uppercase tracking-[1px] text-tato-accent">
-                {canSupply && canBroker ? 'Broker + Supplier' : canSupply ? 'Supplier' : 'Broker'}
-              </Text>
-            </View>
-          </View>
-        </SectionCard>
+          <ListRow
+            label="QR Reminders"
+            toggle={{ value: qrReminders, onChange: setQrReminders }}
+          />
+        </ListSection>
 
-        {/* ── Status Cards ── */}
-        <View className={`gap-3 ${!isPhone ? 'flex-row' : ''}`}>
-          <Animated.View
-            className={`rounded-[20px] border border-tato-line bg-tato-panel p-4 ${!isPhone ? 'flex-1' : ''}`}
-            entering={FadeInUp.duration(TIMING.base)}>
-            <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-dim">Account</Text>
-            <Text className="mt-2 text-lg font-semibold capitalize text-tato-text">
-              {(profile?.status ?? 'active').replace(/_/g, ' ')}
-            </Text>
-          </Animated.View>
-
-          <Animated.View
-            className={`rounded-[20px] border border-tato-line bg-tato-panel p-4 ${!isPhone ? 'flex-1' : ''}`}
-            entering={FadeInUp.duration(TIMING.base).delay(80)}>
-            <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-dim">Payout</Text>
-            <Text className={`mt-2 text-lg font-semibold ${payoutStatusTone === 'profit' ? 'text-tato-profit' : payoutStatusTone === 'accent' ? 'text-tato-accent' : 'text-[#f5b942]'}`}>
-              {payoutStatusLabel}
-            </Text>
-          </Animated.View>
-        </View>
-
-        {/* ── Mode Switch ── */}
-        {canSupply ? (
-          <SectionCard delay={TIMING.base}>
-            <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-dim">Switch Workspace</Text>
-            <Pressable
-              className="mt-3 flex-row items-center gap-4 rounded-[18px] bg-tato-accent/10 border border-tato-accent/20 px-4 py-3.5 active:opacity-80"
+        <ListSection title="Workspace">
+          <ListRow label="Active Hub" value="Broker Workspace" />
+          {canSupply ? (
+            <ListRow
               disabled={Boolean(switchingMode)}
-              onPress={hardSwapToSupplier}>
-              <View className="h-10 w-10 items-center justify-center rounded-full bg-tato-accent/20">
-                <PlatformIcon name={{ ios: 'arrow.triangle.2.circlepath', android: 'swap_horiz', web: 'swap_horiz' }} size={18} color="#1e6dff" />
-              </View>
-              <View className="flex-1">
-                <Text className="text-sm font-semibold text-tato-text">Switch to Supplier</Text>
-                <Text className="mt-0.5 text-xs text-tato-muted">Open supplier dashboard</Text>
-              </View>
-              {switchingMode ? (
-                <ActivityIndicator color="#1e6dff" size="small" />
-              ) : (
-                <PlatformIcon name={{ ios: 'chevron.right', android: 'chevron_right', web: 'chevron_right' }} size={16} color="#4a6a9b" />
-              )}
-            </Pressable>
-            {switchError ? (
-              <Text className="mt-2 text-sm text-[#ff8f8f]">{switchError}</Text>
-            ) : null}
-          </SectionCard>
-        ) : (
-          <Animated.View
-            className="rounded-[20px] border border-tato-line bg-tato-panelSoft p-4"
-            entering={FadeInUp.duration(TIMING.base)}>
-            <Text className="text-sm text-tato-muted">Supplier access is off. Enable it below.</Text>
-          </Animated.View>
-        )}
+              label="Switch to Supplier"
+              onPress={hardSwapToSupplier}
+              value={switchingMode ? 'Switching...' : undefined}
+            />
+          ) : null}
+        </ListSection>
+        {switchError ? <Text className="text-sm text-tato-error">{switchError}</Text> : null}
 
-        {/* ── Persona Access ── */}
-        <SectionCard delay={TIMING.slow}>
-          <PersonaAccessCard />
-        </SectionCard>
-
-        {/* ── Actions ── */}
-        <View className="gap-2">
-          <ProfileAction
-            icon={{ ios: 'person.crop.circle', android: 'account_circle', web: 'account_circle' }}
+        <ListSection first>
+          <ListRow
+            icon={<PlatformIcon color="#8ea4c8" name={{ ios: 'person.crop.circle', android: 'account-circle', web: 'account-circle' }} size={20} />}
             label="Edit Profile"
-            sublabel="Display name, avatar, preferences"
+            onPress={() => router.push('/(app)/(broker)/account' as never)}
           />
-
+          <ListRow
+            icon={<PlatformIcon color="#8ea4c8" name={{ ios: 'slider.horizontal.3', android: 'tune', web: 'tune' }} size={20} />}
+            label="Preferences"
+            onPress={() => router.push('/(app)/(broker)/account' as never)}
+          />
           {isAdmin ? (
-            <ProfileAction
-              icon={{ ios: 'shield.checkered', android: 'admin_panel_settings', web: 'admin_panel_settings' }}
+            <ListRow
+              icon={<PlatformIcon color="#8ea4c8" name={{ ios: 'shield.checkered', android: 'admin-panel-settings', web: 'admin-panel-settings' }} size={20} />}
               label="Admin Console"
-              sublabel="User management & system settings"
               onPress={() => router.push('/(app)/admin/users' as never)}
             />
           ) : null}
+        </ListSection>
 
-          <ProfileAction
-            icon={{ ios: 'rectangle.portrait.and.arrow.right', android: 'logout', web: 'logout' }}
-            label="Sign Out"
-            destructive
-            disabled={Boolean(switchingMode)}
-            loading={signingOut}
-            onPress={async () => {
-              setSigningOut(true);
-              await signOut();
-              setSigningOut(false);
-            }}
-          />
-        </View>
+        <Pressable
+          accessibilityRole="button"
+          className="mt-4 flex-row items-center gap-3 px-1 py-3"
+          disabled={Boolean(switchingMode) || signingOut}
+          onPress={async () => {
+            setSigningOut(true);
+            await signOut();
+            setSigningOut(false);
+          }}>
+          {signingOut ? (
+            <ActivityIndicator color="#ff8f8f" size="small" />
+          ) : (
+            <PlatformIcon color="#ff8f8f" name={{ ios: 'rectangle.portrait.and.arrow.right', android: 'logout', web: 'logout' }} size={20} />
+          )}
+          <Text className="text-sm font-semibold text-tato-error">Sign Out</Text>
+        </Pressable>
       </ScrollView>
 
       {switchingMode ? (
         <View className="absolute inset-0 items-center justify-center bg-tato-base/95">
           <ActivityIndicator color="#1e6dff" size="large" />
           <Text className="mt-4 text-lg font-semibold text-tato-text">Switching to Supplier Dashboard...</Text>
-          <Text className="mt-1 text-sm text-tato-muted">Loading dedicated supplier app shell</Text>
         </View>
       ) : null}
     </ModeShell>
@@ -246,9 +174,18 @@ export default function ProfileScreen() {
 }
 
 const styles = StyleSheet.create({
-  heroAvatar: {
-    borderRadius: 32,
-    height: 64,
-    width: 64,
+  statusAccent: {
+    color: '#1e6dff',
+  },
+  statusProfit: {
+    color: '#1ec995',
+  },
+  statusValue: {
+    fontSize: 14,
+    fontWeight: '600',
+    lineHeight: 14,
+  },
+  statusWarning: {
+    color: '#f5b942',
   },
 });

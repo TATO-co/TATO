@@ -17,14 +17,17 @@ export function ModeToggle({ value, onChange }: ModeToggleProps) {
 
         return (
           <Pressable
-            className={`flex-1 rounded-full px-4 py-2 ${selected ? 'bg-tato-accent' : 'bg-transparent'}`}
+            accessibilityRole="tab"
+            accessibilityState={{ selected }}
+            className={`min-h-[40px] flex-1 rounded-full px-4 py-2 ${
+              selected ? 'bg-tato-accent' : 'bg-transparent hover:bg-tato-hover focus:bg-tato-hover'
+            }`}
             key={mode}
             onPress={() => onChange(mode)}>
             <Text
-              className={`text-center text-xs font-semibold uppercase tracking-[1px] ${
+              className={`text-center text-xs font-semibold uppercase tracking-[1px] font-mono ${
                 selected ? 'text-white' : 'text-tato-muted'
-              }`}
-              style={{ fontFamily: 'SpaceMono' }}>
+              }`}>
               {mode === 'broker' ? 'Broker Mode' : 'Supplier Mode'}
             </Text>
           </Pressable>

@@ -98,6 +98,13 @@ describe('runIngestionPipeline', () => {
 
     vi.doMock('@/lib/supabase', () => ({ supabase: harness.supabase }));
     vi.doMock('@/lib/analytics', () => ({ captureException: vi.fn() }));
+    vi.doMock('@/lib/checkout', () => ({
+      buildBuyerCheckoutReturnUrl: vi.fn(() => null),
+      buildClaimCheckoutReturnUrl: vi.fn(() => null),
+    }));
+    vi.doMock('@/lib/stripe-payments', () => ({
+      resolvePublishableKey: vi.fn((key: string | null | undefined) => key ?? null),
+    }));
     global.fetch = vi.fn(async () => new Response('image-bytes', {
       headers: { 'Content-Type': 'image/jpeg' },
     })) as typeof global.fetch;
@@ -161,6 +168,13 @@ describe('runIngestionPipeline', () => {
 
     vi.doMock('@/lib/supabase', () => ({ supabase: harness.supabase }));
     vi.doMock('@/lib/analytics', () => ({ captureException: vi.fn() }));
+    vi.doMock('@/lib/checkout', () => ({
+      buildBuyerCheckoutReturnUrl: vi.fn(() => null),
+      buildClaimCheckoutReturnUrl: vi.fn(() => null),
+    }));
+    vi.doMock('@/lib/stripe-payments', () => ({
+      resolvePublishableKey: vi.fn((key: string | null | undefined) => key ?? null),
+    }));
     global.fetch = vi.fn(async () => new Response('image-bytes', {
       headers: { 'Content-Type': 'image/jpeg' },
     })) as typeof global.fetch;

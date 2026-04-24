@@ -51,7 +51,7 @@ function StatusChip({ label, tone = 'neutral' }: { label: string; tone?: 'neutra
 
 function InfoRow({ label, value, stack = false }: { label: string; value: string; stack?: boolean }) {
   return (
-    <View className={`${stack ? 'gap-1' : 'flex-row items-center justify-between gap-4'} rounded-[18px] border border-tato-line bg-tato-panelSoft px-4 py-3`}>
+    <View className={`${stack ? 'gap-1' : 'flex-row items-center justify-between gap-4'} border-b border-tato-line/60 py-3`}>
       <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-dim">{label}</Text>
       <Text className={`${stack ? '' : 'max-w-[60%] text-right'} text-sm font-semibold text-tato-text`}>{value}</Text>
     </View>
@@ -153,7 +153,7 @@ function DraftActionCard({
             <ActivityIndicator color="#fff" />
           ) : (
             <Text className={`text-center font-mono text-xs font-semibold uppercase tracking-[1px] ${actionState.primaryDisabled ? 'text-tato-dim' : 'text-white'}`}>
-              {ready ? `✦ ${actionState.primaryLabel}` : actionState.primaryLabel}
+              {actionState.primaryLabel}
             </Text>
           )}
         </PressableScale>
@@ -206,6 +206,73 @@ function labelForConnectionState(value: string) {
     case 'error': return 'Action Needed';
     default: return 'Idle';
   }
+}
+
+function getDesktopSessionStatus(args: {
+  availabilityLoading: boolean;
+  connectionState: string;
+  livePostingAvailable: boolean;
+}) {
+  if (args.availabilityLoading) {
+    return {
+      detail: 'Confirming supplier access and browser support before the session can post live.',
+      label: 'Checking live posting',
+      pillLabel: 'Checking Posting',
+      tone: 'neutral' as const,
+    };
+  }
+
+  if (args.connectionState === 'error') {
+    return {
+      detail: 'Reconnect camera, microphone, or live posting before continuing this intake pass.',
+      label: 'Session needs attention',
+      pillLabel: 'Action Needed',
+      tone: 'warn' as const,
+    };
+  }
+
+  if (args.connectionState === 'permissions') {
+    return {
+      detail: 'Allow camera and microphone access so Gemini Live can inspect and post this item.',
+      label: 'Camera or microphone access is missing',
+      pillLabel: 'Permissions Needed',
+      tone: 'warn' as const,
+    };
+  }
+
+  if (args.connectionState === 'bootstrapping' || args.connectionState === 'connecting' || args.connectionState === 'reconnecting') {
+    return {
+      detail: 'TATO is bringing the live session online and preparing the draft for the next item.',
+      label: 'Connecting live session',
+      pillLabel: labelForConnectionState(args.connectionState),
+      tone: 'neutral' as const,
+    };
+  }
+
+  if (args.connectionState === 'connected' && args.livePostingAvailable) {
+    return {
+      detail: 'Camera, microphone, and live posting are all ready for this session.',
+      label: 'Ready to capture the next item',
+      pillLabel: 'Posting Ready',
+      tone: 'positive' as const,
+    };
+  }
+
+  if (args.connectionState === 'connected') {
+    return {
+      detail: 'The live view is connected, but posting is blocked for this session right now.',
+      label: 'Connected, but posting is blocked',
+      pillLabel: 'Posting Unavailable',
+      tone: 'warn' as const,
+    };
+  }
+
+  return {
+    detail: 'Start the live session when you are ready to begin this intake pass.',
+    label: 'Session is standing by',
+    pillLabel: 'Standby',
+    tone: 'neutral' as const,
+  };
 }
 
 function humanizeAttributeKey(value: string) {
@@ -289,7 +356,7 @@ function PostedItemsTray({ items, compact = false }: { items: LivePostedItem[]; 
       </View>
       <View className={`${compact ? 'mt-2 gap-1.5' : 'mt-3 gap-2'}`}>
         {items.map((item, index) => (
-          <View className="flex-row items-center justify-between gap-3 rounded-[14px] border border-tato-profit/20 bg-tato-profit/5 px-3 py-2" key={item.itemId}>
+          <View className="flex-row items-center justify-between gap-3 border-b border-tato-profit/20 py-2" key={item.itemId}>
             <Text className="flex-1 text-sm font-medium text-tato-text" numberOfLines={1}>
               {index + 1}. {item.title}
             </Text>
@@ -310,7 +377,7 @@ function MobileIdleView({
   onFallback,
   onBack,
   startDisabled = false,
-  startLabel = '✦ Start Live Session',
+  startLabel = 'Start Live Session',
 }: {
   error: string | null;
   description?: string;
@@ -329,15 +396,30 @@ function MobileIdleView({
           accessibilityRole="button"
           className="h-11 w-11 items-center justify-center rounded-full bg-tato-panelSoft"
           onPress={onBack}>
-          <PlatformIcon name={{ ios: 'chevron.left', android: 'arrow_back', web: 'arrow_back' }} size={18} color="#edf4ff" />
+          <PlatformIcon name={{ ios: 'chevron.left', android: 'arrow-back', web: 'arrow-back' }} size={18} color="#edf4ff" />
         </Pressable>
       </View>
 
-      <View className="flex-1 items-center justify-center">
-        <Text className="text-center text-3xl font-bold text-tato-text">Live Intake</Text>
+      <View className="flex-1 items-center justify-start pt-12">
+        <View className="w-full max-w-[420px] items-center">
+        <Text aria-level={1} className="text-center text-3xl font-bold text-tato-text" role="heading">Live Intake</Text>
         <Text className="mt-2 text-center text-sm leading-6 text-tato-muted">
           {description ?? 'Point your camera at the item and talk. TATO handles the rest.'}
         </Text>
+
+        {startDisabled ? (
+          <View aria-live="polite" className="mt-6 w-full rounded-[18px] border border-tato-line bg-tato-panelSoft px-4 py-4">
+            <View className="flex-row items-center gap-3">
+              <ActivityIndicator color="#1e6dff" />
+              <View className="flex-1">
+                <Text className="text-sm font-semibold text-tato-text">Checking live posting readiness.</Text>
+                <Text className="mt-1 text-sm leading-6 text-tato-muted">
+                  We are confirming supplier access and browser support. This usually takes a moment.
+                </Text>
+              </View>
+            </View>
+          </View>
+        ) : null}
 
         {error ? (
           <View className="mt-4 w-full rounded-[14px] border border-tato-error/30 bg-tato-error/10 p-3">
@@ -357,6 +439,7 @@ function MobileIdleView({
           onPress={onFallback}>
           <Text className="text-sm text-tato-muted">Use Photo Upload Instead</Text>
         </Pressable>
+        </View>
       </View>
     </View>
   );
@@ -383,11 +466,11 @@ function MobileUnavailableView({
           accessibilityRole="button"
           className="h-11 w-11 items-center justify-center rounded-full bg-tato-panelSoft"
           onPress={onBack}>
-          <PlatformIcon name={{ ios: 'chevron.left', android: 'arrow_back', web: 'arrow_back' }} size={18} color="#edf4ff" />
+          <PlatformIcon name={{ ios: 'chevron.left', android: 'arrow-back', web: 'arrow-back' }} size={18} color="#edf4ff" />
         </Pressable>
       </View>
       <View className="flex-1 items-center justify-center">
-        <Text className="text-center text-3xl font-bold text-tato-text">Live Intake Unavailable</Text>
+        <Text aria-level={1} className="text-center text-3xl font-bold text-tato-text" role="heading">Live Intake Unavailable</Text>
         <Text className="mt-3 text-center text-sm leading-6 text-tato-muted">{message}</Text>
         <Pressable
           className="mt-8 rounded-full border border-tato-accent/50 bg-tato-accent/10 px-8 py-4"
@@ -441,7 +524,7 @@ function MobileErrorView({
 }) {
   return (
     <View className="flex-1 items-center justify-center bg-tato-base px-6">
-      <Text className="text-center text-xl font-bold text-tato-error">Session Error</Text>
+      <Text aria-level={1} className="text-center text-xl font-bold text-tato-error" role="heading">Session Error</Text>
       <Text className="mt-2 text-center text-sm leading-6 text-tato-muted">{error}</Text>
       <View className="mt-6 flex-row gap-3">
         {resumable ? (
@@ -572,7 +655,7 @@ function MobileConnectedView({
               accessibilityRole="button"
               className="h-9 w-9 items-center justify-center rounded-full bg-black/60"
               onPress={handleEndSession}>
-              <PlatformIcon name={{ ios: 'chevron.left', android: 'arrow_back', web: 'arrow_back' }} size={16} color="#edf4ff" />
+              <PlatformIcon name={{ ios: 'chevron.left', android: 'arrow-back', web: 'arrow-back' }} size={16} color="#edf4ff" />
             </Pressable>
             <div style={{
               alignItems: 'center',
@@ -598,7 +681,7 @@ function MobileConnectedView({
                 fontWeight: 700,
                 padding: '4px 12px',
               }}>
-                ● SCANNING
+                SCANNING
               </div>
             ) : null}
           </div>
@@ -614,7 +697,7 @@ function MobileConnectedView({
               gap: 4,
               padding: '4px 12px',
             }}>
-              ✓ {session.postedItems.length} posted
+              {session.postedItems.length} posted
             </div>
           ) : null}
         </div>
@@ -631,12 +714,12 @@ function MobileConnectedView({
           <Pressable
             className="rounded-full bg-black/60 px-4 py-2.5"
             onPress={session.requestIdentifyBurst}>
-            <Text className="text-xs font-semibold text-white">🔍 Re-scan</Text>
+            <Text className="text-xs font-semibold text-white">Re-scan</Text>
           </Pressable>
           <Pressable
             className="rounded-full bg-red-500/60 px-4 py-2.5"
             onPress={session.stopSession}>
-            <Text className="text-xs font-semibold text-white">⏹ Stop</Text>
+            <Text className="text-xs font-semibold text-white">Stop</Text>
           </Pressable>
         </div>
 
@@ -668,7 +751,7 @@ function MobileConnectedView({
                 <ActivityIndicator color="white" />
               ) : (
                 <Text className={`text-base font-bold ${actionState.primaryDisabled ? 'text-tato-dim' : 'text-white'}`}>
-                  {canCreate ? `✦ ${actionState.primaryLabel}` : actionState.primaryLabel}
+                  {actionState.primaryLabel}
                 </Text>
               )}
             </Pressable>
@@ -924,7 +1007,7 @@ function MobileConnectedView({
                 {session.creatingDraft ? (
                   <ActivityIndicator color="white" />
                 ) : (
-                  <Text className="text-sm font-bold text-white">✦ Post & Scan Next</Text>
+                  <Text className="text-sm font-bold text-white">Post & Scan Next</Text>
                 )}
               </Pressable>
               <Pressable
@@ -958,7 +1041,7 @@ function DesktopUnavailableLayout({
         {
           key: 'fallback-upload',
           href: STILL_PHOTO_UPLOAD_ROUTE,
-          icon: { ios: 'photo.on.rectangle', android: 'photo_library', web: 'photo_library' },
+          icon: { ios: 'photo.on.rectangle', android: 'photo-library', web: 'photo-library' },
           accessibilityLabel: 'Switch to photo upload intake',
         },
       ]}
@@ -984,7 +1067,7 @@ function DesktopUnavailableLayout({
               accessibilityRole="button"
               className="h-11 w-11 items-center justify-center rounded-full bg-tato-panelSoft"
               onPress={() => router.back()}>
-              <PlatformIcon name={{ ios: 'chevron.left', android: 'arrow_back', web: 'arrow_back' }} size={18} color="#edf4ff" />
+              <PlatformIcon name={{ ios: 'chevron.left', android: 'arrow-back', web: 'arrow-back' }} size={18} color="#edf4ff" />
             </Pressable>
           </View>
           <View className="mt-6 flex-row gap-3">
@@ -1051,6 +1134,17 @@ function DesktopLayout({
     Array.isArray(session.bootstrap?.metadata.toolNames)
       ? session.bootstrap?.metadata.toolNames.filter((v): v is string => typeof v === 'string')
       : [];
+  const desktopSessionStatus = getDesktopSessionStatus({
+    availabilityLoading: session.availabilityLoading,
+    connectionState: session.connectionState,
+    livePostingAvailable: Boolean(session.availability?.available),
+  });
+  const desktopSessionDetails = [
+    session.cameraGranted ? 'Camera ready' : 'Camera needed',
+    session.microphoneGranted ? 'Mic ready' : 'Mic needed',
+    session.burstMode ? 'Scanning mode' : 'Steady mode',
+    session.resumable ? 'Resumable session' : 'New session',
+  ];
 
   const handlePostAndContinue = async () => {
     await session.createDraft();
@@ -1084,7 +1178,7 @@ function DesktopLayout({
         {
           key: 'fallback-upload',
           href: STILL_PHOTO_UPLOAD_ROUTE,
-          icon: { ios: 'photo.on.rectangle', android: 'photo_library', web: 'photo_library' },
+          icon: { ios: 'photo.on.rectangle', android: 'photo-library', web: 'photo-library' },
           accessibilityLabel: 'Switch to photo upload intake',
         },
       ]}
@@ -1101,7 +1195,7 @@ function DesktopLayout({
               <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-accent">
                 Gemini Live Intake
               </Text>
-              <Text className="mt-3 text-3xl font-bold text-tato-text">Live Intake</Text>
+              <Text aria-level={2} className="mt-3 text-3xl font-bold text-tato-text" role="heading">Live Intake</Text>
               <Text className="mt-3 max-w-[700px] text-sm leading-7 text-tato-muted">
                 Show the requested angle and let TATO watch. You usually only need to speak when it asks for information that is not visible on camera.
               </Text>
@@ -1111,35 +1205,20 @@ function DesktopLayout({
               accessibilityRole="button"
               className="h-11 w-11 items-center justify-center rounded-full bg-tato-panelSoft"
               onPress={() => router.back()}>
-              <PlatformIcon name={{ ios: 'chevron.left', android: 'arrow_back', web: 'arrow_back' }} size={18} color="#edf4ff" />
+              <PlatformIcon name={{ ios: 'chevron.left', android: 'arrow-back', web: 'arrow-back' }} size={18} color="#edf4ff" />
             </Pressable>
           </View>
 
-          <View className="mt-5 flex-row flex-wrap gap-3">
-            <StatusChip label={`Camera ${session.cameraGranted ? 'Ready' : 'Needed'}`} tone={session.cameraGranted ? 'positive' : 'warn'} />
-            <StatusChip label={`Mic ${session.microphoneGranted ? 'Ready' : 'Needed'}`} tone={session.microphoneGranted ? 'positive' : 'warn'} />
-            <StatusChip
-              label={labelForConnectionState(session.connectionState)}
-              tone={session.connectionState === 'connected' ? 'accent' : session.connectionState === 'error' ? 'warn' : 'neutral'}
-            />
-            <StatusChip
-              label={
-                session.availabilityLoading
-                  ? 'Checking Posting'
-                  : session.availability?.available
-                    ? 'Posting Ready'
-                    : 'Posting Unavailable'
-              }
-              tone={
-                session.availabilityLoading
-                  ? 'neutral'
-                  : session.availability?.available
-                    ? 'positive'
-                    : 'warn'
-              }
-            />
-            <StatusChip label={session.burstMode ? 'Scanning' : 'Steady'} tone={session.burstMode ? 'accent' : 'neutral'} />
-            <StatusChip label={session.resumable ? 'Resumable' : 'New Session'} tone={session.resumable ? 'positive' : 'neutral'} />
+          <View className="mt-5 rounded-[22px] border border-tato-line bg-[#08162b]/84 px-5 py-4">
+            <View className="flex-row items-start justify-between gap-4">
+              <View className="flex-1">
+                <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-dim">Session Status</Text>
+                <Text className="mt-2 text-lg font-sans-bold text-tato-text">{desktopSessionStatus.label}</Text>
+                <Text className="mt-2 text-sm leading-6 text-tato-muted">{desktopSessionStatus.detail}</Text>
+              </View>
+              <StatusChip label={desktopSessionStatus.pillLabel} tone={desktopSessionStatus.tone} />
+            </View>
+            <Text className="mt-3 text-sm leading-6 text-[#b6c5de]">{desktopSessionDetails.join(' · ')}</Text>
           </View>
         </View>
 
@@ -1350,7 +1429,7 @@ function DesktopLayout({
               <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-accent">Unsaved Live Draft</Text>
               <Text className="mt-3 text-xl font-bold text-tato-text">Live Draft</Text>
               <Text className="mt-2 text-sm leading-6 text-tato-muted">
-                Default flow: TATO asks, you show the view, and it keeps scanning without needing a spoken reply.
+                TATO asks, you show the view, and it keeps scanning without needing a spoken reply.
               </Text>
 
               <View className="mt-5 gap-3">
@@ -1380,7 +1459,7 @@ function DesktopLayout({
                     <ActivityIndicator color="#fff" />
                   ) : (
                     <Text className="text-center font-mono text-xs font-semibold uppercase tracking-[1px] text-white">
-                      {readiness.ready ? `✦ ${actionState.primaryLabel}` : actionState.primaryLabel}
+                      {actionState.primaryLabel}
                     </Text>
                   )}
                 </PressableScale>
@@ -1581,7 +1660,7 @@ function DesktopLayout({
                 {session.creatingDraft ? (
                   <ActivityIndicator color="white" />
                 ) : (
-                  <Text className="text-sm font-bold text-white">✦ Post & Scan Next</Text>
+                  <Text className="text-sm font-bold text-white">Post & Scan Next</Text>
                 )}
               </Pressable>
               <Pressable
@@ -1683,7 +1762,7 @@ export default function LiveIntakeScreen() {
         onFallback={() => router.push(STILL_PHOTO_UPLOAD_ROUTE as never)}
         onBack={() => router.back()}
         startDisabled={session.availabilityLoading || !browserSupported}
-        startLabel={session.availabilityLoading ? 'Checking Live Posting' : '✦ Start Live Session'}
+        startLabel={session.availabilityLoading ? 'Checking Live Posting' : 'Start Live Session'}
       />
     );
   }

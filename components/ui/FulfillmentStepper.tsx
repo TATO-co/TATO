@@ -97,7 +97,7 @@ export function FulfillmentStepper({
                 </View>
             </View>
 
-            <View className="mt-4 rounded-[18px] border border-[#17355f] bg-[#0d1c31] px-4 py-3">
+            <View className="mt-4 border-t border-[#17355f] pt-3">
                 <Text className="font-mono text-[10px] uppercase tracking-[1px] text-tato-dim">
                     Current Status
                 </Text>

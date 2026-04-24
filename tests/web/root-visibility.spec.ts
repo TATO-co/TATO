@@ -47,7 +47,12 @@ const routeExpectations: RouteExpectation[] = [
   {
     name: 'root',
     path: '/',
-    visibleTexts: ['Turn your inventory into cash, instantly.', 'Direct Sign-In'],
+    visibleTexts: ['Inventory in. Cash out.', 'Direct Sign-In'],
+  },
+  {
+    name: 'support',
+    path: '/support',
+    visibleTexts: ['TATO Support', 'Need help with a payment or pickup?'],
   },
   {
     name: 'modal',

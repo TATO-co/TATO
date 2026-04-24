@@ -1,10 +1,12 @@
 import { LinearGradient } from 'expo-linear-gradient';
 import { useState } from 'react';
-import { ActivityIndicator, Pressable, Text, TextInput, View } from 'react-native';
+import { Pressable, Text, TextInput, View } from 'react-native';
 
 import { useAuth } from '@/components/providers/AuthProvider';
-import { PressableScale } from '@/components/ui/PressableScale';
+import { PlatformIcon } from '@/components/ui/PlatformIcon';
+import { TatoButton } from '@/components/ui/TatoButton';
 import { trackEvent } from '@/lib/analytics';
+import { HIT_SLOP, PRESS_FEEDBACK } from '@/lib/ui';
 import {
   isDevelopmentBypassAvailable,
   isLocalDevelopmentRuntime,
@@ -24,32 +26,67 @@ type AuthAccessCardProps = {
 };
 
 const variantClasses: Record<AuthAccessCardVariant, string> = {
-  welcome: 'border-[#28508b] bg-[#07152a]/92',
-  signIn: 'border-tato-line bg-[#071121]/94',
+  welcome: 'border-[#28508b] bg-[#07152a]/94',
+  signIn: 'border-tato-line bg-[#071121]/96',
 };
 
-const primaryButtonClasses: Record<AuthAccessCardVariant, string> = {
-  welcome: 'bg-white',
-  signIn: 'bg-tato-accent hover:bg-tato-accentStrong focus:bg-tato-accentStrong',
-};
-
-const primaryButtonLabelClasses: Record<AuthAccessCardVariant, string> = {
-  welcome: 'text-[#041120]',
-  signIn: 'text-white',
-};
-
-const authStepDefinitions: { key: AuthStep; label: string; helper: string }[] = [
-  {
-    key: 'email',
-    label: 'Work Email',
-    helper: 'We send a secure one-time code.',
+const stepCopy: Record<AuthStep, { label: string; helper: string; inputLabel: string; placeholder: string }> = {
+  email: {
+    label: 'Email',
+    helper: 'Use the work email tied to your TATO invite or account.',
+    inputLabel: 'Work Email',
+    placeholder: 'you@example.com',
   },
-  {
-    key: 'code',
-    label: 'Verify Code',
-    helper: 'Use the latest email to continue.',
+  code: {
+    label: 'Code',
+    helper: 'Use the newest 8-digit code in your inbox.',
+    inputLabel: 'Verification Code',
+    placeholder: 'Enter 8-digit code',
   },
-];
+};
+
+function StepMarker({
+  active,
+  complete,
+  index,
+  label,
+}: {
+  active: boolean;
+  complete: boolean;
+  index: number;
+  label: string;
+}) {
+  return (
+    <View
+      className={`flex-1 rounded-full border px-3 py-2 ${
+        active
+          ? 'border-tato-accent bg-tato-accent/12'
+          : complete
+            ? 'border-tato-profit/30 bg-tato-profit/10'
+            : 'border-tato-line bg-tato-panelInset/82'
+      }`}
+      testID={`auth-step-${index}`}>
+      <View className="flex-row items-center gap-2">
+        <View
+          className={`h-5 w-5 items-center justify-center rounded-full ${
+            active ? 'bg-tato-accent' : complete ? 'bg-tato-profit' : 'bg-tato-lineMedium'
+          }`}>
+          {complete ? (
+            <PlatformIcon color="#03101e" name="check" size={13} />
+          ) : (
+            <Text className="font-mono text-[9px] font-bold text-white">{index}</Text>
+          )}
+        </View>
+        <Text
+          className={`font-mono text-[10px] font-bold uppercase tracking-[1px] ${
+            active ? 'text-tato-accent' : complete ? 'text-tato-profit' : 'text-tato-muted'
+          }`}>
+          {label}
+        </Text>
+      </View>
+    </View>
+  );
+}
 
 export function AuthAccessCard({
   eyebrow = 'Workspace Access',
@@ -76,20 +113,8 @@ export function AuthAccessCard({
   const [showDeveloperTools, setShowDeveloperTools] = useState(false);
   const devBypassAvailable = isDevelopmentBypassAvailable();
   const developerRuntime = isLocalDevelopmentRuntime();
-  const currentStep = step === 'email' ? 1 : 2;
-
-  const guidance =
-    step === 'email'
-      ? {
-          title: 'Start with your work email.',
-          body:
-            'We send a one-time code so you can sign in without a password. Suppliers, brokers, and admins all start here.',
-        }
-      : {
-          title: 'Use the newest code in your inbox.',
-          body:
-            'If this is your first sign-in, the email may say "Confirm your signup". The newest 8-digit code is the one that will work.',
-        };
+  const activeCopy = stepCopy[step];
+  const primaryDisabled = submitting || (step === 'email' && !email.trim()) || (step === 'code' && !token.trim());
 
   const requestOtp = async () => {
     setError(null);
@@ -167,192 +192,166 @@ export function AuthAccessCard({
   };
 
   return (
-    <View className={`overflow-hidden rounded-[34px] border p-6 ${variantClasses[variant]} ${className}`}>
+    <View className={`overflow-hidden rounded-[30px] border p-5 ${variantClasses[variant]} ${className}`}>
       {variant === 'welcome' ? (
-        <>
-          <LinearGradient
-            className="absolute inset-0"
-            colors={['rgba(38, 83, 148, 0.3)', 'rgba(8, 19, 37, 0.96)', 'rgba(7, 15, 28, 0.98)']}
-            locations={[0, 0.4, 1]}
-          />
-          <View className="absolute -right-10 -top-12 h-40 w-40 rounded-full bg-white/10" />
-          <View className="absolute -left-6 bottom-0 h-28 w-28 rounded-full bg-tato-profit/10" />
-        </>
+        <LinearGradient
+          className="absolute inset-0"
+          colors={['rgba(25, 55, 104, 0.24)', 'rgba(8, 19, 37, 0.96)', 'rgba(7, 15, 28, 0.98)']}
+          locations={[0, 0.42, 1]}
+        />
       ) : null}
 
       <View className="relative">
-        {showMonogram ? (
-          <View className="mb-5 h-16 w-16 items-center justify-center rounded-[20px] border border-white/15 bg-white/8">
-            <Text className="font-sans-bold text-3xl text-white">T</Text>
-          </View>
-        ) : null}
+        <View className="flex-row items-start justify-between gap-4">
+          <View className="min-w-0 flex-1">
+            {showMonogram ? (
+              <View className="mb-4 h-14 w-14 items-center justify-center rounded-[18px] border border-white/15 bg-white/8">
+                <Text className="font-sans-bold text-[28px] text-white">T</Text>
+              </View>
+            ) : null}
 
-        <Text className={`font-mono text-[11px] uppercase tracking-[2px] ${variant === 'welcome' ? 'text-[#9ec4ff]' : 'text-tato-accent'}`}>
-          {eyebrow}
-        </Text>
-        <Text className={`mt-3 ${variant === 'welcome' ? 'text-[30px]' : 'text-[28px]'} font-sans-bold leading-[36px] text-tato-text`}>
-          {title}
-        </Text>
-        <Text className="mt-3 text-base leading-7 text-tato-muted">
+            <Text className={`font-mono text-[10px] font-bold uppercase tracking-[1.7px] ${variant === 'welcome' ? 'text-[#9ec4ff]' : 'text-tato-accent'}`}>
+              {eyebrow}
+            </Text>
+            <Text
+              aria-level={1}
+              className="mt-3 text-[29px] font-sans-bold leading-[34px] text-tato-text"
+              role="heading">
+              {title}
+            </Text>
+          </View>
+
+          {configured ? (
+            <View className="mt-0.5 flex-row items-center gap-1.5 rounded-full border border-tato-profit/25 bg-tato-profit/10 px-3 py-1.5">
+              <PlatformIcon color="#1ec995" name="lock" size={13} />
+              <Text className="font-mono text-[9px] font-bold uppercase tracking-[1px] text-tato-profit">
+                Secure
+              </Text>
+            </View>
+          ) : null}
+        </View>
+
+        <Text className="mt-3 text-[15px] leading-6 text-tato-muted">
           {description}
         </Text>
 
         {configured ? (
-          <View className="mt-8 gap-3">
-            <View className="gap-3">
-              <View className="flex-row gap-2">
-                {authStepDefinitions.map((item, index) => {
-                  const active = item.key === step;
-                  const complete = step === 'code' && item.key === 'email';
-
-                  return (
-                    <View
-                      className={`flex-1 rounded-[18px] border px-3 py-3 ${
-                        active
-                          ? 'border-tato-accent bg-tato-accent/12'
-                          : complete
-                            ? 'border-tato-profit/30 bg-tato-profit/10'
-                            : 'border-tato-line bg-[#0a1628]/86'
-                      }`}
-                      key={item.key}>
-                      <Text
-                        className={`font-mono text-[10px] uppercase tracking-[1.2px] ${
-                          active ? 'text-tato-accent' : complete ? 'text-tato-profit' : 'text-tato-dim'
-                        }`}>
-                        Step {index + 1}
-                      </Text>
-                      <Text className="mt-2 text-sm font-semibold text-tato-text">{item.label}</Text>
-                      <Text className="mt-1 text-xs leading-5 text-tato-muted">{item.helper}</Text>
-                    </View>
-                  );
-                })}
-              </View>
-
-              <View className="rounded-[20px] border border-[#20406d] bg-[#0a1a31]/90 px-4 py-4">
-                <Text className="font-mono text-[10px] uppercase tracking-[1.5px] text-[#9ec4ff]">
-                  Step {currentStep} of 2
-                </Text>
-                <Text className="mt-2 text-base font-semibold text-tato-text">{guidance.title}</Text>
-                <Text className="mt-2 text-sm leading-6 text-tato-muted">{guidance.body}</Text>
-              </View>
+          <View className="mt-6">
+            <View className="flex-row gap-2">
+              <StepMarker active={step === 'email'} complete={step === 'code'} index={1} label="Email" />
+              <StepMarker active={step === 'code'} complete={false} index={2} label="Code" />
             </View>
 
-            <View className="gap-3">
+            <View className="mt-5">
+              <Text className="mb-2 ml-1 font-mono text-[10px] font-bold uppercase tracking-[1px] text-tato-dim">
+                {activeCopy.inputLabel}
+              </Text>
               {step === 'email' ? (
-                <View>
-                  <Text className="mb-1.5 ml-1 font-mono text-[10px] uppercase tracking-[1px] text-tato-dim">
-                    Email
-                  </Text>
-                  <TextInput
-                    accessibilityLabel="Email address"
-                    autoCapitalize="none"
-                    autoComplete="email"
-                    keyboardType="email-address"
-                    className="rounded-[20px] border border-tato-line bg-[#0d1b31]/92 px-4 py-4 text-base text-tato-text focus:border-tato-accent"
-                    onChangeText={setEmail}
-                    placeholder="you@example.com"
-                    placeholderTextColor="#64779c"
-                    value={email}
-                  />
-                </View>
+                <TextInput
+                  accessibilityLabel="Email address"
+                  autoCapitalize="none"
+                  autoComplete="email"
+                  autoCorrect={false}
+                  keyboardType="email-address"
+                  className="min-h-[56px] rounded-[18px] border border-tato-line bg-[#0d1b31]/92 px-4 text-base text-tato-text focus:border-tato-accent"
+                  onChangeText={setEmail}
+                  placeholder={activeCopy.placeholder}
+                  placeholderTextColor="#64779c"
+                  testID="auth-email-input"
+                  value={email}
+                />
               ) : (
-                <View>
-                  <Text className="mb-1.5 ml-1 font-mono text-[10px] uppercase tracking-[1px] text-tato-dim">
-                    Verification Code
-                  </Text>
+                <>
                   <TextInput
                     accessibilityLabel="Verification Code"
                     autoCapitalize="none"
                     autoComplete="one-time-code"
+                    autoCorrect={false}
                     keyboardType="number-pad"
-                    className="rounded-[20px] border border-tato-line bg-[#0d1b31]/92 px-4 py-4 text-base text-tato-text focus:border-tato-accent"
+                    className="min-h-[56px] rounded-[18px] border border-tato-line bg-[#0d1b31]/92 px-4 text-base text-tato-text focus:border-tato-accent"
                     onChangeText={setToken}
-                    placeholder="Enter 8-digit code"
+                    placeholder={activeCopy.placeholder}
                     placeholderTextColor="#64779c"
+                    testID="auth-code-input"
                     value={token}
                   />
                   <Pressable
+                    accessibilityLabel="Edit email address"
+                    accessibilityRole="button"
+                    android_ripple={PRESS_FEEDBACK.ripple.subtle}
                     className="ml-1 mt-2 py-2"
-                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                    onPress={() => setStep('email')}>
-                    <Text className="text-sm text-tato-accent">Edit email address</Text>
+                    hitSlop={HIT_SLOP.comfortable}
+                    onPress={() => setStep('email')}
+                    testID="auth-edit-email">
+                    <Text className="text-sm font-sans-semibold text-tato-accent">Edit email address</Text>
                   </Pressable>
-                </View>
+                </>
               )}
-            </View>
-
-            {error ? (
-              <View className="rounded-[18px] border border-tato-error/25 bg-tato-error/10 px-3 py-3">
-                <Text className="text-sm text-tato-error">{error}</Text>
-              </View>
-            ) : null}
-
-            <PressableScale
-              accessibilityLabel={step === 'email' ? 'Send Verification Code' : 'Sign In'}
-              accessibilityRole="button"
-              className={`mt-1 rounded-full px-8 py-4 ${primaryButtonClasses[variant]}`}
-              disabled={submitting || (step === 'email' && !email) || (step === 'code' && !token)}
-              onPress={step === 'email' ? requestOtp : submitToken}>
-              {submitting ? (
-                <ActivityIndicator color={variant === 'welcome' ? '#041120' : '#fff'} />
-              ) : (
-                <Text className={`text-center font-mono text-sm font-semibold uppercase tracking-[1px] ${primaryButtonLabelClasses[variant]}`}>
-                  {step === 'email' ? 'Send Code' : 'Sign In'}
-                </Text>
-              )}
-            </PressableScale>
-
-            <View className="mt-1 items-center">
-              <Text className="px-4 text-center text-xs leading-5 text-tato-muted">
-                New to TATO? After verification, we&apos;ll create your workspace profile and take you into setup.
+              <Text className="ml-1 mt-2 text-[12px] leading-5 text-tato-muted">
+                {activeCopy.helper}
               </Text>
             </View>
 
+            {error ? (
+              <View aria-live="polite" className="mt-4 rounded-[18px] border border-tato-error/25 bg-tato-error/10 px-3 py-3" testID="auth-error-message">
+                <Text className="text-sm leading-5 text-tato-error">{error}</Text>
+              </View>
+            ) : null}
+
+            <TatoButton
+              accessibilityLabel={step === 'email' ? 'Send Verification Code' : 'Sign In'}
+              className="mt-5"
+              disabled={primaryDisabled}
+              icon={step === 'email' ? 'arrow-forward' : 'login'}
+              label={step === 'email' ? 'Send Code' : 'Sign In'}
+              loading={submitting}
+              onPress={step === 'email' ? requestOtp : submitToken}
+              size="lg"
+              testID="auth-primary-action"
+              tone={variant === 'welcome' ? 'inverse' : 'primary'}
+            />
+
+            <Text className="mt-3 px-2 text-center text-[12px] leading-5 text-tato-muted">
+              New operators continue into workspace setup after verification.
+            </Text>
+
             {step === 'email' && developerRuntime ? (
-              <View className="mt-2 overflow-hidden rounded-[20px] border border-[#17355f] bg-[#071427]/88">
+              <View className="mt-4 border-t border-tato-lineSoft pt-3">
                 <Pressable
                   accessibilityLabel="Toggle developer tools"
                   accessibilityRole="button"
-                  className="flex-row items-center justify-between px-4 py-3.5"
-                  onPress={() => setShowDeveloperTools((current) => !current)}>
-                  <View className="flex-1 pr-4">
-                    <Text className="font-mono text-[10px] uppercase tracking-[1.8px] text-tato-dim">
-                      Developer Tools
-                    </Text>
-                    <Text className="mt-1 text-sm leading-6 text-tato-muted">
-                      Keep test-only sign-in controls out of the primary operator flow.
-                    </Text>
-                  </View>
-                  <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-accent">
-                    {showDeveloperTools ? 'Hide' : 'Show'}
+                  android_ripple={PRESS_FEEDBACK.ripple.subtle}
+                  className="self-center rounded-full px-3 py-2"
+                  hitSlop={HIT_SLOP.comfortable}
+                  onPress={() => setShowDeveloperTools((current) => !current)}
+                  testID="auth-dev-tools-toggle">
+                  <Text className="font-mono text-[10px] font-bold uppercase tracking-[1.1px] text-tato-dim">
+                    Developer Tools {showDeveloperTools ? 'Hide' : 'Show'}
                   </Text>
                 </Pressable>
 
                 {showDeveloperTools ? (
-                  <View className="border-t border-[#17355f] px-4 pb-4 pt-3">
+                  <View className="mt-3">
                     {devBypassAvailable ? (
                       <>
-                        <PressableScale
+                        <TatoButton
                           accessibilityLabel="Continue as development user"
-                          accessibilityRole="button"
-                          className="rounded-full border border-tato-accent/35 bg-[#0d1e37]/94 px-8 py-4"
                           disabled={submitting}
-                          onPress={runDevBypass}>
-                          {submitting ? (
-                            <ActivityIndicator color="#d9e7ff" />
-                          ) : (
-                            <Text className="text-center font-mono text-sm font-semibold uppercase tracking-[1px] text-tato-accent">
-                              Bypass Sign-In
-                            </Text>
-                          )}
-                        </PressableScale>
-                        <Text className="mt-2 text-center text-[11px] text-tato-dim">
+                          icon="bolt"
+                          label="Bypass Sign-In"
+                          loading={submitting}
+                          onPress={runDevBypass}
+                          size="lg"
+                          testID="auth-dev-bypass-button"
+                          tone="secondary"
+                        />
+                        <Text className="mt-2 text-center text-[11px] leading-5 text-tato-dim">
                           Development-only shortcut.
                         </Text>
                       </>
                     ) : (
-                      <Text className="text-[11px] leading-5 text-tato-dim">
-                        Set `EXPO_PUBLIC_DEV_BYPASS_EMAIL` and `EXPO_PUBLIC_DEV_BYPASS_PASSWORD` to enable one-click dev sign-in.
+                      <Text className="text-center text-[11px] leading-5 text-tato-dim">
+                        Set `EXPO_PUBLIC_DEV_BYPASS_EMAIL` and `EXPO_PUBLIC_DEV_BYPASS_PASSWORD` to enable dev sign-in.
                       </Text>
                     )}
                   </View>
@@ -361,10 +360,13 @@ export function AuthAccessCard({
             ) : null}
           </View>
         ) : (
-          <View className="mt-8 gap-3 rounded-[24px] border border-tato-line bg-[#0c1727]/80 p-4">
-            <Text className="font-mono text-[11px] uppercase tracking-[2px] text-tato-warn">
-              Runtime Setup Required
-            </Text>
+          <View aria-live="polite" className="mt-6 gap-3 rounded-[22px] border border-tato-line bg-[#0c1727]/80 p-4" testID="auth-config-warning">
+            <View className="flex-row items-center gap-2">
+              <PlatformIcon color="#f5b942" name="warning" size={18} />
+              <Text className="font-mono text-[10px] font-bold uppercase tracking-[1.5px] text-tato-warn">
+                Runtime Setup Required
+              </Text>
+            </View>
             <Text className="text-sm leading-6 text-tato-text">
               This build cannot sign anyone in until the required environment values are present.
             </Text>
@@ -373,7 +375,7 @@ export function AuthAccessCard({
             </Text>
             {developerRuntime ? (
               <Text className="text-xs leading-5 text-tato-dim">
-                Once the runtime is configured, operators can use the normal email-code flow and new accounts can finish workspace setup after verification.
+                Once configured, operators can use the normal email-code flow.
               </Text>
             ) : null}
           </View>

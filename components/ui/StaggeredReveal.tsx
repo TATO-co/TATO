@@ -8,6 +8,8 @@ interface StaggeredRevealProps {
   style?: StyleProp<ViewStyle>;
   index?: number;
   staggerStep?: number;
+  /** Optional testID for E2E testing. */
+  testID?: string;
 }
 
 export function StaggeredReveal({
@@ -17,6 +19,7 @@ export function StaggeredReveal({
   style,
   index = 0,
   staggerStep = 100,
+  testID,
 }: StaggeredRevealProps) {
   const disableAnimation = Platform.OS === 'web';
   const animatedValue = useRef(new Animated.Value(disableAnimation ? 1 : 0)).current;
@@ -49,7 +52,7 @@ export function StaggeredReveal({
   };
 
   return (
-    <Animated.View style={[style, animatedStyle]}>
+    <Animated.View style={[style, animatedStyle]} testID={testID}>
       {children}
     </Animated.View>
   );

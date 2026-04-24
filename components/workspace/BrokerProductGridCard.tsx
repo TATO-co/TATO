@@ -1,12 +1,14 @@
 import { LinearGradient } from 'expo-linear-gradient';
-import { memo, useMemo, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { Image } from 'expo-image';
+import { Image } from '@/components/ui/TatoImage';
 import Animated, { FadeIn, FadeOut } from 'react-native-reanimated';
 
 import { PressableScale } from '@/components/ui/PressableScale';
+import { CurrencyDisplay } from '@/components/ui/CurrencyDisplay';
 import type { BrokerFeedStateItem } from '@/lib/hooks/useBrokerFeed';
 import { formatMoney } from '@/lib/models';
+import { getSuggestedResaleRange } from '@/lib/stock-state';
 
 type ClaimState = 'idle' | 'pending' | 'claimed' | 'error';
 
@@ -14,8 +16,10 @@ type BrokerProductGridCardProps = {
   item: BrokerFeedStateItem;
   claimState: ClaimState;
   claimError?: string;
+  claimErrorActionLabel?: string;
   compactDesktop?: boolean;
   onClaim: (item: BrokerFeedStateItem) => void;
+  onClaimErrorAction?: (item: BrokerFeedStateItem) => void;
   onOpenItem: (id: string) => void;
 };
 
@@ -35,19 +39,29 @@ function BrokerProductGridCardInner({
   item,
   claimState,
   claimError,
+  claimErrorActionLabel,
   compactDesktop = false,
   onClaim,
+  onClaimErrorAction,
   onOpenItem,
 }: BrokerProductGridCardProps) {
   const [hovered, setHovered] = useState(false);
+  const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isClaimed = claimState === 'claimed';
   const isPending = claimState === 'pending';
   const canClaim = claimState === 'idle' || claimState === 'error';
 
   const projectedListPriceCents = useMemo(() => item.estimatedSalePriceCents, [item.estimatedSalePriceCents]);
   const brokerPayoutCents = useMemo(() => item.estimatedBrokerPayoutCents, [item.estimatedBrokerPayoutCents]);
+  const suggestedRange = useMemo(() => getSuggestedResaleRange(item.floorPriceCents), [item.floorPriceCents]);
   const summaryTone = item.shippable ? 'National listing candidate' : `Pickup-first play in ${item.city}`;
-  const handleClaim = () => onClaim(item);
+  const handleClaim = useCallback(() => onClaim(item), [item, onClaim]);
+
+  useEffect(() => () => {
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current);
+    }
+  }, []);
 
   return (
     <PressableScale
@@ -57,7 +71,15 @@ function BrokerProductGridCardInner({
       }`}
       onHoverIn={() => setHovered(true)}
       onHoverOut={() => setHovered(false)}
-      onPress={() => onOpenItem(item.id)}>
+      onLongPress={() => {
+        // Tablet: reveal preview on long-press, auto-close after 3s.
+        if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current);
+        setHovered(true);
+        longPressTimerRef.current = setTimeout(() => setHovered(false), 3000);
+      }}
+      delayLongPress={400}
+      onPress={() => onOpenItem(item.id)}
+      testID={`broker-card-${item.id}`}>
       <View className={`relative overflow-hidden bg-[#0d1b2e] ${compactDesktop ? 'aspect-[0.98]' : 'aspect-[0.94]'} p-5`}>
         <LinearGradient
           colors={['rgba(23,60,114,0.14)', 'rgba(5,13,26,0.04)']}
@@ -97,28 +119,28 @@ function BrokerProductGridCardInner({
             className="absolute inset-4 rounded-[20px] border border-white/10 bg-[#061424]/94 p-4">
             <Text className="font-mono text-[10px] uppercase tracking-[1px] text-tato-accent">Quick Preview</Text>
             <Text className="mt-2 text-xl font-sans-bold leading-7 text-white">{summaryTone}</Text>
-            <Text className="mt-2 text-sm leading-6 text-[#a8bad8]">
-              Estimated list at {formatMoney(projectedListPriceCents, item.currencyCode, 0)} with {item.photoCount} supplier photo{item.photoCount === 1 ? '' : 's'} ready for reuse.
+            <Text className="mt-2 text-sm leading-6 text-tato-muted">
+              Estimated list guidance and supplier photos are ready for review.
             </Text>
 
             <View className="mt-4 gap-2">
-              <View className="flex-row items-center justify-between rounded-2xl bg-white/5 px-3 py-2.5">
-                <Text className="font-mono text-[10px] uppercase tracking-[1px] text-[#93a7c7]">Supplier floor</Text>
-                <Text className="text-sm font-bold text-white">{formatMoney(item.floorPriceCents, item.currencyCode, 0)}</Text>
+              <View className="flex-row items-center justify-between border-b border-white/10 py-2.5">
+                <Text className="font-mono text-[10px] uppercase tracking-[1px] text-tato-muted">Supplier floor</Text>
+                <CurrencyDisplay amount={item.floorPriceCents} className="text-sm" currencyCode={item.currencyCode} fractionDigits={0} tone="neutral" />
               </View>
-              <View className="flex-row items-center justify-between rounded-2xl bg-white/5 px-3 py-2.5">
-                <Text className="font-mono text-[10px] uppercase tracking-[1px] text-[#93a7c7]">Claim deposit</Text>
-                <Text className="text-sm font-bold text-tato-accent">{formatMoney(item.claimDepositCents, item.currencyCode, 2)}</Text>
+              <View className="flex-row items-center justify-between border-b border-white/10 py-2.5">
+                <Text className="font-mono text-[10px] uppercase tracking-[1px] text-tato-muted">Claim deposit</Text>
+                <CurrencyDisplay amount={item.claimDepositCents} className="text-sm" currencyCode={item.currencyCode} fractionDigits={2} tone="neutral" />
               </View>
-              <View className="flex-row items-center justify-between rounded-2xl bg-white/5 px-3 py-2.5">
-                <Text className="font-mono text-[10px] uppercase tracking-[1px] text-[#93a7c7]">Broker payout</Text>
-                <Text className="text-sm font-bold text-tato-profit">{formatMoney(brokerPayoutCents, item.currencyCode, 0)}</Text>
+              <View className="flex-row items-center justify-between py-2.5">
+                <Text className="font-mono text-[10px] uppercase tracking-[1px] text-tato-muted">Broker payout</Text>
+                <CurrencyDisplay amount={brokerPayoutCents} className="text-sm" currencyCode={item.currencyCode} fractionDigits={0} />
               </View>
             </View>
 
-            <View className="mt-4 rounded-[18px] border border-[#21406d] bg-[#0c1d35] px-3 py-3">
-              <Text className="font-mono text-[10px] uppercase tracking-[1px] text-[#8ab1ff]">AI Guidance</Text>
-              <Text className="mt-2 text-sm leading-6 text-[#b1c2de]">{aiGuidance(item)}</Text>
+            <View className="mt-4 rounded-[18px] border border-tato-lineMedium bg-tato-panelInset px-3 py-3">
+              <Text className="font-mono text-[10px] uppercase tracking-[1px] text-tato-textHighlight">AI Guidance</Text>
+              <Text className="mt-2 text-sm leading-6 text-tato-muted">{aiGuidance(item)}</Text>
             </View>
           </Animated.View>
         ) : null}
@@ -140,27 +162,35 @@ function BrokerProductGridCardInner({
         </View>
 
         <View className="mt-4 flex-row flex-wrap gap-2">
-          <View className="rounded-full bg-[#102443] px-3 py-1.5">
+          <View className="rounded-full bg-tato-panelSoft px-3 py-1.5">
             <Text className="font-mono text-[10px] uppercase tracking-[1px] text-tato-accent">
               Deposit {formatMoney(item.claimDepositCents, item.currencyCode, 2)}
             </Text>
           </View>
-          <View className="rounded-full bg-[#102443] px-3 py-1.5">
+          <View className="rounded-full bg-tato-panelSoft px-3 py-1.5">
             <Text className="font-mono text-[10px] uppercase tracking-[1px] text-tato-muted">
               AI {(item.aiIngestionConfidence * 100).toFixed(0)}%
             </Text>
           </View>
-          <View className="rounded-full bg-[#102443] px-3 py-1.5">
+          <View className="rounded-full bg-tato-panelSoft px-3 py-1.5">
             <Text className="font-mono text-[10px] uppercase tracking-[1px] text-tato-muted">
               {item.hubName.replace(/^Hub:\s*/i, '')}
             </Text>
           </View>
         </View>
 
-        <View className="mt-3 rounded-[18px] border border-[#17355f] bg-[#0d1c31] px-3 py-3">
-          <Text className="font-mono text-[10px] uppercase tracking-[1px] text-tato-dim">Preview Angle</Text>
-          <Text className="mt-2 text-sm leading-6 text-[#9db0cf]" numberOfLines={2}>
-            {item.tags[0] ?? 'AI-assisted listing opportunity'} · {summaryTone}
+        <View className="mt-3 rounded-[18px] border border-tato-lineSoft bg-tato-panelInset px-3 py-3">
+          <Text className="font-mono text-[10px] uppercase tracking-[1px] text-tato-dim">Floor Price</Text>
+          <View className="mt-2 flex-row items-end justify-between gap-3">
+            <Text className="text-xl font-sans-bold text-tato-text">
+              {formatMoney(item.floorPriceCents, item.currencyCode, 2)}
+            </Text>
+            <Text className="text-right font-mono text-[10px] uppercase tracking-[1px] text-tato-profit">
+              Est. margin {formatMoney(item.estimatedBrokerPayoutCents, item.currencyCode, 0)}
+            </Text>
+          </View>
+          <Text className="mt-2 text-sm leading-6 text-tato-muted" numberOfLines={2}>
+            Suggested resale {formatMoney(suggestedRange.lowCents, item.currencyCode, 0)} to {formatMoney(suggestedRange.highCents, item.currencyCode, 0)}
           </Text>
         </View>
 
@@ -168,7 +198,7 @@ function BrokerProductGridCardInner({
           <View className="flex-row">
             {item.sellerBadges.map((badge) => (
               <View
-                className="-mr-2 h-8 w-8 items-center justify-center rounded-full border border-tato-base bg-[#14315d]"
+                className="-mr-2 h-8 w-8 items-center justify-center rounded-full border border-tato-base bg-tato-panelSoft"
                 key={badge}>
                 <Text className="font-mono text-[10px] font-bold text-white">{badge}</Text>
               </View>
@@ -176,6 +206,8 @@ function BrokerProductGridCardInner({
           </View>
 
           <Pressable
+            accessibilityLabel={isPending ? 'Claiming item' : isClaimed ? 'Item claimed' : claimErrorActionLabel ?? 'Claim this item'}
+            accessibilityRole="button"
             className={`flex-1 rounded-full px-4 py-3 ${
               isClaimed
                 ? 'bg-tato-panelSoft'
@@ -186,10 +218,16 @@ function BrokerProductGridCardInner({
             disabled={!canClaim}
             onPress={(event) => {
               event.stopPropagation();
+              if (claimState === 'error' && onClaimErrorAction) {
+                onClaimErrorAction(item);
+                return;
+              }
+
               handleClaim();
-            }}>
+            }}
+            testID={`broker-claim-${item.id}`}>
             <Text className="text-center text-sm font-bold text-white">
-              {isPending ? 'Claiming...' : isClaimed ? 'Claimed' : claimState === 'error' ? 'Retry Claim' : 'Claim Item'}
+              {isPending ? 'Claiming...' : isClaimed ? 'Claimed' : claimState === 'error' ? claimErrorActionLabel ?? 'Retry Claim' : 'Claim Item'}
             </Text>
           </Pressable>
         </View>

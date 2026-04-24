@@ -2,12 +2,12 @@ import { Link } from 'expo-router';
 import { PlatformIcon } from '@/components/ui/PlatformIcon';
 import { PropsWithChildren } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { Image } from 'expo-image';
+import { Image } from '@/components/ui/TatoImage';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { DesktopSectionNav, type DesktopSectionNavItem } from '@/components/ui/DesktopSectionNav';
 import { useViewportInfo } from '@/lib/constants';
-import { RHYTHM } from '@/lib/ui';
+import { COLORS, HIT_SLOP, PRESS_FEEDBACK, RADIUS, RHYTHM } from '@/lib/ui';
 
 type ShellAction = {
   key: string;
@@ -20,19 +20,49 @@ type ShellAction = {
 type ModeShellProps = PropsWithChildren<{
   title: string;
   modeLabel: string;
-  /** Emoji fallback for avatar — superseded by avatarUrl when available. */
+  /** Legacy caller API. ModeShell now renders a neutral monogram fallback when avatarUrl is unavailable. */
   avatarEmoji: string;
-  /** URL to a real profile photo. Renders over the emoji when provided. */
+  /** URL to a real profile photo. */
   avatarUrl?: string | null;
   desktopNavItems?: DesktopSectionNavItem[];
   desktopNavActiveKey?: string;
   actions?: ShellAction[];
 }>;
 
+function getAvatarMonogram(modeLabel: string, title: string) {
+  const normalizedMode = modeLabel.toLowerCase();
+  if (normalizedMode.includes('broker')) {
+    return 'B';
+  }
+
+  if (normalizedMode.includes('supplier')) {
+    return 'S';
+  }
+
+  if (normalizedMode.includes('admin')) {
+    return 'A';
+  }
+
+  const words = title
+    .replace(/[^a-z0-9 ]/gi, ' ')
+    .split(/\s+/)
+    .filter(Boolean);
+
+  if (!words.length) {
+    return 'T';
+  }
+
+  return words
+    .slice(0, 2)
+    .map((word) => word[0]?.toUpperCase() ?? '')
+    .join('')
+    .slice(0, 2);
+}
+
 export function ModeShell({
   title,
   modeLabel,
-  avatarEmoji,
+  avatarEmoji: _avatarEmoji,
   avatarUrl,
   desktopNavItems,
   desktopNavActiveKey,
@@ -44,9 +74,10 @@ export function ModeShell({
   const desktopSidebarWidthClass = isWideDesktop ? 'w-[276px]' : 'w-[244px]';
   const desktopMainPaddingClass = isWideDesktop ? 'px-10 pb-10 pt-8' : 'px-7 pb-8 pt-7';
   const desktopTitleClass = isWideDesktop ? 'text-[34px]' : 'text-[30px]';
-  const shellTitleClass = isPhone ? 'text-[20px] leading-[22px]' : 'text-[30px]';
+  const shellTitleClass = isPhone ? 'text-[20px] leading-[24px]' : 'text-[30px]';
+  const avatarMonogram = getAvatarMonogram(modeLabel, title);
   const actionButtonClassName = isPhone
-    ? 'h-11 w-11 items-center justify-center rounded-[22px] border border-[#17355f] bg-[#102443]/92'
+    ? 'h-10 w-10 items-center justify-center rounded-[20px] border border-tato-lineSoft bg-tato-panelInset/92'
     : 'h-11 w-11 items-center justify-center rounded-full bg-tato-panelSoft hover:bg-tato-hover focus:bg-tato-hover';
 
   const avatar = avatarUrl ? (
@@ -55,12 +86,17 @@ export function ModeShell({
       contentFit="cover"
       source={{ uri: avatarUrl }}
       style={isPhone ? styles.phoneAvatar : styles.desktopAvatar}
+      testID="mode-shell-avatar"
       transition={120}
     />
   ) : (
-    <View className={`${isPhone ? 'h-[58px] w-[58px]' : 'h-12 w-12'} items-center justify-center rounded-full border-2 border-[#2f5ca8] bg-[#f1c39e]`}>
-      <Text className={isPhone ? 'text-[24px]' : 'text-lg'} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
-        {avatarEmoji}
+    <View
+      accessibilityElementsHidden
+      className={`${isPhone ? 'h-[52px] w-[52px]' : 'h-12 w-12'} items-center justify-center rounded-full border border-tato-lineMedium bg-tato-panelDeep`}
+      importantForAccessibility="no-hide-descendants"
+      testID="mode-shell-avatar">
+      <Text className={isPhone ? 'font-mono text-[19px] font-bold uppercase tracking-[1px] text-white' : 'font-mono text-sm font-bold uppercase tracking-[1px] text-white'}>
+        {avatarMonogram}
       </Text>
     </View>
   );
@@ -71,7 +107,7 @@ export function ModeShell({
       <SafeAreaView className="flex-1 bg-tato-base">
         <View className="mx-auto flex-1 w-full flex-row" style={{ maxWidth: desktopShellWidth }}>
           {/* Desktop Sidebar */}
-          <View className={`${desktopSidebarWidthClass} border-r border-tato-line bg-[#07152a] px-5 py-7`}>
+          <View className={`${desktopSidebarWidthClass} border-r border-tato-line bg-tato-panelDeep px-5 py-7`}>
             <View className="flex-row items-center gap-3 px-2">
               {avatar}
               <View className="flex-1">
@@ -89,7 +125,7 @@ export function ModeShell({
                   <Link asChild href={item.href as never} key={item.key}>
                     <Pressable
                       className={`rounded-xl px-4 py-3 ${active
-                        ? 'bg-[#113262]'
+                        ? 'bg-tato-hover'
                         : 'bg-transparent hover:bg-tato-panelSoft focus:bg-tato-panelSoft'
                         }`}>
                       <Text
@@ -115,7 +151,7 @@ export function ModeShell({
           <View className={`flex-1 ${desktopMainPaddingClass}`} style={{ rowGap: RHYTHM.md }}>
             <View className="flex-row items-center justify-between">
               <View>
-                <Text className={`font-sans-bold text-tato-text ${desktopTitleClass}`}>
+                <Text aria-level={1} className={`font-sans-bold text-tato-text ${desktopTitleClass}`} role="heading">
                   {desktopNavItems.find((n) => n.key === desktopNavActiveKey)?.label ?? title}
                 </Text>
               </View>
@@ -126,7 +162,9 @@ export function ModeShell({
                     <Pressable
                       accessibilityLabel={action.accessibilityLabel}
                       accessibilityRole="button"
+                      android_ripple={PRESS_FEEDBACK.ripple.subtle}
                       className={actionButtonClassName}
+                      hitSlop={HIT_SLOP.comfortable}
                       key={action.key}
                       onPress={action.onPress}>
                       <PlatformIcon name={action.icon} size={18} color="#edf4ff" />
@@ -162,7 +200,7 @@ export function ModeShell({
               <View className="flex-row items-center gap-3">
                 {avatar}
                 <View>
-                  <Text className={`font-sans-bold text-tato-text ${shellTitleClass}`}>
+                  <Text aria-level={1} className={`font-sans-bold text-tato-text ${shellTitleClass}`} role="heading">
                     {title}
                   </Text>
                   <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-muted">
@@ -177,7 +215,9 @@ export function ModeShell({
                     <Pressable
                       accessibilityLabel={action.accessibilityLabel}
                       accessibilityRole="button"
+                      android_ripple={PRESS_FEEDBACK.ripple.subtle}
                       className={actionButtonClassName}
+                      hitSlop={HIT_SLOP.comfortable}
                       key={action.key}
                       onPress={action.onPress}>
                       <PlatformIcon name={action.icon} size={18} color="#edf4ff" />
@@ -207,20 +247,26 @@ export function ModeShell({
 
   return (
     <SafeAreaView className="flex-1 bg-tato-base">
-      <View className="flex-1 pt-3" style={{ paddingHorizontal: pageGutter, rowGap: RHYTHM.md }}>
-        <View className="rounded-[28px] border border-[#112746] bg-[#061325]/88 px-4 py-3">
-          <View className="flex-row items-start justify-between gap-4">
+      <View className="flex-1 pt-1" style={{ paddingHorizontal: pageGutter, rowGap: RHYTHM.sm }}>
+        <View className="rounded-[26px] border border-tato-lineSoft bg-tato-panelDeep/88 px-3.5 py-2" testID="mode-shell-header">
+          <View className="flex-row items-center justify-between gap-3">
             <View className="flex-1 flex-row items-center gap-3">
               {avatar}
               <View className="flex-1 pr-1">
                 <Text
                   adjustsFontSizeToFit={isPhone}
+                  aria-level={1}
                   className={`font-sans-bold text-tato-text ${shellTitleClass}`}
                   minimumFontScale={0.85}
-                  numberOfLines={isPhone ? 2 : 1}>
+                  numberOfLines={1}
+                  role="heading"
+                  testID="mode-shell-title">
                   {title}
                 </Text>
-                <Text className="mt-1.5 font-mono text-[12px] uppercase tracking-[2px] text-[#9cb7e1]">
+                <Text
+                  className="mt-1.5 font-mono text-[12px] uppercase tracking-[2px] text-tato-textSoft"
+                  style={{ includeFontPadding: false, lineHeight: 14 }}
+                  testID="mode-shell-mode-label">
                   {modeLabel}
                 </Text>
               </View>
@@ -232,7 +278,9 @@ export function ModeShell({
                   <Pressable
                     accessibilityLabel={action.accessibilityLabel}
                     accessibilityRole="button"
+                    android_ripple={PRESS_FEEDBACK.ripple.subtle}
                     className={actionButtonClassName}
+                    hitSlop={HIT_SLOP.comfortable}
                     key={action.key}
                     onPress={action.onPress}>
                     <PlatformIcon name={action.icon} size={isPhone ? 20 : 18} color="#edf4ff" />
@@ -261,17 +309,17 @@ export function ModeShell({
 
 const styles = StyleSheet.create({
   desktopAvatar: {
-    borderColor: '#1e6dff',
-    borderRadius: 24,
+    borderColor: COLORS.accent,
+    borderRadius: RADIUS.pill,
     borderWidth: 2,
     height: 48,
     width: 48,
   },
   phoneAvatar: {
-    borderColor: '#1e6dff',
-    borderRadius: 29,
+    borderColor: COLORS.accent,
+    borderRadius: RADIUS.pill,
     borderWidth: 2,
-    height: 58,
-    width: 58,
+    height: 52,
+    width: 52,
   },
 });

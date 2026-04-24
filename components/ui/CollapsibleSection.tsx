@@ -22,7 +22,7 @@ export function CollapsibleSection({ title, defaultOpen = false, children }: Col
         <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-dim">{title}</Text>
         <View style={{ transform: [{ rotate: open ? '180deg' : '0deg' }] }}>
           <PlatformIcon
-            name={{ ios: 'chevron.down', android: 'expand_more', web: 'expand_more' }}
+            name={{ ios: 'chevron.down', android: 'expand-more', web: 'expand-more' }}
             size={16}
             color="#64779c"
           />

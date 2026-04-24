@@ -1,0 +1,133 @@
+name: Mobile E2E — Spatial Design & Parity
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'components/**'
+      - 'app/**'
+      - 'e2e/**'
+      - 'lib/ui.ts'
+
+jobs:
+  e2e-ios:
+    runs-on: macos-15
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Install Appium drivers
+        run: npm run appium:setup
+
+      - name: Build iOS app (simulator)
+        run: npx expo run:ios --no-install --configuration Debug
+        env:
+          APP_VARIANT: development
+          EXPO_PUBLIC_APP_ENV: development
+
+      - name: Run iOS E2E suite
+        run: npm run test:e2e:ios
+        env:
+          EXPO_PUBLIC_DEV_BYPASS_EMAIL: ${{ secrets.DEV_BYPASS_EMAIL }}
+          EXPO_PUBLIC_DEV_BYPASS_PASSWORD: ${{ secrets.DEV_BYPASS_PASSWORD }}
+
+      - name: Upload iOS screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-e2e-screenshots
+          path: e2e/screenshots/
+          retention-days: 14
+
+  e2e-android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - run: npm ci
+
+      - name: Install Appium drivers
+        run: npm run appium:setup
+
+      - name: Create Android emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          arch: x86_64
+          script: |
+            npx expo run:android --no-install --variant debug
+            npm run test:e2e:android
+        env:
+          APP_VARIANT: development
+          EXPO_PUBLIC_APP_ENV: development
+          EXPO_PUBLIC_DEV_BYPASS_EMAIL: ${{ secrets.DEV_BYPASS_EMAIL }}
+          EXPO_PUBLIC_DEV_BYPASS_PASSWORD: ${{ secrets.DEV_BYPASS_PASSWORD }}
+
+      - name: Upload Android screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-e2e-screenshots
+          path: e2e/screenshots/
+          retention-days: 14
+
+  parity-compare:
+    needs: [e2e-ios, e2e-android]
+    runs-on: ubuntu-latest
+    if: always()
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Download iOS snapshots
+        uses: actions/download-artifact@v4
+        with:
+          name: ios-e2e-screenshots
+          path: e2e/screenshots/
+
+      - name: Download Android snapshots
+        uses: actions/download-artifact@v4
+        with:
+          name: android-e2e-screenshots
+          path: e2e/screenshots/
+
+      - name: Compare cross-platform parity
+        run: npm run test:e2e:parity
+
+      - name: Upload parity report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: parity-report
+          path: e2e/screenshots/parity-report.json
+          retention-days: 14

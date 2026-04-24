@@ -7,6 +7,7 @@ import {
   getViewportColumns,
   getViewportTier,
 } from '@/lib/responsive';
+import { GRID } from '@/lib/token-values';
 
 describe('responsive contract', () => {
   it('resolves viewport tiers at the expected boundaries', () => {
@@ -27,10 +28,10 @@ describe('responsive contract', () => {
   });
 
   it('returns stable page gutters and max widths by tier', () => {
-    expect(getPageGutter(390)).toBe(16);
-    expect(getPageGutter(820)).toBe(24);
-    expect(getPageGutter(1280)).toBe(28);
-    expect(getPageGutter(1440)).toBe(40);
+    expect(getPageGutter(390)).toBe(GRID.phone.margin);
+    expect(getPageGutter(820)).toBe(GRID.tablet.margin);
+    expect(getPageGutter(1280)).toBe(GRID.desktop.margin);
+    expect(getPageGutter(1440)).toBe(GRID.wideDesktop.margin);
 
     expect(getPageMaxWidth(390)).toBeUndefined();
     expect(getPageMaxWidth(820)).toBe(1120);

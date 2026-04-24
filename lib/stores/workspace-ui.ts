@@ -32,6 +32,7 @@ type SupplierWorkspaceUiState = {
 type WorkspaceUiStore = {
   broker: BrokerWorkspaceUiState;
   supplier: SupplierWorkspaceUiState;
+  replaceBrokerRouteState: (state: Pick<BrokerWorkspaceUiState, 'desktopFocusFilters' | 'desktopSort' | 'searchQuery' | 'selectedCities'>) => void;
   resetBrokerDesktopControls: () => void;
   setBrokerActiveCategory: (category: BrokerCategory) => void;
   setBrokerMinAiConfidence: (value: number) => void;
@@ -60,6 +61,16 @@ export const useWorkspaceUiStore = create<WorkspaceUiStore>((set) => ({
   supplier: {
     activeFilter: 'all',
   },
+  replaceBrokerRouteState: (routeState) =>
+    set((state) => ({
+      broker: {
+        ...state.broker,
+        desktopFocusFilters: { ...routeState.desktopFocusFilters },
+        desktopSort: routeState.desktopSort,
+        searchQuery: routeState.searchQuery,
+        selectedCities: [...routeState.selectedCities],
+      },
+    })),
   setBrokerActiveCategory: (activeCategory) =>
     set((state) => ({
       broker: {

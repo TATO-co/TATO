@@ -14,6 +14,8 @@ type SkeletonCardProps = {
     height?: number;
     /** Border radius applied to the outer container. */
     borderRadius?: number;
+    /** Optional testID for E2E testing. */
+    testID?: string;
 };
 
 /**
@@ -21,7 +23,7 @@ type SkeletonCardProps = {
  *
  * Falls back to a static muted box when the user prefers reduced motion.
  */
-export function SkeletonCard({ height = 320, borderRadius = 24 }: SkeletonCardProps) {
+export function SkeletonCard({ height = 320, borderRadius = 24, testID = 'skeleton-card' }: SkeletonCardProps) {
     const reducedMotion = useReducedMotionPreference();
     const opacity = useSharedValue(0.45);
 
@@ -43,6 +45,7 @@ export function SkeletonCard({ height = 320, borderRadius = 24 }: SkeletonCardPr
 
     return (
         <Animated.View
+            testID={testID}
             style={[
                 {
                     height,
@@ -83,7 +86,8 @@ export function SkeletonRow() {
     return (
         <Animated.View
             className="flex-row items-center gap-4 rounded-[20px] border border-tato-line p-4"
-            style={[{ backgroundColor: '#12243f' }, animatedStyle]}>
+            style={[{ backgroundColor: '#12243f' }, animatedStyle]}
+            testID="skeleton-row">
             <View className="h-14 w-14 rounded-xl bg-tato-panelSoft" />
             <View className="flex-1 gap-2">
                 <View className="h-4 w-2/3 rounded-full bg-tato-panelSoft" />

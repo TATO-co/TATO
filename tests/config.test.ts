@@ -10,6 +10,7 @@ vi.mock('expo-constants', () => ({
 
 const originalEnv = { ...process.env };
 const originalLocation = globalThis.location;
+const originalNavigatorDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
 
 function restoreEnv() {
   for (const key of Object.keys(process.env)) {
@@ -33,10 +34,26 @@ function restoreLocation() {
   Reflect.deleteProperty(globalThis, 'location');
 }
 
+function restoreNavigator() {
+  if (originalNavigatorDescriptor) {
+    Object.defineProperty(globalThis, 'navigator', originalNavigatorDescriptor);
+    return;
+  }
+
+  Reflect.deleteProperty(globalThis, 'navigator');
+}
+
 function setHostname(hostname: string) {
   Object.defineProperty(globalThis, 'location', {
     configurable: true,
     value: { hostname },
+  });
+}
+
+function setNavigatorProduct(product: string) {
+  Object.defineProperty(globalThis, 'navigator', {
+    configurable: true,
+    value: { product },
   });
 }
 
@@ -49,6 +66,7 @@ describe('runtime config', () => {
   afterEach(() => {
     restoreEnv();
     restoreLocation();
+    restoreNavigator();
     vi.resetModules();
   });
 
@@ -85,6 +103,21 @@ describe('runtime config', () => {
     process.env.EXPO_PUBLIC_DEV_BYPASS_EMAIL = 'dev-bypass@tato.local';
     process.env.EXPO_PUBLIC_DEV_BYPASS_PASSWORD = 'secret';
     setHostname('localhost');
+
+    const config = await import('../lib/config');
+
+    expect(config.isLocalDevelopmentRuntime()).toBe(true);
+    expect(config.isDevelopmentBypassAvailable()).toBe(true);
+  });
+
+  it('allows dev bypass in native development runtimes', async () => {
+    setBaseRuntimeEnv();
+    process.env.EXPO_PUBLIC_APP_ENV = 'development';
+    process.env.APP_VARIANT = 'development';
+    process.env.EXPO_PUBLIC_DEV_BYPASS_EMAIL = 'dev-bypass@tato.local';
+    process.env.EXPO_PUBLIC_DEV_BYPASS_PASSWORD = 'secret';
+    setHostname('tato-development');
+    setNavigatorProduct('ReactNative');
 
     const config = await import('../lib/config');
 

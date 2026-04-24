@@ -1,8 +1,8 @@
 import { serve } from 'https://deno.land/std@0.224.0/http/server.ts';
 import { createClient } from 'npm:@supabase/supabase-js@2';
-import Stripe from 'npm:stripe@15.12.0';
 
 import { corsHeaders, withCors } from '../_shared/cors.ts';
+import { createStripeClient } from '../_shared/stripe.ts';
 
 type Payload = {
   claimId?: string;
@@ -84,9 +84,7 @@ serve(async (req) => {
     }
 
     const claimDepositCents = claim.claim_deposit_cents ?? claim.claim_fee_cents;
-    const stripe = new Stripe(stripeSecretKey, {
-      apiVersion: '2024-04-10',
-    });
+    const stripe = createStripeClient(stripeSecretKey);
 
     const intent = await stripe.paymentIntents.create({
       amount: claimDepositCents,

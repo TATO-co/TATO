@@ -1,7 +1,9 @@
 import { ActivityIndicator, Pressable, RefreshControl, ScrollView, Text, View } from 'react-native';
 import { useMemo } from 'react';
 import Animated, { FadeInUp } from 'react-native-reanimated';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { getDockContentPadding } from '@/components/layout/PhoneTabBar';
 import { ModeShell } from '@/components/layout/ModeShell';
 import { ResponsiveKpiGrid, ResponsiveSplitPane } from '@/components/layout/ResponsivePrimitives';
 import { InventoryTable } from '@/components/ui/InventoryTable';
@@ -31,6 +33,7 @@ const insightToneColors: Record<DerivedInsight['tone'], { border: string; bg: st
 };
 
 export default function SupplierAnalyticsScreen() {
+  const insets = useSafeAreaInsets();
   const { metrics, items, loading, refreshing, error, refresh } = useSupplierDashboard();
   const { isPhone, isTablet, tier } = useViewportInfo();
   const statusCounts = useMemo(() => {
@@ -78,6 +81,7 @@ export default function SupplierAnalyticsScreen() {
     ],
     [claimed, conversionPct, items.length, pending, statusCounts.available],
   );
+  const phoneScrollPaddingBottom = getDockContentPadding(insets.bottom);
 
   return (
     <ModeShell
@@ -113,7 +117,8 @@ export default function SupplierAnalyticsScreen() {
       ) : isPhone ? (
         <ScrollView
           className="mt-2 flex-1"
-          contentContainerClassName="gap-4 pb-36"
+          contentContainerClassName="gap-4"
+          contentContainerStyle={{ paddingBottom: phoneScrollPaddingBottom }}
           refreshControl={
             <RefreshControl
               colors={['#1e6dff']}

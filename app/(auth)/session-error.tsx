@@ -1,9 +1,10 @@
 import { useRouter } from 'expo-router';
 import { useState } from 'react';
-import { ActivityIndicator, Pressable, ScrollView, Text, View } from 'react-native';
+import { ScrollView, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { useAuth } from '@/components/providers/AuthProvider';
+import { TatoButton } from '@/components/ui/TatoButton';
 import { isLocalDevelopmentRuntime } from '@/lib/config';
 
 export default function SessionErrorScreen() {
@@ -48,14 +49,15 @@ export default function SessionErrorScreen() {
 
             {isLocalDevelopmentRuntime() && profileError ? (
               <Text className="mt-4 text-xs leading-6 text-tato-dim">
-                Development note: this is usually a failed profile or hub bootstrap, not an approval decision.
+                Development note usually means profile or hub bootstrap failed, not an approval decision.
               </Text>
             ) : null}
 
             <View className="mt-5 gap-3">
-              <Pressable
+              <TatoButton
                 disabled={busyAction !== null}
-                className="rounded-full bg-tato-accent px-5 py-3.5"
+                label="Retry Account Sync"
+                loading={busyAction === 'refresh'}
                 onPress={async () => {
                   setBusyAction('refresh');
                   setMessage(null);
@@ -65,19 +67,13 @@ export default function SessionErrorScreen() {
                   } finally {
                     setBusyAction(null);
                   }
-                }}>
-                {busyAction === 'refresh' ? (
-                  <ActivityIndicator color="#fff" />
-                ) : (
-                  <Text className="text-center font-mono text-xs font-semibold uppercase tracking-[1px] text-white">
-                    Retry Account Sync
-                  </Text>
-                )}
-              </Pressable>
+                }}
+              />
 
-              <Pressable
+              <TatoButton
                 disabled={busyAction !== null}
-                className="rounded-full border border-tato-line bg-tato-panelSoft px-5 py-3.5"
+                label="Sign Out"
+                loading={busyAction === 'signout'}
                 onPress={async () => {
                   setBusyAction('signout');
                   setMessage(null);
@@ -87,15 +83,9 @@ export default function SessionErrorScreen() {
                   } finally {
                     setBusyAction(null);
                   }
-                }}>
-                {busyAction === 'signout' ? (
-                  <ActivityIndicator color="#d9e7ff" />
-                ) : (
-                  <Text className="text-center font-mono text-xs font-semibold uppercase tracking-[1px] text-tato-text">
-                    Sign Out
-                  </Text>
-                )}
-              </Pressable>
+                }}
+                tone="secondary"
+              />
             </View>
           </View>
         </View>

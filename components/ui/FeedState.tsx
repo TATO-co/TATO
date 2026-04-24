@@ -1,4 +1,7 @@
-import { ActivityIndicator, Pressable, Text, View } from 'react-native';
+import { ActivityIndicator, Text, View } from 'react-native';
+
+import { TatoButton } from '@/components/ui/TatoButton';
+import { getUserSafeErrorMessage } from '@/lib/errorMessages';
 
 type FeedStateProps = {
     /** True while the initial load is in progress (not a background refresh). */
@@ -24,7 +27,7 @@ type FeedStateProps = {
 export function FeedState({ loading, error, empty, emptyLabel, onRetry }: FeedStateProps) {
     if (loading) {
         return (
-            <View className="items-center justify-center rounded-[24px] border border-tato-line bg-tato-panel p-8">
+            <View aria-live="polite" className="items-center justify-center rounded-[24px] border border-tato-line bg-tato-panel p-8" testID="feed-state-loading">
                 <ActivityIndicator color="#1e6dff" />
                 <Text className="mt-3 text-sm text-tato-muted">Loading...</Text>
             </View>
@@ -32,19 +35,20 @@ export function FeedState({ loading, error, empty, emptyLabel, onRetry }: FeedSt
     }
 
     if (error) {
+        const safeError = getUserSafeErrorMessage(error, 'Something went wrong. Pull to refresh or retry.');
+
         return (
-            <View className="items-center justify-center rounded-[24px] border border-tato-line bg-tato-panel p-8">
-                <Text className="text-center text-sm text-tato-error">{error}</Text>
+            <View aria-live="polite" className="items-center justify-center rounded-[24px] border border-tato-line bg-tato-panel p-8" testID="feed-state-error">
+                <Text className="text-center text-sm text-tato-error">{safeError}</Text>
                 {onRetry ? (
-                    <Pressable
+                    <TatoButton
                         accessibilityLabel="Retry loading"
-                        accessibilityRole="button"
-                        className="mt-3 rounded-full bg-tato-accent px-4 py-2 hover:bg-tato-accentStrong focus:bg-tato-accentStrong"
-                        onPress={onRetry}>
-                        <Text className="font-mono text-xs font-semibold uppercase tracking-[1px] text-white">
-                            Retry
-                        </Text>
-                    </Pressable>
+                        className="mt-3 self-center"
+                        label="Retry"
+                        onPress={onRetry}
+                        size="sm"
+                        testID="feed-state-retry"
+                    />
                 ) : null}
             </View>
         );
@@ -52,7 +56,7 @@ export function FeedState({ loading, error, empty, emptyLabel, onRetry }: FeedSt
 
     if (empty) {
         return (
-            <View className="items-center justify-center rounded-[24px] border border-tato-line bg-tato-panel p-8">
+            <View aria-live="polite" className="items-center justify-center rounded-[24px] border border-tato-line bg-tato-panel p-8" testID="feed-state-empty">
                 <Text className="text-center text-sm text-tato-muted">
                     {emptyLabel ?? 'Nothing here yet.'}
                 </Text>

@@ -8,6 +8,7 @@ import { useFonts } from 'expo-font';
 import { Stack, usePathname, useRouter, useSegments } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { useEffect, useRef } from 'react';
+import { Platform } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
@@ -16,12 +17,14 @@ import {
   Outfit_600SemiBold, 
   Outfit_700Bold 
 } from '@expo-google-fonts/outfit';
-import { 
+import {
   BricolageGrotesque_700Bold, 
   BricolageGrotesque_800ExtraBold 
 } from '@expo-google-fonts/bricolage-grotesque';
 
+import { QueryErrorBoundary } from '@/components/errors/QueryErrorBoundary';
 import { AuthProvider, useAuth } from '@/components/providers/AuthProvider';
+import { TatoStripeProvider } from '@/components/providers/TatoStripeProvider';
 import { initializeTelemetry } from '@/lib/analytics';
 import { resolveRootRedirectTarget } from '@/lib/auth-helpers';
 import { queryClient } from '@/lib/query/client';
@@ -33,6 +36,7 @@ export const unstable_settings = {
 };
 
 SplashScreen.preventAutoHideAsync();
+const navigationBackgroundColor = '#050d1b';
 
 function RootNavigator() {
   const pathname = usePathname();
@@ -78,9 +82,35 @@ function RootNavigator() {
   }, [redirectTarget, settling]);
 
   return (
-    <Stack screenOptions={{ headerShown: false }}>
+    <Stack
+      screenOptions={{
+        headerShown: false,
+        contentStyle: {
+          backgroundColor: navigationBackgroundColor,
+        },
+      }}>
       <Stack.Screen name="modal" options={{ presentation: 'transparentModal', animation: 'fade' }} />
     </Stack>
+  );
+}
+
+function RoutedApp() {
+  const { user } = useAuth();
+
+  return (
+    <QueryErrorBoundary screenName="root" userId={user?.id}>
+      {Platform.OS === 'web' ? (
+        <main
+          id="main-content"
+          role="main"
+          style={{ display: 'flex', flex: 1, backgroundColor: navigationBackgroundColor }}
+          tabIndex={-1}>
+          <RootNavigator />
+        </main>
+      ) : (
+        <RootNavigator />
+      )}
+    </QueryErrorBoundary>
   );
 }
 
@@ -116,9 +146,11 @@ export default function RootLayout() {
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
         <QueryClientProvider client={queryClient}>
-          <AuthProvider>
-            <RootNavigator />
-          </AuthProvider>
+          <TatoStripeProvider>
+            <AuthProvider>
+              <RoutedApp />
+            </AuthProvider>
+          </TatoStripeProvider>
         </QueryClientProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>

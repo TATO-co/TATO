@@ -5,6 +5,8 @@ export const DEFAULT_PLATFORM_UPSIDE_BPS = 1500;
 export const DEFAULT_CLAIM_DEPOSIT_MIN_CENTS = 200;
 export const DEFAULT_CLAIM_DEPOSIT_MAX_CENTS = 1000;
 export const DEFAULT_CLAIM_DEPOSIT_RATE_BPS = 100;
+export const CLAIM_DEPOSIT_DEADLINE_MINUTES = 30;
+export const CLAIM_ABANDON_COOLDOWN_MINUTES = 60;
 
 export type SupportedCurrency = (typeof SUPPORTED_CURRENCIES)[number];
 
@@ -74,6 +76,33 @@ export function resolveClaimSettlement(args: {
     brokerAmount,
     platformAmount,
     ...split,
+  };
+}
+
+export function resolveMarketplaceDestinationSettlement(args: {
+  salePriceCents: number;
+  lockedFloorPriceCents: number | null | undefined;
+  supplierUpsideBps?: number | null;
+  brokerUpsideBps?: number | null;
+  platformUpsideBps?: number | null;
+}) {
+  const settlement = resolveClaimSettlement(args);
+  const supplierTransferAmount = settlement.supplierAmount;
+  const brokerDestinationAmount = settlement.brokerAmount;
+  const platformAmount = settlement.platformAmount;
+  const applicationFeeAmount = supplierTransferAmount + platformAmount;
+  const total = supplierTransferAmount + brokerDestinationAmount + platformAmount;
+
+  if (total !== settlement.salePriceCents) {
+    throw new Error('Marketplace settlement amounts must equal the buyer payment amount.');
+  }
+
+  return {
+    ...settlement,
+    supplierTransferAmount,
+    brokerDestinationAmount,
+    platformAmount,
+    applicationFeeAmount,
   };
 }
 

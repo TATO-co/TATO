@@ -51,9 +51,74 @@ export type ProfileRecord = {
   is_admin: boolean;
   country_code: string | null;
   payouts_enabled: boolean;
+  stripe_charges_enabled?: boolean | null;
   stripe_connect_onboarding_complete: boolean;
+  stripe_connect_restricted_soon?: boolean | null;
   payout_currency_code: CurrencyCode | null;
+  stripe_customer_id: string | null;
+  stripe_default_payment_method_id: string | null;
+  stripe_default_payment_method_brand: string | null;
+  stripe_default_payment_method_last4: string | null;
 };
+
+type LegacyProfileRecord = Omit<
+  ProfileRecord,
+  | 'stripe_customer_id'
+  | 'stripe_default_payment_method_id'
+  | 'stripe_default_payment_method_brand'
+  | 'stripe_default_payment_method_last4'
+  | 'stripe_charges_enabled'
+  | 'stripe_connect_restricted_soon'
+>;
+
+const PROFILE_SELECT_BASE = 'id,email,display_name,default_mode,status,can_supply,can_broker,is_admin,country_code,payouts_enabled,stripe_connect_onboarding_complete,payout_currency_code';
+const PROFILE_SELECT_WITH_STRIPE = `${PROFILE_SELECT_BASE},stripe_customer_id,stripe_default_payment_method_id,stripe_default_payment_method_brand,stripe_default_payment_method_last4,stripe_charges_enabled,stripe_connect_restricted_soon`;
+
+function normalizeProfileRecord(
+  profile: (LegacyProfileRecord & Partial<ProfileRecord>) | ProfileRecord | null,
+): ProfileRecord | null {
+  if (!profile) {
+    return null;
+  }
+
+  return {
+    ...profile,
+    stripe_charges_enabled: profile.stripe_charges_enabled ?? null,
+    stripe_connect_restricted_soon: profile.stripe_connect_restricted_soon ?? null,
+    stripe_customer_id: profile.stripe_customer_id ?? null,
+    stripe_default_payment_method_id: profile.stripe_default_payment_method_id ?? null,
+    stripe_default_payment_method_brand: profile.stripe_default_payment_method_brand ?? null,
+    stripe_default_payment_method_last4: profile.stripe_default_payment_method_last4 ?? null,
+  };
+}
+
+function isMissingStripeProfileColumnError(message: string | null | undefined) {
+  const normalized = message?.toLowerCase() ?? '';
+  return normalized.includes('stripe_customer_id')
+    || normalized.includes('stripe_default_payment_method_id')
+    || normalized.includes('stripe_default_payment_method_brand')
+    || normalized.includes('stripe_default_payment_method_last4')
+    || normalized.includes('stripe_charges_enabled')
+    || normalized.includes('stripe_connect_restricted_soon');
+}
+
+async function runProfileQuery(
+  queryFactory: (select: string) => PromiseLike<{ data: unknown; error: { message: string } | null }>,
+) {
+  const next = await queryFactory(PROFILE_SELECT_WITH_STRIPE);
+  if (!next.error || !isMissingStripeProfileColumnError(next.error.message)) {
+    return {
+      data: normalizeProfileRecord(next.data as (LegacyProfileRecord & Partial<ProfileRecord>) | ProfileRecord | null),
+      error: next.error,
+    };
+  }
+
+  const fallback = await queryFactory(PROFILE_SELECT_BASE);
+  return {
+    data: normalizeProfileRecord(fallback.data as LegacyProfileRecord | null),
+    error: fallback.error,
+  };
+}
 
 type AuthContextValue = {
   configured: boolean;
@@ -214,7 +279,8 @@ function shouldSeedDevelopmentHub(profile: ProfileRecord | null) {
 }
 
 async function ensureDevelopmentAccess(profile: ProfileRecord): Promise<ProfileRecord> {
-  if (!supabase || !developmentApprovalBypassEnabled) {
+  const client = supabase;
+  if (!client || !developmentApprovalBypassEnabled) {
     return profile;
   }
 
@@ -224,13 +290,14 @@ async function ensureDevelopmentAccess(profile: ProfileRecord): Promise<ProfileR
     && profile.can_broker
     && profile.is_admin
     && profile.payouts_enabled
+    && profile.stripe_charges_enabled !== false
     && profile.stripe_connect_onboarding_complete
   ) {
     void ensureDevelopmentHub(profile);
     return profile;
   }
 
-  const { data, error } = await supabase
+  const { data, error } = await runProfileQuery((select) => client
     .from('profiles')
     .update({
       status: 'active',
@@ -245,10 +312,8 @@ async function ensureDevelopmentAccess(profile: ProfileRecord): Promise<ProfileR
       suspended_by: null,
     })
     .eq('id', profile.id)
-    .select(
-      'id,email,display_name,default_mode,status,can_supply,can_broker,is_admin,country_code,payouts_enabled,stripe_connect_onboarding_complete,payout_currency_code',
-    )
-    .maybeSingle<ProfileRecord>();
+    .select(select)
+    .maybeSingle());
 
   if (error) {
     captureException(error, { flow: 'auth.ensureDevelopmentAccess' });
@@ -262,6 +327,7 @@ async function ensureDevelopmentAccess(profile: ProfileRecord): Promise<ProfileR
     can_broker: true,
     is_admin: true,
     payouts_enabled: true,
+    stripe_charges_enabled: true,
     stripe_connect_onboarding_complete: true,
   };
 
@@ -270,17 +336,16 @@ async function ensureDevelopmentAccess(profile: ProfileRecord): Promise<ProfileR
 }
 
 async function ensureProfile(user: User): Promise<ProfileRecord | null> {
-  if (!supabase) {
+  const client = supabase;
+  if (!client) {
     return null;
   }
 
-  const select = 'id,email,display_name,default_mode,status,can_supply,can_broker,is_admin,country_code,payouts_enabled,stripe_connect_onboarding_complete,payout_currency_code';
-
-  const { data: existing, error: existingError } = await supabase
+  const { data: existing, error: existingError } = await runProfileQuery((select) => client
     .from('profiles')
     .select(select)
     .eq('id', user.id)
-    .maybeSingle<ProfileRecord>();
+    .maybeSingle());
 
   if (existingError) {
     captureException(existingError, { flow: 'auth.ensureProfile.lookup' });
@@ -308,14 +373,18 @@ async function ensureProfile(user: User): Promise<ProfileRecord | null> {
     payouts_enabled: false,
     stripe_connect_onboarding_complete: false,
     payout_currency_code: 'USD',
+    stripe_customer_id: null,
+    stripe_default_payment_method_id: null,
+    stripe_default_payment_method_brand: null,
+    stripe_default_payment_method_last4: null,
   };
 
-  const { data: inserted, error: insertError } = await supabase
+  const { data: inserted, error: insertError } = await runProfileQuery((select) => client
     .from('profiles')
     .upsert(profileSeed)
     .select(select)
     .eq('id', user.id)
-    .maybeSingle<ProfileRecord>();
+    .maybeSingle());
 
   if (insertError) {
     captureException(insertError, { flow: 'auth.ensureProfile.upsert' });
@@ -1139,14 +1208,17 @@ export function AuthProvider({ children }: PropsWithChildren) {
         return { error: configurationError ?? 'Supabase is not configured.' };
       }
 
-      const { data, error } = await supabase
+      const client = supabase;
+      if (!client) {
+        return { error: configurationError ?? 'Supabase is not configured.' };
+      }
+
+      const { data, error } = await runProfileQuery((select) => client
         .from('profiles')
         .update({ default_mode: mode })
         .eq('id', user.id)
-        .select(
-          'id,email,display_name,default_mode,status,can_supply,can_broker,is_admin,country_code,payouts_enabled,stripe_connect_onboarding_complete,payout_currency_code',
-        )
-        .maybeSingle<ProfileRecord>();
+        .select(select)
+        .maybeSingle());
 
       if (error) {
         captureException(error, { flow: 'auth.switchMode', mode });

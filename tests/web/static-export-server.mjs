@@ -71,6 +71,15 @@ function withinOutputDir(candidatePath) {
   return relative && !relative.startsWith('..') && !path.isAbsolute(relative);
 }
 
+function getFallbackFile() {
+  const notFoundPath = path.join(outputDir, '+not-found.html');
+  if (existsSync(notFoundPath)) {
+    return notFoundPath;
+  }
+
+  return path.join(outputDir, 'index.html');
+}
+
 function tryResolveFile(requestPath) {
   const normalizedPath = requestPath.replace(/^\/+/, '');
   const candidates = [];
@@ -97,7 +106,7 @@ function tryResolveFile(requestPath) {
     }
   }
 
-  return path.join(outputDir, '+not-found.html');
+  return getFallbackFile();
 }
 
 hydrateEnvFile('.env.local');
@@ -121,7 +130,18 @@ const server = createServer((request, response) => {
     return;
   }
 
-  createReadStream(resolvedPath).pipe(response);
+  const stream = createReadStream(resolvedPath);
+  stream.on('error', () => {
+    if (!response.headersSent) {
+      response.writeHead(404, {
+        'Cache-Control': 'no-store',
+        'Content-Type': 'text/plain; charset=utf-8',
+      });
+    }
+
+    response.end('Not found');
+  });
+  stream.pipe(response);
 });
 
 for (const signal of ['SIGINT', 'SIGTERM']) {

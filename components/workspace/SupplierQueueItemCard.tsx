@@ -1,6 +1,6 @@
 import { memo } from 'react';
 import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
-import { Image } from 'expo-image';
+import { Image } from '@/components/ui/TatoImage';
 import Animated, { FadeInUp } from 'react-native-reanimated';
 
 import { PressableScale } from '@/components/ui/PressableScale';
@@ -43,11 +43,10 @@ function SupplierQueueItemCardInner({
     <Animated.View
       className="px-1"
       entering={reducedMotion ? undefined : FadeInUp.duration(TIMING.quick)}>
-      <View className="overflow-hidden rounded-[28px] border border-[#16355f] bg-[#07172d]">
+      <View className="overflow-hidden rounded-[28px] border border-tato-lineSoft bg-tato-panelDeep">
         <PressableScale
           activeScale={0.985}
           onPress={() => onOpenItem(item.id)}>
-          <View className="absolute -right-10 -top-10 h-28 w-28 rounded-full bg-tato-accent/10" />
           <View className="p-4">
             <View className="flex-row gap-3">
               <Image
@@ -74,12 +73,12 @@ function SupplierQueueItemCardInner({
 
                 <View className="mt-3 flex-row flex-wrap gap-2">
                   <StatusPill status={item.status} />
-                  <View className="rounded-full border border-[#1c3d6e] bg-[#0d223f] px-2.5 py-1">
-                    <Text className="font-mono text-[11px] uppercase tracking-[1px] text-[#9cb7e1]">
+                  <View className="rounded-full border border-tato-lineMedium bg-tato-panelSoft px-2.5 py-1">
+                    <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-textSoft">
                       {item.brokerActivity} activity
                     </Text>
                   </View>
-                  <View className="rounded-full border border-[#17355f] bg-[#091a31] px-2.5 py-1">
+                  <View className="rounded-full border border-tato-lineSoft bg-tato-panel px-2.5 py-1">
                     <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-muted">
                       Qty {item.quantity}
                     </Text>
@@ -88,18 +87,18 @@ function SupplierQueueItemCardInner({
               </View>
             </View>
 
-            <View className="mt-4 flex-row items-center justify-between border-t border-[#16355f] pt-3">
+            <View className="mt-4 flex-row items-center justify-between border-t border-tato-lineSoft pt-3">
               <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-dim">
                 SKU {item.sku}
               </Text>
-              <Text className="font-mono text-[11px] uppercase tracking-[1px] text-[#9cb7e1]">
+              <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-textSoft">
                 Open Item
               </Text>
             </View>
           </View>
         </PressableScale>
 
-        <View className="border-t border-[#16355f] px-4 py-3">
+        <View className="border-t border-tato-lineSoft px-4 py-3">
           {item.canDelete ? (
             <PressableScale
               activeScale={0.98}
@@ -115,8 +114,8 @@ function SupplierQueueItemCardInner({
               )}
             </PressableScale>
           ) : (
-            <View className="rounded-full border border-[#17355f] bg-[#091a31] px-3 py-1.5">
-              <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-dim">Locked</Text>
+            <View className="flex-row items-center gap-2 rounded-full border border-tato-lineSoft bg-tato-panel px-3 py-1.5">
+              <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-dim">Active claim — cannot delete</Text>
             </View>
           )}
         </View>

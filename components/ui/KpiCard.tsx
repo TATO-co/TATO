@@ -7,6 +7,8 @@ type KpiCardProps = {
     delta: string;
     tone?: 'neutral' | 'positive' | 'accent';
     sparklineData?: number[];
+    /** Optional testID for E2E testing. */
+    testID?: string;
 };
 
 function Sparkline({ data, color }: { data: number[]; color: string }) {
@@ -46,11 +48,11 @@ const toneColors = {
     neutral: { text: 'text-tato-text', spark: '#8ea4c8' },
 };
 
-export function KpiCard({ label, value, delta, tone = 'neutral', sparklineData }: KpiCardProps) {
+export function KpiCard({ label, value, delta, tone = 'neutral', sparklineData, testID }: KpiCardProps) {
     const colors = toneColors[tone];
 
     return (
-        <View className="flex-1 rounded-[20px] border border-tato-line bg-tato-panel p-4">
+        <View className="flex-1 rounded-[20px] border border-tato-line bg-tato-panel p-4" testID={testID}>
             <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-dim">
                 {label}
             </Text>

@@ -1,12 +1,33 @@
 import { Alert, Platform } from 'react-native';
 
+import { SPACE } from '@/lib/tokens';
+
 export const RHYTHM = {
-  xs: 8,
-  sm: 12,
-  md: 16,
-  lg: 24,
-  xl: 32,
+  xxs: SPACE[4],
+  xs: SPACE[8],
+  sm: SPACE[12],
+  md: SPACE[16],
+  lg: SPACE[24],
+  xl: SPACE[32],
+  xxl: SPACE[48],
+  xxxl: SPACE[64],
 } as const;
+
+export {
+  COLORS,
+  FONT_FAMILY,
+  GRID,
+  HIT_SLOP,
+  PRESS_FEEDBACK,
+  RADIUS,
+  SHADOWS,
+  SPACE,
+  SPACING_SCALE,
+  TOUCH_TARGET,
+  TYPE,
+  getDockPlatformStyle,
+  withMinimumHitSlop,
+} from '@/lib/tokens';
 
 export const TIMING = {
   quick: 180,

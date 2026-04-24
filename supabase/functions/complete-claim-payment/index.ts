@@ -2,6 +2,7 @@ import { serve } from 'https://deno.land/std@0.224.0/http/server.ts';
 
 import { claimMutationRequest, completeMutationRequest, failMutationRequest, writeAuditEvent } from '../_shared/audit.ts';
 import { corsHeaders } from '../_shared/cors.ts';
+import { writeUserNotification } from '../_shared/notifications.ts';
 import { createCorrelationId, failure, success } from '../_shared/responses.ts';
 import { createSupabaseClients, requireAuthedUser } from '../_shared/supabase.ts';
 
@@ -127,6 +128,19 @@ serve(async (req) => {
       transactionId: payment.id,
       metadata: {
         previousStatus: claim.status,
+      },
+    });
+    await writeUserNotification(admin, {
+      recipientProfileId: claim.broker_id,
+      actorProfileId: authedUser.user.id,
+      itemId: claim.item_id,
+      claimId: claim.id,
+      eventType: 'broker.payout_triggered',
+      title: 'Claim completed.',
+      body: 'The supplier marked this claim complete. Review payout status from Payments.',
+      actionHref: '/(app)/payments',
+      metadata: {
+        transactionId: payment.id,
       },
     });
 

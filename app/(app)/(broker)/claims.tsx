@@ -1,30 +1,56 @@
-import { startTransition, useCallback, useEffect, useMemo, useState } from 'react';
+import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useLocalSearchParams } from 'expo-router';
 import {
-  ActivityIndicator,
+  AppState,
   KeyboardAvoidingView,
   Linking,
   Platform,
   Pressable,
   RefreshControl,
   ScrollView,
+  Share,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from 'react-native';
-import { Image } from 'expo-image';
+import { Image } from '@/components/ui/TatoImage';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { getDockContentPadding } from '@/components/layout/PhoneTabBar';
 import { ModeShell } from '@/components/layout/ModeShell';
 import { ResponsiveKpiGrid, ResponsiveSplitPane } from '@/components/layout/ResponsivePrimitives';
+import { ActionTierButton, ContentCard, InsetTabBar, ListRow, ListSection } from '@/components/primitives';
+import { SectionErrorBoundary } from '@/components/errors/SectionErrorBoundary';
+import { ClaimConversation } from '@/components/ui/ClaimConversation';
+import { ContextualAction } from '@/components/ui/ContextualAction';
+import { CurrencyDisplay } from '@/components/ui/CurrencyDisplay';
 import { FeedState } from '@/components/ui/FeedState';
+import { NotificationFeed } from '@/components/ui/NotificationFeed';
+import { ActionConfirmation, type NextStepAction } from '@/components/ui/NextStep';
 import { SkeletonCard, SkeletonRow } from '@/components/ui/SkeletonCard';
+import { StockStateTimeline, StockStatusBadge } from '@/components/ui/StockState';
 import { useViewportInfo } from '@/lib/constants';
+import {
+  buildUniversalListingKit,
+  getDefaultCrosslistingPlatforms,
+  getCrosslistingPlatform,
+  type CrosslistingDraft,
+  type UniversalListingKit,
+} from '@/lib/crosslisting';
+import {
+  copyTextToClipboard,
+  dismissListingKitNotification,
+  prepareListingKitPhotos,
+  readStoredUniversalKit,
+  registerListingKitNotificationActions,
+  scheduleListingKitNotification,
+  storeUniversalListingKit,
+} from '@/lib/crosslisting-runtime';
 import { useBrokerClaims } from '@/lib/hooks/useBrokerClaims';
 import { useItemDetail } from '@/lib/hooks/useItemDetail';
 import {
-  buildCrosslistingDescriptions,
   formatMoney,
-  type ClaimPlatformVariant,
 } from '@/lib/models';
 import { brokerDesktopNav } from '@/lib/navigation';
 import { generateBrokerListing, type ListingAiResult } from '@/lib/repositories/listing';
@@ -35,14 +61,19 @@ type WorkflowDraft = {
   listingUrl: string;
   externalId: string;
   pickupDueInput: string;
+  buyerPaymentAmountInput: string;
 };
+
+type ClaimDetailTab = 'details' | 'distribute' | 'track';
+
+const CLAIM_DETAIL_TABS: Array<{ key: ClaimDetailTab; label: string }> = [
+  { key: 'details', label: 'Details' },
+  { key: 'distribute', label: 'Distribute' },
+  { key: 'track', label: 'Track' },
+];
 
 function statusLabel(status: string) {
   return status.replace(/_/g, ' ').toUpperCase();
-}
-
-function humanizePlatform(platform: string) {
-  return platform.replace(/_/g, ' ').replace(/\b\w/g, (match) => match.toUpperCase());
 }
 
 function formatTimestamp(value: string | null | undefined) {
@@ -60,6 +91,19 @@ function formatTimestamp(value: string | null | undefined) {
     day: 'numeric',
     hour: 'numeric',
     minute: '2-digit',
+  }).format(date);
+}
+
+function formatPayoutEstimate(value: string | null | undefined) {
+  const date = value ? new Date(value) : new Date();
+  if (Number.isNaN(date.getTime())) {
+    return 'soon';
+  }
+
+  date.setDate(date.getDate() + 2);
+  return new Intl.DateTimeFormat('en-US', {
+    month: 'short',
+    day: 'numeric',
   }).format(date);
 }
 
@@ -117,28 +161,157 @@ function parseWorkflowInput(value: string) {
   };
 }
 
-function buildVariantDescriptions(platformVariants: Record<string, ClaimPlatformVariant>) {
-  return Object.entries(platformVariants)
-    .map(([platform, variant]) => ({
-      platform: humanizePlatform(platform),
-      description: variant.description || variant.title,
-      pushLabel: `Push to ${platform.split('_')[0]}`,
-      copyLabel: `Copy ${platform.split('_')[0]}`,
-      tone: 'accent' as const,
-    }))
-    .filter((entry) => entry.description.trim().length > 0);
+function formatMoneyInput(cents: number | null | undefined) {
+  if (typeof cents !== 'number' || Number.isNaN(cents)) {
+    return '';
+  }
+
+  return (cents / 100).toFixed(2);
+}
+
+function parseMoneyInput(value: string, minimumCents: number, currencyCode = 'USD') {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return {
+      ok: false as const,
+      message: 'Enter the buyer payment amount before creating the payment link.',
+    };
+  }
+
+  const normalized = Number.parseFloat(trimmed.replace(/[^0-9.]/g, ''));
+  if (!Number.isFinite(normalized) || normalized <= 0) {
+    return {
+      ok: false as const,
+      message: 'Enter a valid buyer payment amount.',
+    };
+  }
+
+  const cents = Math.round(normalized * 100);
+  if (cents < minimumCents) {
+    return {
+      ok: false as const,
+      message: `Buyer payment must stay at or above ${formatMoney(minimumCents, currencyCode as Parameters<typeof formatMoney>[1], 2)}.`,
+    };
+  }
+
+  return {
+    ok: true as const,
+    cents,
+  };
+}
+
+function resolveBuyerPaymentUrl(token: string | null | undefined) {
+  if (!token) {
+    return null;
+  }
+
+  const path = `/pay/${token}`;
+  if (typeof window === 'undefined') {
+    return path;
+  }
+
+  return new URL(path, window.location.origin).toString();
+}
+
+function formatKitPreparedAt(value: number | null | undefined) {
+  if (!value) {
+    return 'Not prepared';
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return 'Not prepared';
+  }
+
+  return new Intl.DateTimeFormat('en-US', {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  }).format(date);
+}
+
+function getDraftStatusLabel(draft: CrosslistingDraft, claimStatus?: string | null) {
+  if (claimStatus === 'completed') {
+    return 'SOLD';
+  }
+
+  return draft.status === 'listed' ? 'LISTED' : 'READY';
+}
+
+function getDraftStatusClass(draft: CrosslistingDraft, claimStatus?: string | null) {
+  if (claimStatus === 'completed') {
+    return 'border-tato-accent/40 bg-tato-accent/15';
+  }
+
+  return draft.status === 'listed'
+    ? 'border-tato-profit/35 bg-tato-profit/10'
+    : 'border-tato-line bg-[#102443]';
+}
+
+function getDraftStatusTextClass(draft: CrosslistingDraft, claimStatus?: string | null) {
+  if (claimStatus === 'completed') {
+    return 'text-tato-accent';
+  }
+
+  return draft.status === 'listed' ? 'text-tato-profit' : 'text-tato-muted';
+}
+
+function getKitPhotoLabel(kit: UniversalListingKit | null, draft: CrosslistingDraft) {
+  if (!draft.photoCount) {
+    return 'No photos attached';
+  }
+
+  if (!kit) {
+    return `${draft.photoCount} photos available`;
+  }
+
+  if (kit.photoStatus === 'saved') {
+    return `${kit.photoSavedCount} photos in camera roll`;
+  }
+
+  if (kit.photoStatus === 'partial') {
+    return `${kit.photoSavedCount} of ${draft.photoCount} photos saved`;
+  }
+
+  if (kit.photoStatus === 'skipped') {
+    return `${draft.photoCount} photos ready`;
+  }
+
+  if (kit.photoStatus === 'failed') {
+    return `${draft.photoCount} photos need manual selection`;
+  }
+
+  return `${draft.photoCount} photos ready`;
+}
+
+function normalizeCopyForCompare(value: string | null | undefined) {
+  return (value ?? '').replace(/\s+/g, ' ').trim().toLowerCase();
+}
+
+function isUnadaptedPlatformCopy(platformDescription: string, baseDescription: string) {
+  const normalizedPlatform = normalizeCopyForCompare(platformDescription);
+  const normalizedBase = normalizeCopyForCompare(baseDescription);
+  return Boolean(normalizedPlatform && normalizedBase && normalizedPlatform === normalizedBase);
 }
 
 export default function BrokerClaimsScreen() {
+  const { claimId } = useLocalSearchParams<{ claimId?: string }>();
+  const insets = useSafeAreaInsets();
   const { isPhone, tier } = useViewportInfo();
   const { claims, error, loading, refresh, refreshing } = useBrokerClaims();
   const [selectedClaimId, setSelectedClaimId] = useState<string | null>(null);
 
   useEffect(() => {
+    if (claimId && claims.some((claim) => claim.id === claimId)) {
+      setSelectedClaimId(claimId);
+      return;
+    }
+
     if (!selectedClaimId && claims[0]?.id) {
       setSelectedClaimId(claims[0].id);
     }
-  }, [claims, selectedClaimId]);
+  }, [claimId, claims, selectedClaimId]);
 
   const selectedClaim = useMemo(
     () => claims.find((claim) => claim.id === selectedClaimId) ?? claims[0] ?? null,
@@ -158,10 +331,27 @@ export default function BrokerClaimsScreen() {
     listingUrl: '',
     externalId: '',
     pickupDueInput: '',
+    buyerPaymentAmountInput: '',
   });
   const [workflowLoading, setWorkflowLoading] = useState<'listing' | 'buyer' | 'pickup' | null>(null);
   const [workflowError, setWorkflowError] = useState<string | null>(null);
-  const [workflowSuccess, setWorkflowSuccess] = useState<string | null>(null);
+  const [workflowConfirmation, setWorkflowConfirmation] = useState<{
+    acknowledgment: string;
+    systemContext: string;
+    crossPersonaNote: string;
+    nextSteps: NextStepAction[];
+  } | null>(null);
+  const [universalKit, setUniversalKit] = useState<UniversalListingKit | null>(null);
+  const [kitLoading, setKitLoading] = useState(false);
+  const [kitProgress, setKitProgress] = useState<string | null>(null);
+  const [lastOpenedDraft, setLastOpenedDraft] = useState<CrosslistingDraft | null>(null);
+  const [returnPromptDraft, setReturnPromptDraft] = useState<CrosslistingDraft | null>(null);
+  const [listingKitNotificationId, setListingKitNotificationId] = useState<string | null>(null);
+  const appStateRef = useRef(AppState.currentState);
+  const returnUrlInputRef = useRef<TextInput | null>(null);
+  const [selectedDetailTab, setSelectedDetailTab] = useState<ClaimDetailTab>('details');
+  const [expandedPlatform, setExpandedPlatform] = useState<string | null>(null);
+  const [listingCopyExpanded, setListingCopyExpanded] = useState(false);
 
   useEffect(() => {
     const firstListing = selectedClaim?.externalListings[0] ?? null;
@@ -170,10 +360,78 @@ export default function BrokerClaimsScreen() {
       listingUrl: firstListing?.url ?? '',
       externalId: firstListing?.externalId ?? '',
       pickupDueInput: formatWorkflowInput(selectedClaim?.pickupDueAt),
+      buyerPaymentAmountInput: formatMoneyInput(
+        selectedClaim?.buyerPaymentAmountCents ?? detail?.suggestedListPriceCents ?? selectedClaim?.claimDepositCents ?? null,
+      ),
     });
     setWorkflowError(null);
-    setWorkflowSuccess(null);
+    setWorkflowConfirmation(null);
+    setSelectedDetailTab('details');
+    setExpandedPlatform(null);
+    setListingCopyExpanded(false);
+  }, [detail?.suggestedListPriceCents, selectedClaim?.buyerPaymentAmountCents, selectedClaim?.id, selectedClaim?.pickupDueAt]);
+
+  useEffect(() => {
+    let mounted = true;
+
+    if (!selectedClaim?.id) {
+      setUniversalKit(null);
+      return;
+    }
+
+    void readStoredUniversalKit(selectedClaim.id).then((storedKit) => {
+      if (mounted) {
+        setUniversalKit(storedKit);
+      }
+    });
+
+    return () => {
+      mounted = false;
+    };
   }, [selectedClaim?.id]);
+
+  useEffect(() => {
+    let cleanup: () => void = () => undefined;
+    let mounted = true;
+
+    void registerListingKitNotificationActions().then((dispose) => {
+      if (mounted) {
+        cleanup = dispose;
+      } else {
+        dispose();
+      }
+    });
+
+    return () => {
+      mounted = false;
+      cleanup();
+    };
+  }, []);
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (nextState) => {
+      const previousState = appStateRef.current;
+      appStateRef.current = nextState;
+
+      if (nextState === 'active' && previousState !== 'active' && lastOpenedDraft) {
+        void dismissListingKitNotification(listingKitNotificationId);
+        setListingKitNotificationId(null);
+        setReturnPromptDraft(lastOpenedDraft);
+        setWorkflowDraft((current) => ({
+          ...current,
+          platform: lastOpenedDraft.label,
+          listingUrl: '',
+          externalId: '',
+        }));
+        setSelectedDetailTab('track');
+        setWorkflowError(null);
+        setWorkflowConfirmation(null);
+        setTimeout(() => returnUrlInputRef.current?.focus(), 250);
+      }
+    });
+
+    return () => subscription.remove();
+  }, [lastOpenedDraft, listingKitNotificationId]);
 
   const handleGenerateListing = useCallback(async () => {
     if (!selectedClaim?.id) {
@@ -182,13 +440,26 @@ export default function BrokerClaimsScreen() {
 
     setListingLoading(true);
     setListingError(null);
+    setWorkflowConfirmation({
+      acknowledgment: 'Generating listing copy...',
+      systemContext: 'TATO is building resale copy from the supplier record and claim economics.',
+      crossPersonaNote: 'The supplier still sees this item as claimed while the listing is prepared.',
+      nextSteps: [],
+    });
 
     try {
       const result = await generateBrokerListing(selectedClaim.id);
       setListingResult(result);
+      setWorkflowConfirmation({
+        acknowledgment: 'Listing copy generated.',
+        systemContext: 'Suggested title, description, and platform variants are ready for this claim.',
+        crossPersonaNote: 'The supplier will see marketplace activity after you save an external listing reference.',
+        nextSteps: [],
+      });
       await refresh();
     } catch (err) {
       setListingError(err instanceof Error ? err.message : 'Failed to generate listing.');
+      setWorkflowConfirmation(null);
     } finally {
       setListingLoading(false);
     }
@@ -201,14 +472,39 @@ export default function BrokerClaimsScreen() {
 
   const listingTitle = listingResult?.listingTitle ?? selectedClaim?.listingTitle ?? detail?.title ?? '';
   const listingDescription = listingResult?.listingDescription ?? selectedClaim?.listingDescription ?? detail?.description ?? '';
-  const persistedDescriptions = buildVariantDescriptions(selectedClaim?.platformVariants ?? {});
-  const generatedDescriptions = listingResult ? buildVariantDescriptions(listingResult.platformVariants) : [];
-  const fallbackDescriptions = selectedClaim && detail ? buildCrosslistingDescriptions(detail) : [];
-  const descriptions = generatedDescriptions.length
-    ? generatedDescriptions
-    : persistedDescriptions.length
-      ? persistedDescriptions
-      : fallbackDescriptions;
+  const listingPlatformVariants = listingResult?.platformVariants ?? selectedClaim?.platformVariants ?? {};
+  const activeUniversalKit = useMemo(() => {
+    if (!selectedClaim || !detail) {
+      return universalKit;
+    }
+
+    return buildUniversalListingKit({
+      claimId: selectedClaim.id,
+      itemId: selectedClaim.itemId,
+      listingTitle: listingTitle || detail.title,
+      listingDescription: listingDescription || detail.description,
+      platformVariants: listingPlatformVariants,
+      existingListings: selectedClaim.externalListings,
+      priceCents: detail.suggestedListPriceCents,
+      floorPriceCents: detail.floorPriceCents,
+      currencyCode: selectedClaim.currencyCode,
+      photoUrls: detail.photoUrls,
+      preparedAt: universalKit?.preparedAt,
+      photoStatus: universalKit?.photoStatus,
+      photoSavedCount: universalKit?.photoSavedCount,
+    });
+  }, [
+    detail,
+    listingDescription,
+    listingPlatformVariants,
+    listingTitle,
+    selectedClaim,
+    universalKit,
+  ]);
+  const listedPlatformCount = activeUniversalKit?.platforms.filter((platform) => platform.status === 'listed').length ?? 0;
+  const kitPlatformCount = activeUniversalKit?.platforms.length ?? getDefaultCrosslistingPlatforms().length;
+  const selectedWorkflowPlatform = getCrosslistingPlatform(workflowDraft.platform);
+  const buyerPaymentUsesMarketplaceCheckout = selectedWorkflowPlatform.checkoutMode === 'marketplace_managed';
   const reportingCurrency = selectedClaim?.currencyCode ?? 'USD';
   const claimStats = useMemo(
     () => claims.reduce(
@@ -233,6 +529,7 @@ export default function BrokerClaimsScreen() {
   const canMarkBuyerCommitted = Boolean(
     selectedClaim
       && !workflowLocked
+      && !buyerPaymentUsesMarketplaceCheckout
       && (
         selectedClaim.externalListings.length > 0
         || selectedClaim.status === 'listed_externally'
@@ -246,6 +543,168 @@ export default function BrokerClaimsScreen() {
       && (selectedClaim.status === 'buyer_committed' || selectedClaim.status === 'awaiting_pickup'),
   );
 
+  const handlePrepareUniversalKit = useCallback(async () => {
+    if (!selectedClaim || !detail) {
+      return;
+    }
+
+    setKitLoading(true);
+    setKitProgress('Generating copy...');
+    setListingError(null);
+    setWorkflowError(null);
+    setWorkflowConfirmation({
+      acknowledgment: 'Preparing listing kit...',
+      systemContext: 'TATO is generating marketplace-specific copy for all supported platforms.',
+      crossPersonaNote: 'The supplier sees listing activity only after a posted listing reference is saved.',
+      nextSteps: [],
+    });
+
+    try {
+      let generated = listingResult;
+      const existingVariantKeys = new Set(Object.keys(generated?.platformVariants ?? selectedClaim.platformVariants));
+      const hasAllPlatformVariants = getDefaultCrosslistingPlatforms().every((platform) => existingVariantKeys.has(platform.key));
+
+      if (!hasAllPlatformVariants || (!generated && !selectedClaim.listingTitle)) {
+        generated = await generateBrokerListing(selectedClaim.id);
+        setListingResult(generated);
+        await refresh();
+      }
+
+      const kit = buildUniversalListingKit({
+        claimId: selectedClaim.id,
+        itemId: selectedClaim.itemId,
+        listingTitle: generated?.listingTitle ?? selectedClaim.listingTitle ?? detail.title,
+        listingDescription: generated?.listingDescription ?? selectedClaim.listingDescription ?? detail.description,
+        platformVariants: generated?.platformVariants ?? selectedClaim.platformVariants,
+        existingListings: selectedClaim.externalListings,
+        priceCents: detail.suggestedListPriceCents,
+        floorPriceCents: detail.floorPriceCents,
+        currencyCode: selectedClaim.currencyCode,
+        photoUrls: detail.photoUrls,
+        photoStatus: Platform.OS === 'web' ? 'skipped' : 'saving',
+      });
+      setUniversalKit(kit);
+      setKitProgress('Saving photos...');
+
+      const photoResult = await prepareListingKitPhotos({
+        claimId: selectedClaim.id,
+        photoUrls: detail.photoUrls,
+      });
+      const readyKit = {
+        ...kit,
+        photoStatus: photoResult.status,
+        photoSavedCount: photoResult.savedCount,
+      } satisfies UniversalListingKit;
+
+      setUniversalKit(readyKit);
+      await storeUniversalListingKit(readyKit);
+      setSelectedDetailTab('distribute');
+      setWorkflowConfirmation({
+        acknowledgment: `Kit ready for ${readyKit.platforms.length} platforms.`,
+        systemContext: `${photoResult.message} Copy and open each platform when you are ready to post.`,
+        crossPersonaNote: 'Save each posted URL or marketplace ID so supplier-visible activity stays auditable.',
+        nextSteps: [],
+      });
+    } catch (err) {
+      setListingError(err instanceof Error ? err.message : 'Failed to prepare listing kit.');
+      setWorkflowConfirmation(null);
+    } finally {
+      setKitLoading(false);
+      setKitProgress(null);
+    }
+  }, [detail, listingResult, refresh, selectedClaim]);
+
+  const handleTrackDraft = useCallback((draft: CrosslistingDraft) => {
+    setWorkflowDraft((current) => ({
+      ...current,
+      platform: draft.label,
+      listingUrl: draft.existingListing?.url ?? '',
+      externalId: draft.existingListing?.externalId ?? '',
+    }));
+    setSelectedDetailTab('track');
+    setWorkflowError(null);
+    setWorkflowConfirmation({
+      acknowledgment: `${draft.label} selected.`,
+      systemContext: 'Add the posted listing URL or marketplace ID after the listing is live.',
+      crossPersonaNote: 'The supplier sees marketplace activity after you save the listing reference.',
+      nextSteps: [],
+    });
+  }, []);
+
+  const handleCopyAndOpenDraft = useCallback(async (draft: CrosslistingDraft) => {
+    setWorkflowDraft((current) => ({ ...current, platform: draft.label }));
+    setWorkflowError(null);
+
+    try {
+      const copied = await copyTextToClipboard(draft.copyText);
+
+      if (!copied) {
+        await Share.share({
+          title: draft.title,
+          message: draft.copyText,
+        });
+      }
+
+      const notificationId = await scheduleListingKitNotification({
+        draft,
+        floorPriceLabel: activeUniversalKit?.floorPriceLabel,
+      });
+      setListingKitNotificationId(notificationId);
+      setLastOpenedDraft(draft);
+
+      if (draft.sellerUrl) {
+        await Linking.openURL(draft.sellerUrl);
+      }
+
+      if (Platform.OS === 'web' || !draft.sellerUrl) {
+        setReturnPromptDraft(draft);
+        setSelectedDetailTab('track');
+        setTimeout(() => returnUrlInputRef.current?.focus(), 250);
+      }
+
+      setWorkflowConfirmation({
+        acknowledgment: `${draft.label} kit copied.`,
+        systemContext: draft.sellerUrl
+          ? 'The marketplace listing flow is open. Paste the prepared fields, add photos, and publish.'
+          : 'Paste the prepared fields into the marketplace listing flow, add photos, and publish.',
+        crossPersonaNote: draft.checkoutMode === 'marketplace_managed'
+          ? `${draft.label} owns checkout. Save the marketplace order or listing reference before reconciling the sale.`
+          : 'Save the marketplace URL or listing ID after posting so the supplier can see listing activity.',
+        nextSteps: [
+          {
+            label: 'Track Listing',
+            onPress: () => handleTrackDraft(draft),
+            tone: 'secondary',
+          },
+        ],
+      });
+    } catch {
+      setWorkflowError(`Unable to open ${draft.label} right now.`);
+      setWorkflowConfirmation(null);
+    }
+  }, [activeUniversalKit?.floorPriceLabel, handleTrackDraft]);
+
+  const handleAutoCrosslistDraft = useCallback((draft: CrosslistingDraft) => {
+    setWorkflowError(null);
+    setWorkflowConfirmation({
+      acknowledgment: `${draft.label} auto-listing needs setup.`,
+      systemContext: draft.automationDetail,
+      crossPersonaNote: draft.automationMode === 'assisted'
+        ? 'Use Copy & Open for this platform until an approved posting integration exists.'
+        : 'Account tokens and marketplace approvals must stay server-owned before TATO can publish automatically.',
+      nextSteps: draft.automationMode === 'assisted'
+        ? [
+          {
+            label: `Copy + Open ${draft.shortLabel}`,
+            onPress: () => {
+              void handleCopyAndOpenDraft(draft);
+            },
+          },
+        ]
+        : [],
+    });
+  }, [handleCopyAndOpenDraft]);
+
   const handleSaveListing = useCallback(async () => {
     if (!selectedClaim?.id) {
       return;
@@ -253,7 +712,12 @@ export default function BrokerClaimsScreen() {
 
     setWorkflowLoading('listing');
     setWorkflowError(null);
-    setWorkflowSuccess(null);
+    setWorkflowConfirmation({
+      acknowledgment: 'Saving listing...',
+      systemContext: 'The external marketplace reference is being attached to this claim.',
+      crossPersonaNote: 'The supplier will see that broker listing activity as soon as it is saved.',
+      nextSteps: [],
+    });
 
     const result = await saveBrokerExternalListing({
       claimId: selectedClaim.id,
@@ -266,10 +730,24 @@ export default function BrokerClaimsScreen() {
 
     if (!result.ok) {
       setWorkflowError(result.message);
+      setWorkflowConfirmation(null);
       return;
     }
 
-    setWorkflowSuccess('External listing saved and claim marked listed.');
+    setWorkflowConfirmation({
+      acknowledgment: `${workflowDraft.platform || 'Marketplace'} listing saved.`,
+      systemContext: 'This claim is now marked listed and the external reference is tracked on the item.',
+      crossPersonaNote: 'The supplier can see the platform activity from their stock detail view.',
+      nextSteps: [
+        {
+          label: 'Manage Listings',
+          onPress: () => setWorkflowConfirmation(null),
+          tone: 'secondary',
+        },
+      ],
+    });
+    setReturnPromptDraft(null);
+    setLastOpenedDraft(null);
     await refresh();
   }, [refresh, selectedClaim?.id, workflowDraft.externalId, workflowDraft.listingUrl, workflowDraft.platform]);
 
@@ -278,25 +756,63 @@ export default function BrokerClaimsScreen() {
       return;
     }
 
+    const parsedAmount = parseMoneyInput(
+      workflowDraft.buyerPaymentAmountInput,
+      detail?.floorPriceCents ?? 0,
+      selectedClaim.currencyCode,
+    );
+    if (!parsedAmount.ok) {
+      setWorkflowError(parsedAmount.message);
+      setWorkflowConfirmation(null);
+      return;
+    }
+
     setWorkflowLoading('buyer');
     setWorkflowError(null);
-    setWorkflowSuccess(null);
+    setWorkflowConfirmation({
+      acknowledgment: 'Recording buyer commitment...',
+      systemContext: 'The buyer amount is being locked against the supplier floor.',
+      crossPersonaNote: 'The supplier will see that buyer activity has started for this claimed item.',
+      nextSteps: [],
+    });
 
     const result = await updateBrokerClaimWorkflow({
       claimId: selectedClaim.id,
       status: 'buyer_committed',
+      buyerPaymentAmountCents: parsedAmount.cents,
     });
 
     setWorkflowLoading(null);
 
     if (!result.ok) {
       setWorkflowError(result.message);
+      setWorkflowConfirmation(null);
       return;
     }
 
-    setWorkflowSuccess('Buyer commitment recorded for this claim.');
+    setWorkflowConfirmation({
+      acknowledgment: result.publicPaymentUrl
+        ? 'Buyer payment link generated.'
+        : 'Buyer commitment recorded.',
+      systemContext: 'The buyer amount is now locked and the claim moved into the sale workflow.',
+      crossPersonaNote: 'The supplier can see that this item has buyer activity and should watch for fulfillment timing.',
+      nextSteps: [
+        result.publicPaymentUrl
+          ? {
+            label: 'Open Buyer Page',
+            onPress: () => {
+              void Linking.openURL(result.publicPaymentUrl!);
+            },
+          }
+          : {
+            label: 'Manage Claim',
+            onPress: () => setWorkflowConfirmation(null),
+            tone: 'secondary',
+          },
+      ],
+    });
     await refresh();
-  }, [refresh, selectedClaim?.id]);
+  }, [detail?.floorPriceCents, refresh, selectedClaim?.id, workflowDraft.buyerPaymentAmountInput]);
 
   const handleMarkAwaitingPickup = useCallback(async () => {
     if (!selectedClaim?.id) {
@@ -306,13 +822,18 @@ export default function BrokerClaimsScreen() {
     const parsed = parseWorkflowInput(workflowDraft.pickupDueInput);
     if (!parsed.ok) {
       setWorkflowError(parsed.message);
-      setWorkflowSuccess(null);
+      setWorkflowConfirmation(null);
       return;
     }
 
     setWorkflowLoading('pickup');
     setWorkflowError(null);
-    setWorkflowSuccess(null);
+    setWorkflowConfirmation({
+      acknowledgment: 'Scheduling fulfillment...',
+      systemContext: 'The pickup deadline is being saved on the active claim.',
+      crossPersonaNote: 'The supplier will see this as a fulfillment request for the item.',
+      nextSteps: [],
+    });
 
     const result = await updateBrokerClaimWorkflow({
       claimId: selectedClaim.id,
@@ -324,10 +845,21 @@ export default function BrokerClaimsScreen() {
 
     if (!result.ok) {
       setWorkflowError(result.message);
+      setWorkflowConfirmation(null);
       return;
     }
 
-    setWorkflowSuccess('Pickup handoff queued for supplier settlement.');
+    setWorkflowConfirmation({
+      acknowledgment: 'Fulfillment request queued.',
+      systemContext: 'This item is now awaiting supplier fulfillment and payment completion.',
+      crossPersonaNote: 'The supplier has the fulfillment state on their stock detail and inventory queue.',
+      nextSteps: [
+        {
+          label: 'View Payout Status',
+          href: '/(app)/payments',
+        },
+      ],
+    });
     await refresh();
   }, [refresh, selectedClaim?.id, workflowDraft.pickupDueInput]);
 
@@ -335,6 +867,7 @@ export default function BrokerClaimsScreen() {
     startTransition(() => setSelectedClaimId(claimId));
   }, []);
   const activeQueueClaimId = selectedClaim?.id ?? claims[0]?.id ?? null;
+  const phoneScrollPaddingBottom = getDockContentPadding(insets.bottom);
   const queue = useMemo(
     () => (
       <View className="gap-3">
@@ -348,9 +881,12 @@ export default function BrokerClaimsScreen() {
                 <Text className="text-lg font-semibold text-tato-text">{claim.itemTitle}</Text>
                 <Text className="mt-1 text-sm text-tato-muted">{claim.supplierName}</Text>
               </View>
-              <Text className="text-sm font-semibold text-tato-profit">
-                {formatMoney(claim.estimatedBrokerPayoutCents, claim.currencyCode, 0)}
-              </Text>
+              <CurrencyDisplay
+                amount={claim.estimatedBrokerPayoutCents}
+                className="text-sm"
+                currencyCode={claim.currencyCode}
+                fractionDigits={0}
+              />
             </View>
 
             <View className="mt-3 flex-row flex-wrap gap-2">
@@ -379,287 +915,519 @@ export default function BrokerClaimsScreen() {
       <SkeletonRow />
     </View>
   ) : detailError ? (
-    <FeedState error={detailError} />
+    <FeedState error={detailError} onRetry={() => { void refresh(); }} />
   ) : !selectedClaim || !detail ? (
     <FeedState empty emptyLabel="Select a claim to review its item detail." />
   ) : (
     <View className="gap-4">
-      <View className="overflow-hidden rounded-[24px] border border-tato-line bg-tato-panel">
-        <Image
-          cachePolicy="disk"
-          contentFit="cover"
-          source={{ uri: detail.imageUrl }}
-          style={styles.detailImage}
-          transition={120}
-        />
-        <View className="p-5">
-          <View className="flex-row flex-wrap gap-2">
-            <View className="rounded-full border border-tato-line bg-tato-panelSoft px-3 py-1.5">
-              <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-accent">
-                {detail.lifecycleStage}
-              </Text>
-            </View>
-            <View className="rounded-full border border-tato-line bg-tato-panelSoft px-3 py-1.5">
-              <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-muted">
-                {detail.sku}
-              </Text>
-            </View>
-          </View>
-
-          <Text className="mt-4 text-3xl font-bold text-tato-text">{detail.title}</Text>
-          <Text className="mt-3 text-sm leading-7 text-tato-muted">{detail.description}</Text>
-
-            <View className="mt-4 gap-3">
-              <View className="rounded-[18px] border border-tato-line bg-tato-panelSoft p-4">
-              <Text className="text-xs uppercase tracking-[1px] text-tato-dim">Broker Payout At Suggested</Text>
-              <Text className="mt-2 text-2xl font-bold text-tato-profit">
-                {formatMoney(detail.estimatedBrokerPayoutCents, selectedClaim.currencyCode, 2)}
-              </Text>
-            </View>
-            <View className="rounded-[18px] border border-tato-line bg-tato-panelSoft p-4">
-              <Text className="text-xs uppercase tracking-[1px] text-tato-dim">Claim Deposit</Text>
-              <Text className="mt-2 text-2xl font-bold text-tato-accent">
-                {formatMoney(detail.claimDepositCents, selectedClaim.currencyCode, 2)}
-              </Text>
-            </View>
-          </View>
-        </View>
-      </View>
-
-      <View className="rounded-[24px] border border-tato-line bg-tato-panel p-5">
-        <View className="flex-row items-center justify-between gap-3">
-          <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-dim">
-            Listing Copy
-          </Text>
-          <Pressable
-            className={`rounded-full border px-4 py-2 ${listingResult || selectedClaim.listingTitle ? 'border-green-500/30 bg-green-900/20' : 'border-tato-accent/30 bg-tato-accent/10'}`}
-            disabled={listingLoading}
-            onPress={handleGenerateListing}>
-            <Text className={`text-xs font-semibold ${listingResult || selectedClaim.listingTitle ? 'text-green-400' : 'text-tato-accent'}`}>
-              {listingLoading ? 'Generating...' : listingResult || selectedClaim.listingTitle ? 'AI Ready' : 'Generate AI Listing'}
+      <View className="rounded-[24px] border border-tato-line bg-tato-panel p-4">
+        <View className="flex-row items-center gap-3">
+          <Image
+            cachePolicy="disk"
+            contentFit="cover"
+            source={{ uri: detail.imageUrl }}
+            style={styles.detailThumb}
+            transition={120}
+          />
+          <View className="min-w-0 flex-1">
+            <Text className="text-base font-semibold text-tato-text" numberOfLines={1}>
+              {detail.title}
             </Text>
-          </Pressable>
-        </View>
-
-        {listingError ? (
-          <View className="mt-3 rounded-[14px] border border-red-500/30 bg-red-900/20 p-3">
-            <Text className="text-sm text-red-400">{listingError}</Text>
-          </View>
-        ) : null}
-
-        <View className="mt-4 rounded-[18px] border border-tato-line bg-tato-panelSoft p-4">
-          <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-dim">Suggested Title</Text>
-          <Text className="mt-2 text-lg font-semibold text-tato-text">{listingTitle}</Text>
-          <Text className="mt-3 text-sm leading-7 text-tato-muted">{listingDescription}</Text>
-        </View>
-
-        <View className="mt-4 gap-3">
-          {descriptions.map((description) => (
-            <View className="rounded-[18px] border border-tato-line bg-tato-panelSoft p-4" key={description.platform}>
-              <View className="flex-row items-center justify-between gap-3">
-                <Text className="text-lg font-semibold text-tato-text">{description.platform}</Text>
-                <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-accent">
-                  {description.tone}
+            <View className="mt-2 flex-row flex-wrap items-center gap-2">
+              <View className="rounded-full border border-tato-line bg-tato-panelSoft px-3 py-1.5">
+                <CurrencyDisplay
+                  amount={detail.floorPriceCents}
+                  className="font-mono text-[11px] uppercase tracking-[0.5px]"
+                  currencyCode={selectedClaim.currencyCode}
+                  fractionDigits={2}
+                />
+              </View>
+              <StockStatusBadge state={detail.stockState} viewer="broker" />
+              <View className="rounded-full border border-tato-line bg-tato-panelSoft px-3 py-1.5">
+                <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-muted">
+                  {statusLabel(selectedClaim.status)}
                 </Text>
               </View>
-              <Text className="mt-3 text-sm leading-7 text-tato-muted">{description.description}</Text>
             </View>
-          ))}
+          </View>
         </View>
+        <InsetTabBar
+          style={{ marginTop: 16 }}
+          tabs={CLAIM_DETAIL_TABS}
+          value={selectedDetailTab}
+          onChange={setSelectedDetailTab}
+        />
       </View>
 
-      <View className="rounded-[24px] border border-tato-line bg-tato-panel p-5">
-        <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-dim">
-          Manual Listing Tracker
-        </Text>
-        <Text className="mt-3 text-2xl font-bold text-tato-text">
-          Track broker work now, swap in marketplace automation later.
-        </Text>
-        <Text className="mt-3 text-sm leading-7 text-tato-muted">
-          Save the external listing record here, then advance the claim as the buyer and pickup workflow moves forward.
-        </Text>
+      {selectedDetailTab === 'details' ? (
+        <>
+          <ListSection first title="Economics">
+            <ListRow
+              label="Floor Price"
+              value={<CurrencyDisplay amount={detail.floorPriceCents} currencyCode={selectedClaim.currencyCode} />}
+            />
+            <ListRow
+              label="Broker Payout At Suggested"
+              value={<CurrencyDisplay amount={detail.estimatedBrokerPayoutCents} currencyCode={selectedClaim.currencyCode} />}
+            />
+            <ListRow
+              label="Claim Deposit"
+              value={<CurrencyDisplay amount={detail.claimDepositCents} currencyCode={selectedClaim.currencyCode} />}
+            />
+            <ListRow
+              label="Suggested List Price"
+              value={<CurrencyDisplay amount={detail.suggestedListPriceCents} currencyCode={selectedClaim.currencyCode} />}
+            />
+          </ListSection>
 
-        <View className={`mt-5 gap-3 ${!isPhone ? 'flex-row' : ''}`}>
-          <View className="flex-1 rounded-[18px] border border-tato-line bg-tato-panelSoft p-4">
-            <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-dim">Claim Status</Text>
-            <Text className="mt-2 text-lg font-semibold text-tato-text">{statusLabel(selectedClaim.status)}</Text>
-          </View>
-          <View className="flex-1 rounded-[18px] border border-tato-line bg-tato-panelSoft p-4">
-            <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-dim">Buyer Committed</Text>
-            <Text className="mt-2 text-lg font-semibold text-tato-text">{formatTimestamp(selectedClaim.buyerCommittedAt)}</Text>
-          </View>
-          <View className="flex-1 rounded-[18px] border border-tato-line bg-tato-panelSoft p-4">
-            <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-dim">Pickup Due</Text>
-            <Text className="mt-2 text-lg font-semibold text-tato-text">{formatTimestamp(selectedClaim.pickupDueAt)}</Text>
-          </View>
-        </View>
+          <ListSection title="Item">
+            <ListRow label="Condition" value={detail.gradeLabel} />
+            <ListRow label="Category" value={detail.marketVelocityLabel} />
+            <ListRow label="Item ID" value={detail.sku} />
+          </ListSection>
 
-        <View className="mt-5 gap-3">
-          {selectedClaim.externalListings.length ? (
-            selectedClaim.externalListings.map((listing) => (
-              <View className="rounded-[18px] border border-tato-line bg-tato-panelSoft p-4" key={listing.key}>
-                <View className="flex-row flex-wrap items-center justify-between gap-3">
-                  <View className="flex-1">
-                    <Text className="text-lg font-semibold text-tato-text">{listing.platform}</Text>
-                    <Text className="mt-1 text-sm text-tato-muted">
-                      {listing.externalId ? `Listing ID ${listing.externalId}` : 'No marketplace ID saved yet.'}
-                    </Text>
-                  </View>
-                  <View className="rounded-full border border-tato-line bg-[#102443] px-3 py-1.5">
-                    <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-accent">
-                      {listing.source}
-                    </Text>
-                  </View>
-                </View>
+          <SectionErrorBoundary
+            action={{ label: 'Retry', onPress: () => { void refresh(); } }}
+            description="Claim messages could not load. Pull to refresh."
+            sectionName="claim-desk-conversation"
+            title="Claim conversation unavailable">
+            <ClaimConversation
+              claimId={selectedClaim.id}
+              counterpartLabel={selectedClaim.supplierName}
+            />
+          </SectionErrorBoundary>
+        </>
+      ) : null}
 
-                <Text className="mt-3 text-sm leading-7 text-tato-muted">
-                  {listing.url ?? 'No external listing URL saved yet.'}
-                </Text>
-
-                <View className="mt-4 flex-row items-center justify-between gap-3">
-                  <Text className="text-xs uppercase tracking-[1px] text-tato-dim">
-                    Updated {formatTimestamp(listing.updatedAt)}
+      {selectedDetailTab === 'distribute' ? (
+        <>
+          <ContentCard title="Universal Listing Kit">
+            <View className="gap-4">
+              <View className="flex-row flex-wrap items-start justify-between gap-3">
+                <View className="min-w-0 flex-1">
+                  <Text className="text-2xl font-sans-bold text-tato-text">
+                    Listed on {listedPlatformCount} of {kitPlatformCount} platforms
                   </Text>
-                  {listing.url ? (
-                    <Pressable
-                      className="rounded-full border border-tato-line bg-[#102443] px-4 py-2"
-                      onPress={() => {
-                        void Linking.openURL(listing.url!);
-                      }}>
-                      <Text className="text-xs font-semibold text-tato-accent">Open Listing</Text>
-                    </Pressable>
-                  ) : null}
+                  <Text className="mt-2 text-sm leading-6 text-tato-muted">
+                    Prepare once, then publish platform by platform with the right checkout path.
+                  </Text>
+                </View>
+                <View className="rounded-full border border-tato-line bg-tato-panelSoft px-3 py-1.5">
+                  <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-muted">
+                    {formatKitPreparedAt(universalKit?.preparedAt)}
+                  </Text>
                 </View>
               </View>
-            ))
-          ) : (
-            <View className="rounded-[18px] border border-dashed border-tato-line bg-tato-panelSoft p-4">
-              <Text className="text-sm leading-7 text-tato-muted">
-                No external listing has been saved yet. Add the marketplace, URL, and listing ID once the broker posts it manually.
-              </Text>
+
+              <View className={`gap-3 ${!isPhone ? 'flex-row items-center' : ''}`}>
+                <ActionTierButton
+                  disabled={kitLoading}
+                  label={universalKit ? 'Refresh Kit' : 'Prepare All Platforms'}
+                  loading={kitLoading}
+                  onPress={handlePrepareUniversalKit}
+                  tier="primary"
+                />
+                <ActionTierButton
+                  disabled={kitLoading}
+                  fullWidth={false}
+                  label="Auto-List"
+                  onPress={() => {
+                    setWorkflowConfirmation({
+                      acknowledgment: 'Auto-listing needs account connections.',
+                      systemContext: 'eBay and Nextdoor can become true auto-list targets after OAuth, approval, and server-side token storage. The other launch platforms stay assisted until approved posting integrations exist.',
+                      crossPersonaNote: 'Marketplace credentials and posting tokens must never live in the Expo client.',
+                      nextSteps: [],
+                    });
+                  }}
+                  tier="secondary"
+                />
+              </View>
+
+              {kitProgress ? (
+                <Text className="text-sm leading-6 text-tato-accent">{kitProgress}</Text>
+              ) : null}
+
+              <ContentCard
+                description="eBay and Mercari collect buyer payments inside their own checkout. Use the TATO buyer link only for direct local sales."
+                title="Checkout Note"
+              />
             </View>
-          )}
-        </View>
+          </ContentCard>
 
-        {workflowError ? (
-          <View className="mt-4 rounded-[18px] border border-red-500/30 bg-red-900/20 p-3">
-            <Text className="text-sm text-red-400">{workflowError}</Text>
-          </View>
-        ) : null}
+          {listingError ? (
+            <SectionErrorBoundary
+              action={{ label: 'Retry', onPress: handlePrepareUniversalKit }}
+              description="Listing copy could not be generated. Pull to refresh."
+              error={listingError}
+              sectionName="listing-copy"
+              title="Listing copy unavailable">
+              <View />
+            </SectionErrorBoundary>
+          ) : null}
 
-        {workflowSuccess ? (
-          <View className="mt-4 rounded-[18px] border border-tato-profit/30 bg-tato-profit/10 p-3">
-            <Text className="text-sm text-tato-profit">{workflowSuccess}</Text>
-          </View>
-        ) : null}
+          <ContentCard title="Suggested Title">
+            <Text className="text-base font-semibold text-tato-text">{listingTitle || detail.title}</Text>
+            <Text className="mt-3 text-sm leading-6 text-tato-muted" numberOfLines={listingCopyExpanded ? undefined : 3}>
+              {listingDescription || detail.description}
+            </Text>
+            {(listingDescription || detail.description).length > 160 ? (
+              <ActionTierButton
+                fullWidth={false}
+                label={listingCopyExpanded ? 'Show Less' : 'Show More'}
+                onPress={() => setListingCopyExpanded((current) => !current)}
+                tier="tertiary"
+              />
+            ) : null}
+          </ContentCard>
 
-        <View className={`mt-5 gap-4 ${!isPhone ? 'flex-row' : ''}`}>
-          <View className="flex-1">
-            <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-dim">Marketplace</Text>
-            <TextInput
-              className="mt-2 rounded-[18px] border border-tato-line bg-tato-panelSoft px-4 py-3 text-base text-tato-text"
-              editable={!workflowLocked}
-              placeholder="eBay, Mercari, Facebook Marketplace"
-              placeholderTextColor="#8ea4c8"
-              value={workflowDraft.platform}
-              onChangeText={(platform) => {
-                setWorkflowDraft((current) => ({ ...current, platform }));
+          <View className="gap-3">
+            {(activeUniversalKit?.platforms ?? []).map((draft) => {
+              const expanded = expandedPlatform === draft.key;
+              const unadapted = isUnadaptedPlatformCopy(draft.description, listingDescription || detail.description);
+              const statusClassName = getDraftStatusClass(draft, selectedClaim.status);
+              const statusTextClassName = getDraftStatusTextClass(draft, selectedClaim.status);
+              const platformStatusLabel = !universalKit && draft.status !== 'listed'
+                ? 'NOT READY'
+                : getDraftStatusLabel(draft, selectedClaim.status);
+
+              return (
+                <Pressable
+                  accessibilityRole="button"
+                  className="rounded-[20px] border border-tato-line bg-tato-panel p-4"
+                  key={draft.key}
+                  onPress={() => setExpandedPlatform((current) => current === draft.key ? null : draft.key)}>
+                  <View className="flex-row items-center justify-between gap-3">
+                    <View className="min-w-0 flex-1">
+                      <Text className="text-base font-semibold text-tato-text">{draft.label}</Text>
+                      <Text className="mt-1 text-xs leading-5 text-tato-muted">
+                        {draft.automationLabel} · {draft.checkoutLabel}
+                      </Text>
+                    </View>
+                    <View className={`rounded-full border px-3 py-1.5 ${statusClassName}`}>
+                      <Text className={`font-mono text-[11px] uppercase tracking-[1px] ${statusTextClassName}`}>
+                        {platformStatusLabel}
+                      </Text>
+                    </View>
+                  </View>
+                  <Text className="mt-3 text-sm font-semibold text-tato-text" numberOfLines={expanded ? undefined : 1}>
+                    {draft.title}
+                  </Text>
+                  <Text className="mt-3 text-sm leading-6 text-tato-muted" numberOfLines={expanded ? undefined : 3}>
+                    {draft.description || 'No platform-specific copy generated. Refresh the kit.'}
+                  </Text>
+                  {unadapted ? (
+                    <Text className="mt-3 text-sm leading-6 text-[#f5b942]">
+                      This copy still matches the base description. Refresh the kit before posting.
+                    </Text>
+                  ) : null}
+                  <View className="mt-3 flex-row flex-wrap gap-2">
+                    <View className="self-start rounded-full border border-tato-line bg-tato-panelSoft px-3 py-1.5">
+                      <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-muted">
+                        {getKitPhotoLabel(activeUniversalKit, draft)}
+                      </Text>
+                    </View>
+                    {draft.priceLabel ? (
+                      <View className="self-start rounded-full border border-tato-line bg-tato-panelSoft px-3 py-1.5">
+                        <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-muted">
+                          Suggested {draft.priceLabel}
+                        </Text>
+                      </View>
+                    ) : null}
+                  </View>
+                  {expanded ? (
+                    <View className="mt-4 gap-3">
+                      <View className="rounded-[16px] border border-tato-line bg-tato-panelSoft p-3">
+                        <Text className="text-sm leading-6 text-tato-muted">{draft.checkoutDetail}</Text>
+                      </View>
+                      <ActionTierButton
+                        disabled={!universalKit || !draft.description}
+                        label={`Copy All + Open ${draft.shortLabel}`}
+                        onPress={() => { void handleCopyAndOpenDraft(draft); }}
+                        tier="primary"
+                      />
+                      <View className={`gap-2 ${!isPhone ? 'flex-row items-center' : ''}`}>
+                        <ActionTierButton
+                          fullWidth={false}
+                          label={draft.automationMode === 'assisted' ? 'Assisted Only' : 'Auto-List Setup'}
+                          onPress={() => handleAutoCrosslistDraft(draft)}
+                          tier="secondary"
+                        />
+                        <ActionTierButton
+                          fullWidth={false}
+                          label={draft.status === 'listed' ? 'Open Listing' : 'Track'}
+                          onPress={() => {
+                            if (draft.existingListing?.url) {
+                              void Linking.openURL(draft.existingListing.url);
+                              return;
+                            }
+                            handleTrackDraft(draft);
+                          }}
+                          tier="tertiary"
+                        />
+                      </View>
+                    </View>
+                  ) : null}
+                </Pressable>
+              );
+            })}
+            <ContextualAction
+              description="Add another marketplace reference to this claim."
+              label="Add Platform"
+              onPress={() => {
+                setWorkflowDraft((current) => ({ ...current, platform: '' }));
                 setWorkflowError(null);
-                setWorkflowSuccess(null);
+                setWorkflowConfirmation(null);
+                setSelectedDetailTab('track');
               }}
+              status="+"
             />
           </View>
-          <View className="flex-1">
-            <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-dim">Listing ID</Text>
-            <TextInput
-              className="mt-2 rounded-[18px] border border-tato-line bg-tato-panelSoft px-4 py-3 text-base text-tato-text"
-              editable={!workflowLocked}
-              placeholder="Marketplace listing reference"
-              placeholderTextColor="#8ea4c8"
-              value={workflowDraft.externalId}
-              onChangeText={(externalId) => {
-                setWorkflowDraft((current) => ({ ...current, externalId }));
-                setWorkflowError(null);
-                setWorkflowSuccess(null);
-              }}
+        </>
+      ) : null}
+
+      {selectedDetailTab === 'track' ? (
+        <>
+          {returnPromptDraft ? (
+            <View className="rounded-[24px] border border-tato-accent/35 bg-[#102443] p-5">
+              <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-accent">
+                Listing Follow-Up
+              </Text>
+              <Text className="mt-2 text-xl font-sans-bold text-tato-text">
+                Did you post to {returnPromptDraft.label}?
+              </Text>
+              <Text className="mt-2 text-sm leading-6 text-tato-muted">
+                Paste the listing URL or marketplace ID so this claim can move into listed status.
+              </Text>
+              <TextInput
+                ref={returnUrlInputRef}
+                autoCapitalize="none"
+                autoFocus
+                className="mt-4 rounded-[16px] border border-tato-line bg-tato-panelSoft px-4 py-3 text-base text-tato-text"
+                editable={!workflowLocked}
+                placeholder="Paste listing URL"
+                placeholderTextColor="#8ea4c8"
+                value={workflowDraft.listingUrl}
+                onChangeText={(listingUrl) => {
+                  setWorkflowDraft((current) => ({
+                    ...current,
+                    platform: returnPromptDraft.label,
+                    listingUrl,
+                  }));
+                  setWorkflowError(null);
+                  setWorkflowConfirmation(null);
+                }}
+              />
+              <View className={`mt-4 gap-3 ${!isPhone ? 'flex-row items-center' : ''}`}>
+                <ActionTierButton
+                  disabled={workflowLocked || workflowLoading !== null}
+                  label="Save Listing URL"
+                  loading={workflowLoading === 'listing'}
+                  onPress={handleSaveListing}
+                  tier="primary"
+                />
+                <ActionTierButton
+                  fullWidth={false}
+                  label="Skip For Now"
+                  onPress={() => setReturnPromptDraft(null)}
+                  tier="tertiary"
+                />
+              </View>
+            </View>
+          ) : null}
+
+          <ListSection first title="Claim Status">
+            <ListRow label="Claim Status" value={statusLabel(selectedClaim.status)} />
+            <ListRow label="Buyer Committed" value={formatTimestamp(selectedClaim.buyerCommittedAt)} />
+            <ListRow label="Pickup Due" value={formatTimestamp(selectedClaim.pickupDueAt)} />
+            <ListRow
+              label="Buyer Payment Link"
+              value={selectedClaim.buyerPaymentToken ? 'Link ready' : selectedClaim.buyerPaymentStatus.replace(/_/g, ' ')}
+              onPress={selectedClaim.buyerPaymentToken ? () => {
+                const url = resolveBuyerPaymentUrl(selectedClaim.buyerPaymentToken);
+                if (url) {
+                  void Linking.openURL(url);
+                }
+              } : undefined}
+            />
+          </ListSection>
+
+          <ListSection title="Listing Record">
+            {buyerPaymentUsesMarketplaceCheckout ? (
+              <ListRow
+                label="Checkout"
+                value={`${selectedWorkflowPlatform.label} manages payment`}
+              />
+            ) : null}
+            <ListRow
+              label="Marketplace"
+              value={
+                <TextInput
+                  className="min-w-[170px] rounded-[14px] border border-tato-line bg-tato-panelSoft px-3 py-2 text-right text-sm text-tato-text"
+                  editable={!workflowLocked}
+                  placeholder="Marketplace"
+                  placeholderTextColor="#8ea4c8"
+                  value={workflowDraft.platform}
+                  onChangeText={(platform) => {
+                    setWorkflowDraft((current) => ({ ...current, platform }));
+                    setWorkflowError(null);
+                    setWorkflowConfirmation(null);
+                  }}
+                />
+              }
+            />
+            <ListRow
+              label="Listing ID"
+              value={
+                <TextInput
+                  className="min-w-[170px] rounded-[14px] border border-tato-line bg-tato-panelSoft px-3 py-2 text-right text-sm text-tato-text"
+                  editable={!workflowLocked}
+                  placeholder="Reference"
+                  placeholderTextColor="#8ea4c8"
+                  value={workflowDraft.externalId}
+                  onChangeText={(externalId) => {
+                    setWorkflowDraft((current) => ({ ...current, externalId }));
+                    setWorkflowError(null);
+                    setWorkflowConfirmation(null);
+                  }}
+                />
+              }
+            />
+            <ListRow
+              label="Listing URL"
+              value={
+                <TextInput
+                  autoCapitalize="none"
+                  className="min-w-[190px] rounded-[14px] border border-tato-line bg-tato-panelSoft px-3 py-2 text-right text-sm text-tato-text"
+                  editable={!workflowLocked}
+                  placeholder="https://..."
+                  placeholderTextColor="#8ea4c8"
+                  value={workflowDraft.listingUrl}
+                  onChangeText={(listingUrl) => {
+                    setWorkflowDraft((current) => ({ ...current, listingUrl }));
+                    setWorkflowError(null);
+                    setWorkflowConfirmation(null);
+                  }}
+                />
+              }
+            />
+            <ListRow
+              label="Buyer Payment Amount"
+              value={
+                <TextInput
+                  className="min-w-[140px] rounded-[14px] border border-tato-line bg-tato-panelSoft px-3 py-2 text-right text-sm text-tato-text"
+                  editable={!workflowLocked}
+                  keyboardType="decimal-pad"
+                  placeholder="249.00"
+                  placeholderTextColor="#8ea4c8"
+                  value={workflowDraft.buyerPaymentAmountInput}
+                  onChangeText={(buyerPaymentAmountInput) => {
+                    setWorkflowDraft((current) => ({ ...current, buyerPaymentAmountInput }));
+                    setWorkflowError(null);
+                    setWorkflowConfirmation(null);
+                  }}
+                />
+              }
+            />
+            <ListRow
+              label="Pickup Due"
+              value={
+                <TextInput
+                  className="min-w-[150px] rounded-[14px] border border-tato-line bg-tato-panelSoft px-3 py-2 text-right text-sm text-tato-text"
+                  editable={!workflowLocked}
+                  placeholder="YYYY-MM-DD HH:MM"
+                  placeholderTextColor="#8ea4c8"
+                  value={workflowDraft.pickupDueInput}
+                  onChangeText={(pickupDueInput) => {
+                    setWorkflowDraft((current) => ({ ...current, pickupDueInput }));
+                    setWorkflowError(null);
+                    setWorkflowConfirmation(null);
+                  }}
+                />
+              }
+            />
+          </ListSection>
+
+          <ContentCard title="Saved Listings">
+            {selectedClaim.externalListings.length ? (
+              <ListSection first>
+                {selectedClaim.externalListings.map((listing) => (
+                  <ListRow
+                    key={listing.key}
+                    label={listing.platform}
+                    value={listing.externalId ?? listing.url ?? 'Saved'}
+                    onPress={listing.url ? () => { void Linking.openURL(listing.url!); } : undefined}
+                  />
+                ))}
+              </ListSection>
+            ) : (
+              <Text className="text-sm leading-6 text-tato-muted">No external listing has been saved yet.</Text>
+            )}
+          </ContentCard>
+
+          <SectionErrorBoundary
+            action={{ label: 'Retry', onPress: () => { void refresh(); } }}
+            description="Timeline activity could not load. Pull to refresh."
+            sectionName="claim-desk-state-timeline"
+            title="State timeline unavailable">
+            <StockStateTimeline currentState={detail.stockState} states={detail.stateHistory} />
+          </SectionErrorBoundary>
+
+          {workflowError ? (
+            <SectionErrorBoundary
+              action={{ label: 'Retry', onPress: () => { void refresh(); } }}
+              description="Claim workflow could not update. Pull to refresh."
+              error={workflowError}
+              sectionName="claim-workflow"
+              title="Claim workflow unavailable">
+              <View />
+            </SectionErrorBoundary>
+          ) : null}
+
+          {workflowConfirmation ? (
+            <ActionConfirmation
+              acknowledgment={workflowConfirmation.acknowledgment}
+              crossPersonaNote={workflowConfirmation.crossPersonaNote}
+              nextSteps={workflowConfirmation.nextSteps}
+              systemContext={workflowConfirmation.systemContext}
+              testID="broker-workflow-confirmation"
+            />
+          ) : null}
+
+          {selectedClaim.status === 'completed' || selectedClaim.buyerPaymentStatus === 'paid' ? (
+            <ContextualAction
+              description="Opens ledger, payout readiness, and recent settlement activity."
+              href="/(app)/payments"
+              label={`Payout pending · Est. ${formatPayoutEstimate(selectedClaim.buyerPaymentPaidAt)}`}
+              status="View"
+            />
+          ) : null}
+
+          <View className={`gap-3 ${!isPhone ? 'flex-row items-center' : ''}`}>
+            <ActionTierButton
+              disabled={workflowLocked || workflowLoading !== null}
+              label="Save Listing + Mark Listed"
+              loading={workflowLoading === 'listing'}
+              onPress={handleSaveListing}
+              tier="primary"
+            />
+            <ActionTierButton
+              disabled={!canMarkBuyerCommitted || workflowLoading !== null}
+              label="Mark Buyer Committed"
+              loading={workflowLoading === 'buyer'}
+              onPress={handleMarkBuyerCommitted}
+              tier="secondary"
+            />
+            <ActionTierButton
+              disabled={!canMarkAwaitingPickup || workflowLoading !== null}
+              fullWidth={false}
+              label="Mark Awaiting Pickup"
+              loading={workflowLoading === 'pickup'}
+              onPress={handleMarkAwaitingPickup}
+              tier="tertiary"
             />
           </View>
-        </View>
-
-        <View className="mt-4">
-          <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-dim">Listing URL</Text>
-          <TextInput
-            autoCapitalize="none"
-            className="mt-2 rounded-[18px] border border-tato-line bg-tato-panelSoft px-4 py-3 text-base text-tato-text"
-            editable={!workflowLocked}
-            placeholder="https://marketplace.example/listing/123"
-            placeholderTextColor="#8ea4c8"
-            value={workflowDraft.listingUrl}
-            onChangeText={(listingUrl) => {
-              setWorkflowDraft((current) => ({ ...current, listingUrl }));
-              setWorkflowError(null);
-              setWorkflowSuccess(null);
-            }}
-          />
-        </View>
-
-        <View className="mt-4">
-          <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-dim">Pickup Due</Text>
-          <TextInput
-            className="mt-2 rounded-[18px] border border-tato-line bg-tato-panelSoft px-4 py-3 text-base text-tato-text"
-            editable={!workflowLocked}
-            placeholder="YYYY-MM-DD HH:MM"
-            placeholderTextColor="#8ea4c8"
-            value={workflowDraft.pickupDueInput}
-            onChangeText={(pickupDueInput) => {
-              setWorkflowDraft((current) => ({ ...current, pickupDueInput }));
-              setWorkflowError(null);
-              setWorkflowSuccess(null);
-            }}
-          />
-        </View>
-
-        <View className={`mt-5 gap-3 ${!isPhone ? 'flex-row' : ''}`}>
-          <Pressable
-            className={`flex-1 rounded-full px-5 py-3.5 ${workflowLocked ? 'bg-[#21406d]' : 'bg-tato-accent'}`}
-            disabled={workflowLocked || workflowLoading !== null}
-            onPress={handleSaveListing}>
-            {workflowLoading === 'listing' ? (
-              <ActivityIndicator color="#fff" />
-            ) : (
-              <Text className={`text-center font-mono text-xs font-semibold uppercase tracking-[1px] ${workflowLocked ? 'text-tato-dim' : 'text-white'}`}>
-                Save Listing + Mark Listed
-              </Text>
-            )}
-          </Pressable>
-
-          <Pressable
-            className={`flex-1 rounded-full px-5 py-3.5 ${canMarkBuyerCommitted ? 'bg-[#14315d]' : 'bg-[#21406d]'}`}
-            disabled={!canMarkBuyerCommitted || workflowLoading !== null}
-            onPress={handleMarkBuyerCommitted}>
-            {workflowLoading === 'buyer' ? (
-              <ActivityIndicator color="#fff" />
-            ) : (
-              <Text className={`text-center font-mono text-xs font-semibold uppercase tracking-[1px] ${canMarkBuyerCommitted ? 'text-white' : 'text-tato-dim'}`}>
-                Mark Buyer Committed
-              </Text>
-            )}
-          </Pressable>
-
-          <Pressable
-            className={`flex-1 rounded-full px-5 py-3.5 ${canMarkAwaitingPickup ? 'bg-[#1f4e49]' : 'bg-[#21406d]'}`}
-            disabled={!canMarkAwaitingPickup || workflowLoading !== null}
-            onPress={handleMarkAwaitingPickup}>
-            {workflowLoading === 'pickup' ? (
-              <ActivityIndicator color="#fff" />
-            ) : (
-              <Text className={`text-center font-mono text-xs font-semibold uppercase tracking-[1px] ${canMarkAwaitingPickup ? 'text-white' : 'text-tato-dim'}`}>
-                Mark Awaiting Pickup
-              </Text>
-            )}
-          </Pressable>
-        </View>
-      </View>
+        </>
+      ) : null}
     </View>
   );
 
@@ -692,21 +1460,30 @@ export default function BrokerClaimsScreen() {
       ) : !isPhone ? (
         <ScrollView className="mt-2 flex-1" contentContainerClassName="gap-5 pb-10">
           <ResponsiveKpiGrid tier={tier}>
-            <View className="rounded-[24px] border border-tato-line bg-tato-panel p-5">
-              <Text className="text-xs uppercase tracking-[1px] text-tato-dim">Open Claims</Text>
+            <ContentCard title="Open Claims">
               <Text className="mt-2 text-4xl font-bold text-tato-text">{claims.length}</Text>
-            </View>
-            <View className="rounded-[24px] border border-tato-line bg-tato-panel p-5">
-              <Text className="text-xs uppercase tracking-[1px] text-tato-dim">Awaiting Pickup</Text>
+            </ContentCard>
+            <ContentCard title="Awaiting Pickup">
               <Text className="mt-2 text-4xl font-bold text-tato-accent">{awaitingPickup}</Text>
-            </View>
+            </ContentCard>
             <View className="rounded-[24px] border border-tato-line bg-tato-panel p-5">
               <Text className="text-xs uppercase tracking-[1px] text-tato-dim">Projected Broker Payout</Text>
-              <Text className="mt-2 text-4xl font-bold text-tato-profit">
-                {formatMoney(totalOpenPayout, reportingCurrency, 0)}
-              </Text>
+              <CurrencyDisplay
+                amount={totalOpenPayout}
+                className="mt-2 text-4xl font-bold"
+                currencyCode={reportingCurrency}
+                fractionDigits={0}
+              />
             </View>
           </ResponsiveKpiGrid>
+
+          <SectionErrorBoundary
+            action={{ label: 'Retry', onPress: () => { void refresh(); } }}
+            description="Activity updates could not load. Pull to refresh."
+            sectionName="claim-desk-activity-feed"
+            title="Activity feed unavailable">
+            <NotificationFeed />
+          </SectionErrorBoundary>
 
           <ResponsiveSplitPane
             primary={detailPane}
@@ -722,7 +1499,8 @@ export default function BrokerClaimsScreen() {
           style={{ flex: 1 }}>
           <ScrollView
             className="mt-2 flex-1"
-            contentContainerClassName="gap-4 pb-36"
+            contentContainerClassName="gap-4"
+            contentContainerStyle={{ paddingBottom: phoneScrollPaddingBottom }}
             keyboardShouldPersistTaps="handled"
             refreshControl={
               <RefreshControl
@@ -734,6 +1512,13 @@ export default function BrokerClaimsScreen() {
                 tintColor="#1e6dff"
               />
             }>
+            <SectionErrorBoundary
+              action={{ label: 'Retry', onPress: () => { void refresh(); } }}
+              description="Activity updates could not load. Pull to refresh."
+              sectionName="claim-desk-activity-feed"
+              title="Activity feed unavailable">
+              <NotificationFeed />
+            </SectionErrorBoundary>
             {queue}
             {detailPane}
           </ScrollView>
@@ -744,8 +1529,9 @@ export default function BrokerClaimsScreen() {
 }
 
 const styles = StyleSheet.create({
-  detailImage: {
-    height: 280,
-    width: '100%',
+  detailThumb: {
+    borderRadius: 12,
+    height: 40,
+    width: 40,
   },
 });

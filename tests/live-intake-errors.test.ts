@@ -72,6 +72,78 @@ describe('live intake error classification', () => {
     });
   });
 
+  it('maps Connect claim gating to payout setup guidance instead of a transient outage', async () => {
+    const classified = await classifyLiveWorkflowError({
+      context: 'claim',
+      error: createFunctionError(409, {
+        code: 'connect_account_not_ready',
+        message: 'Stripe Connect verification is not ready yet.',
+      }),
+      fallbackMessage: 'Unable to create claim.',
+    });
+
+    expect(classified).toMatchObject({
+      code: 'connect_account_not_ready',
+      message: 'Complete Stripe Connect onboarding in Payments & Payouts before claiming inventory.',
+      retryable: false,
+      unavailable: false,
+    });
+  });
+
+  it('maps Stripe configuration failures to an explicit environment message', async () => {
+    const classified = await classifyLiveWorkflowError({
+      context: 'claim',
+      error: createFunctionError(500, {
+        code: 'server_misconfigured',
+        message: 'Missing Stripe configuration.',
+      }),
+      fallbackMessage: 'Unable to create claim.',
+    });
+
+    expect(classified).toMatchObject({
+      code: 'server_misconfigured',
+      message: 'Stripe payments are not configured for this environment. Contact support before retrying.',
+      retryable: false,
+      unavailable: true,
+    });
+  });
+
+  it('maps claim checkout creation failures to a Stripe setup recovery path', async () => {
+    const classified = await classifyLiveWorkflowError({
+      context: 'claim',
+      error: createFunctionError(500, {
+        code: 'claim_checkout_failed',
+        message: 'Unable to create Stripe PaymentIntent.',
+      }),
+      fallbackMessage: 'Unable to create claim.',
+    });
+
+    expect(classified).toMatchObject({
+      code: 'claim_checkout_failed',
+      message: 'Stripe payment could not start. Open Payments & Payouts to confirm setup, then retry.',
+      retryable: false,
+      unavailable: false,
+    });
+  });
+
+  it('maps wrapped Stripe configuration errors before transient outage fallback', async () => {
+    const classified = await classifyLiveWorkflowError({
+      context: 'claim',
+      error: createFunctionError(500, {
+        code: 'internal_error',
+        message: 'Missing Stripe application return URLs.',
+      }),
+      fallbackMessage: 'Unable to create claim.',
+    });
+
+    expect(classified).toMatchObject({
+      code: 'internal_error',
+      message: 'Stripe payments are not configured for this environment. Contact support before retrying.',
+      retryable: false,
+      unavailable: true,
+    });
+  });
+
   it('falls back safely when mutation payloads contain non-string code or message values', async () => {
     const classified = await classifyLiveWorkflowError({
       context: 'posting',

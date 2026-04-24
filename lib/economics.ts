@@ -116,3 +116,27 @@ export function resolveClaimSettlement(args: ClaimSettlementArgs) {
     ...split,
   };
 }
+
+export function resolveMarketplaceDestinationSettlement(args: ClaimSettlementArgs) {
+  const settlement = resolveClaimSettlement(args);
+  const supplierTransferAmountCents = settlement.supplierAmountCents;
+  const brokerDestinationAmountCents = settlement.brokerAmountCents;
+  const platformAmountCents = settlement.platformAmountCents;
+  const applicationFeeAmountCents = supplierTransferAmountCents + platformAmountCents;
+  const total =
+    supplierTransferAmountCents
+    + brokerDestinationAmountCents
+    + platformAmountCents;
+
+  if (total !== settlement.salePriceCents) {
+    throw new Error('Marketplace settlement amounts must equal the buyer payment amount.');
+  }
+
+  return {
+    ...settlement,
+    supplierTransferAmountCents,
+    brokerDestinationAmountCents,
+    platformAmountCents,
+    applicationFeeAmountCents,
+  };
+}

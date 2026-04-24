@@ -39,6 +39,24 @@ describe('app config', () => {
     expect(config.extra?.EXPO_PUBLIC_LIVE_AGENT_SERVICE_URL).toBe('https://agent.example.com');
     expect(config.extra?.appEnv).toBe('production');
     expect(config.extra?.appVariant).toBe('production');
+    expect(config.plugins?.includes('@sentry/react-native')).toBe(false);
+  });
+
+  it('configures the Sentry Expo plugin when build metadata is present', async () => {
+    process.env.APP_VARIANT = 'production';
+    process.env.EXPO_PUBLIC_APP_ENV = 'production';
+    process.env.SENTRY_ORG = 'tato-org';
+    process.env.SENTRY_PROJECT = 'tato-mobile';
+
+    const { default: config } = await import('../app.config');
+
+    expect(config.plugins).toContainEqual([
+      '@sentry/react-native',
+      {
+        organization: 'tato-org',
+        project: 'tato-mobile',
+      },
+    ]);
   });
 
   it('fails the build when APP_VARIANT and EXPO_PUBLIC_APP_ENV are both missing', async () => {

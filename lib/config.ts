@@ -72,6 +72,10 @@ function isLoopbackHostname(hostname: string) {
     || hostname === '[::1]';
 }
 
+function isNativeRuntime() {
+  return globalThis.navigator?.product === 'ReactNative';
+}
+
 const rawAppEnv = readValue('EXPO_PUBLIC_APP_ENV');
 const resolvedAppEnv = resolveEnvironment(rawAppEnv);
 const resolvedAppVariant = readValue('APP_VARIANT') ?? (resolvedAppEnv === 'unknown' ? 'unknown' : resolvedAppEnv);
@@ -126,9 +130,16 @@ export function isProductionLikeEnvironment() {
 }
 
 export function isLocalDevelopmentRuntime() {
+  if (runtimeConfig.appEnv !== 'development') {
+    return false;
+  }
+
+  if (isNativeRuntime()) {
+    return true;
+  }
+
   const hostname = resolveBrowserHostname();
-  return runtimeConfig.appEnv === 'development'
-    && (hostname ? isLoopbackHostname(hostname) : true);
+  return hostname ? isLoopbackHostname(hostname) : true;
 }
 
 export function isDevelopmentBypassAvailable() {

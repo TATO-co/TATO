@@ -1,11 +1,13 @@
 import * as ImagePicker from 'expo-image-picker';
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import { ActionTierButton, ContentCard, InsetTabBar, ListRow, ListSection } from '@/components/primitives';
+import { SectionErrorBoundary } from '@/components/errors/SectionErrorBoundary';
+import { CurrencyDisplay } from '@/components/ui/CurrencyDisplay';
 import { PlatformIcon } from '@/components/ui/PlatformIcon';
 import { ScreenHeader } from '@/components/ui/ScreenHeader';
 import { useEffect, useMemo, useState } from 'react';
 import { Share } from 'react-native';
 import {
-  ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -15,12 +17,16 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import { Image } from 'expo-image';
+import { Image } from '@/components/ui/TatoImage';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { useAuth } from '@/components/providers/AuthProvider';
+import { ClaimConversation } from '@/components/ui/ClaimConversation';
 import { FeedState } from '@/components/ui/FeedState';
+import { ActionConfirmation, NextStep } from '@/components/ui/NextStep';
+import { ContextualAction } from '@/components/ui/ContextualAction';
 import { SkeletonCard, SkeletonRow } from '@/components/ui/SkeletonCard';
+import { StockStateTimeline, StockStatusBadge } from '@/components/ui/StockState';
 import { useViewportInfo } from '@/lib/constants';
 import { useItemDetail } from '@/lib/hooks/useItemDetail';
 import {
@@ -30,7 +36,7 @@ import {
   type SupplierItemUpdateDraft,
 } from '@/lib/item-detail';
 import { getLiveIntakeCompletionCopy } from '@/lib/liveIntake/platform';
-import { formatMoney } from '@/lib/models';
+import { formatMoney, type ItemDetail } from '@/lib/models';
 import {
   appendSupplierItemPhoto,
   removeSupplierItemPhoto,
@@ -38,6 +44,14 @@ import {
   updateSupplierItemDraft,
 } from '@/lib/repositories/tato';
 import { confirmDestructiveAction } from '@/lib/ui';
+
+type ItemDetailTab = 'overview' | 'edit' | 'activity';
+
+const ITEM_DETAIL_TABS: Array<{ key: ItemDetailTab; label: string }> = [
+  { key: 'overview', label: 'Overview' },
+  { key: 'edit', label: 'Edit' },
+  { key: 'activity', label: 'Activity' },
+];
 
 function humanizeStatus(value: string) {
   return value.replace(/_/g, ' ').replace(/\b\w/g, (match) => match.toUpperCase());
@@ -63,34 +77,6 @@ function workflowNote(status: string) {
   }
 }
 
-function pipelineStageIndex(status: string) {
-  switch (status) {
-    case 'ready_for_claim':
-      return 1;
-    case 'claimed':
-      return 2;
-    case 'broker_listing_live':
-      return 3;
-    case 'buyer_committed':
-    case 'awaiting_hub_payment':
-      return 4;
-    case 'paid_at_hub':
-    case 'completed':
-      return 5;
-    default:
-      return 0;
-  }
-}
-
-const PIPELINE_STEPS = [
-  'Captured',
-  'Claim-Ready',
-  'Claimed',
-  'Listed',
-  'Buyer Committed',
-  'Paid Out',
-];
-
 function formatUpdatedAtLabel(value: string) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) {
@@ -103,6 +89,32 @@ function formatUpdatedAtLabel(value: string) {
     hour: 'numeric',
     minute: '2-digit',
   }).format(date);
+}
+
+function formatNullableTimestamp(value: string | null | undefined) {
+  if (!value) {
+    return 'Not yet';
+  }
+
+  return formatUpdatedAtLabel(value);
+}
+
+function findObservedValue(detail: ItemDetail, labels: string[]) {
+  const normalizedLabels = labels.map((label) => label.toLowerCase());
+  return detail.observedDetails.find((entry) => (
+    normalizedLabels.some((label) => entry.label.toLowerCase().includes(label))
+  ))?.value ?? null;
+}
+
+function buildItemBreadcrumb(detail: ItemDetail) {
+  const brand = findObservedValue(detail, ['brand', 'maker']);
+  const model = findObservedValue(detail, ['model', 'series']);
+  const category = findObservedValue(detail, ['category', 'type']);
+  const fallbackCategory = detail.candidateItems[0]?.subtitle || detail.marketVelocityLabel;
+
+  return [brand, model, category ?? fallbackCategory]
+    .filter((value): value is string => Boolean(value?.trim()))
+    .slice(0, 3);
 }
 
 export default function ItemDetailsScreen() {
@@ -127,12 +139,19 @@ export default function ItemDetailsScreen() {
   const [photoActionKey, setPhotoActionKey] = useState<string | null>(null);
   const [photoActionError, setPhotoActionError] = useState<string | null>(null);
   const [photoActionSuccess, setPhotoActionSuccess] = useState<string | null>(null);
+  const [selectedTab, setSelectedTab] = useState<ItemDetailTab>('overview');
+  const [supplierActionConfirmation, setSupplierActionConfirmation] = useState<{
+    acknowledgment: string;
+    systemContext: string;
+    crossPersonaNote: string;
+  } | null>(null);
 
   useEffect(() => {
     if (!detail) {
       return;
     }
 
+    setSelectedTab('overview');
     setSupplierDraft({
       title: detail.editableTitle,
       description: detail.editableDescription,
@@ -151,6 +170,7 @@ export default function ItemDetailsScreen() {
     setPhotoActionSuccess(null);
     setSupplierSaveError(null);
     setSupplierSaveSuccess(null);
+    setSupplierActionConfirmation(null);
   }, [detail]);
 
   const supplierOwnsItem = Boolean(detail && profile?.can_supply && user?.id === detail.supplierId);
@@ -176,6 +196,7 @@ export default function ItemDetailsScreen() {
     return JSON.stringify(supplierDraft) !== JSON.stringify(supplierEditBaseline);
   }, [supplierDraft, supplierEditBaseline]);
   const activePhotoUrl = detail?.photoUrls[selectedPhotoIndex] ?? detail?.imageUrl ?? null;
+  const itemBreadcrumb = detail ? buildItemBreadcrumb(detail) : [];
 
   const handleShare = async () => {
     if (!detail) {
@@ -230,6 +251,11 @@ export default function ItemDetailsScreen() {
 
     await refresh();
     setSupplierSaveSuccess('Supplier review saved.');
+    setSupplierActionConfirmation({
+      acknowledgment: 'Supplier changes saved.',
+      systemContext: 'The broker-facing record now reflects the latest title, condition, and price fields.',
+      crossPersonaNote: 'Brokers browsing this category will see the revised floor and suggested resale price.',
+    });
   };
 
   const pickPhotoAsset = async () => {
@@ -280,6 +306,11 @@ export default function ItemDetailsScreen() {
     setSelectedPhotoIndex(Math.max(0, result.detail.photoUrls.length - 1));
     await refresh();
     setPhotoActionSuccess('Item photos updated.');
+    setSupplierActionConfirmation({
+      acknowledgment: 'Item photo set updated.',
+      systemContext: 'The broker-facing item detail now uses the latest supplier photos.',
+      crossPersonaNote: 'Brokers will see the updated photos the next time the item detail or feed refreshes.',
+    });
   };
 
   const handleReplacePhoto = async (photoIndex: number) => {
@@ -314,6 +345,11 @@ export default function ItemDetailsScreen() {
     setSelectedPhotoIndex(photoIndex);
     await refresh();
     setPhotoActionSuccess('Item photos updated.');
+    setSupplierActionConfirmation({
+      acknowledgment: 'Item photo set updated.',
+      systemContext: 'The broker-facing item detail now uses the latest supplier photos.',
+      crossPersonaNote: 'Brokers will see the updated photos the next time the item detail or feed refreshes.',
+    });
   };
 
   const handleRemovePhoto = async (photoIndex: number) => {
@@ -351,6 +387,11 @@ export default function ItemDetailsScreen() {
     setSelectedPhotoIndex((current) => Math.min(current, Math.max(0, result.detail.photoUrls.length - 1)));
     await refresh();
     setPhotoActionSuccess('Item photos updated.');
+    setSupplierActionConfirmation({
+      acknowledgment: 'Item photo set updated.',
+      systemContext: 'The broker-facing item detail now uses the latest supplier photos.',
+      crossPersonaNote: 'Brokers will see the updated photos the next time the item detail or feed refreshes.',
+    });
   };
 
   const shareButton = (
@@ -386,32 +427,6 @@ export default function ItemDetailsScreen() {
           <KeyboardAvoidingView
             behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
             style={{ flex: 1 }}>
-            <ScrollView className="flex-1" contentContainerClassName="gap-5 pb-10" keyboardShouldPersistTaps="handled">
-            {fromLiveIntake ? (
-              <View className="rounded-[24px] border border-tato-profit/30 bg-tato-profit/10 p-5">
-                <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-profit">{completionCopy.eyebrow}</Text>
-                <Text className="mt-2 text-xl font-bold text-tato-text">{completionCopy.heading}</Text>
-                <View className={`mt-4 gap-3 ${!isPhone ? 'flex-row' : ''}`}>
-                  <Pressable
-                    className="flex-1 rounded-full bg-tato-accent px-5 py-3.5"
-                    onPress={() => router.push('/(app)/(supplier)/inventory')}>
-                    <Text className="text-center font-mono text-xs font-semibold uppercase tracking-[1px] text-white">
-                      Open Supplier Inventory
-                    </Text>
-                  </Pressable>
-                  {profile?.can_broker ? (
-                    <Pressable
-                      className="flex-1 rounded-full border border-tato-line bg-tato-panelSoft px-5 py-3.5"
-                      onPress={() => router.push('/(app)/(broker)/workspace')}>
-                      <Text className="text-center font-mono text-xs font-semibold uppercase tracking-[1px] text-tato-text">
-                        Open Broker Queue
-                      </Text>
-                    </Pressable>
-                  ) : null}
-                </View>
-              </View>
-            ) : null}
-
             <View className="overflow-hidden rounded-[24px] border border-tato-line bg-tato-panel">
               <Image
                 cachePolicy="disk"
@@ -421,7 +436,7 @@ export default function ItemDetailsScreen() {
                 transition={120}
               />
               <View className="p-5">
-                <View className="flex-row flex-wrap gap-2">
+                <View className="flex-row flex-wrap items-center gap-2">
                   {fromLiveIntake ? (
                     <View className="rounded-full border border-tato-profit/30 bg-tato-profit/10 px-3 py-1.5">
                       <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-profit">
@@ -429,9 +444,10 @@ export default function ItemDetailsScreen() {
                       </Text>
                     </View>
                   ) : null}
+                  <StockStatusBadge state={detail.stockState} viewer={supplierOwnsItem ? 'supplier' : 'broker'} />
                   <View className="rounded-full border border-tato-line bg-tato-panelSoft px-3 py-1.5">
-                    <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-accent">
-                      {detail.lifecycleStage}
+                    <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-muted">
+                      Ready for claim
                     </Text>
                   </View>
                   <View className="rounded-full border border-tato-line bg-tato-panelSoft px-3 py-1.5">
@@ -439,502 +455,481 @@ export default function ItemDetailsScreen() {
                       {detail.sku}
                     </Text>
                   </View>
-                  <View className="rounded-full border border-tato-line bg-tato-panelSoft px-3 py-1.5">
-                    <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-muted">
-                      {humanizeStatus(detail.digitalStatus)}
-                    </Text>
-                  </View>
                 </View>
 
-                <Text className="mt-4 text-3xl font-bold text-tato-text">{detail.title}</Text>
-                <Text className="mt-3 text-sm leading-7 text-tato-muted">{detail.description}</Text>
-
-                {detail.photoUrls.length ? (
-                  <View className="mt-5">
-                    <View className="flex-row items-center justify-between">
-                      <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-dim">Photo Set</Text>
-                      <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-muted">
-                        {detail.photoUrls.length} saved
-                      </Text>
-                    </View>
-
-                    <ScrollView
-                      className="mt-3"
-                      contentContainerClassName="gap-3"
-                      horizontal
-                      showsHorizontalScrollIndicator={false}>
-                      {detail.photoUrls.map((photoUrl, index) => (
-                        <Pressable
-                          className={`overflow-hidden rounded-[18px] border ${
-                            index === selectedPhotoIndex
-                              ? 'border-tato-accent bg-tato-accent/10'
-                              : 'border-tato-line bg-tato-panelSoft'
-                          }`}
-                          key={`${photoUrl}-${index}`}
-                          onPress={() => setSelectedPhotoIndex(index)}>
-                          <Image
-                            cachePolicy="disk"
-                            contentFit="cover"
-                            source={{ uri: photoUrl }}
-                            style={styles.photoThumb}
-                            transition={100}
-                          />
-                        </Pressable>
-                      ))}
-                    </ScrollView>
-                  </View>
-                ) : (
-                  <View className="mt-5 rounded-[18px] border border-tato-line bg-tato-panelSoft p-4">
-                    <Text className="text-sm text-tato-muted">
-                      No supplier photos are saved on this item yet.
-                    </Text>
-                  </View>
-                )}
+                <Text className="mt-4 text-3xl font-bold text-tato-text" numberOfLines={1}>
+                  {detail.title}
+                </Text>
+                <View className="mt-5">
+                  <InsetTabBar tabs={ITEM_DETAIL_TABS} value={selectedTab} onChange={setSelectedTab} />
+                </View>
               </View>
             </View>
 
-            {supplierOwnsItem ? (
-              <View className="rounded-[24px] border border-tato-line bg-tato-panel p-5">
-                <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-accent">
-                  Supplier Review
-                </Text>
-                <Text className="mt-3 text-2xl font-bold text-tato-text">
-                  {supplierCanEdit
-                    ? 'Review the broker-facing record before it leaves your queue.'
-                    : 'This item is visible to you, but supplier edits are now locked.'}
-                </Text>
-                <Text className="mt-3 text-sm leading-7 text-tato-muted">
-                  {supplierCanEdit
-                    ? 'You should be able to verify the core sell-through details here: title, condition framing, and pricing. Use this panel for light corrections when the intake draft is close but not quite right.'
-                    : 'Once a broker claims or advances an item, the supplier should still be able to inspect the record, but not keep changing the commercial details underneath the downstream workflow.'}
-                </Text>
+            <ScrollView
+              className="mt-4 flex-1"
+              contentContainerClassName="gap-5 pb-10"
+              keyboardShouldPersistTaps="handled">
+              {selectedTab === 'overview' ? (
+                <>
+                  {fromLiveIntake ? (
+                    <ContentCard
+                      description={completionCopy.heading}
+                      title={completionCopy.eyebrow}
+                      variant="success">
+                      <View className={`mt-4 gap-3 ${!isPhone ? 'flex-row' : ''}`}>
+                        <ActionTierButton
+                          label="Open Supplier Inventory"
+                          onPress={() => router.push('/(app)/(supplier)/inventory')}
+                          tier="primary"
+                        />
+                        {profile?.can_broker ? (
+                          <ActionTierButton
+                            label="Open Broker Queue"
+                            onPress={() => router.push('/(app)/(broker)/workspace')}
+                            tier="secondary"
+                          />
+                        ) : null}
+                      </View>
+                    </ContentCard>
+                  ) : null}
 
-                <View className={`mt-5 gap-3 ${!isPhone ? 'flex-row' : ''}`}>
-                  <View className="flex-1 rounded-[20px] border border-tato-line bg-tato-panelSoft px-4 py-3">
-                    <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-dim">Queue Status</Text>
-                    <Text className="mt-2 text-base font-semibold text-tato-text">{humanizeStatus(detail.digitalStatus)}</Text>
-                  </View>
-                  <View className="flex-1 rounded-[20px] border border-tato-line bg-tato-panelSoft px-4 py-3">
-                    <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-dim">Last Updated</Text>
-                    <Text className="mt-2 text-base font-semibold text-tato-text">{formatUpdatedAtLabel(detail.updatedAt)}</Text>
-                  </View>
-                  <View className="flex-1 rounded-[20px] border border-tato-line bg-tato-panelSoft px-4 py-3">
-                    <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-dim">Edit Window</Text>
-                    <Text className={`mt-2 text-base font-semibold ${supplierCanEdit ? 'text-tato-profit' : 'text-[#f5b942]'}`}>
-                      {supplierCanEdit ? 'Open' : 'Locked'}
-                    </Text>
-                  </View>
-                </View>
+                  {supplierOwnsItem && detail.stockState === 'available' ? (
+                    <NextStep
+                      description="You'll be notified when someone claims it."
+                      headline="Your stock is now visible to brokers."
+                      primaryAction={{ label: 'View My Listings', href: '/(app)/(supplier)/inventory' }}
+                      secondaryAction={profile?.can_broker ? { label: 'Open Broker Queue', href: '/(app)/(broker)/workspace', tone: 'secondary' } : undefined}
+                      testID="supplier-post-upload-next-step"
+                    />
+                  ) : null}
 
-                <View className="mt-5 rounded-[20px] border border-tato-line bg-tato-panelSoft p-4">
-                  <View className={`gap-3 ${!isPhone ? 'flex-row items-center justify-between' : ''}`}>
-                    <View className="flex-1">
-                      <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-dim">Supplier Photos</Text>
-                      <Text className="mt-2 text-base font-semibold text-tato-text">
-                        {supplierCanEdit
+                  <ListSection first title="Pricing">
+                    <ListRow
+                      label="Floor Price"
+                      value={<CurrencyDisplay amount={detail.floorPriceCents} currencyCode={detail.currencyCode} />}
+                    />
+                    <ListRow
+                      label="Suggested List"
+                      value={<CurrencyDisplay amount={detail.suggestedListPriceCents} currencyCode={detail.currencyCode} />}
+                    />
+                    <ListRow
+                      label="Broker Payout At Suggested"
+                      value={<CurrencyDisplay amount={detail.estimatedBrokerPayoutCents} currencyCode={detail.currencyCode} />}
+                    />
+                    <ListRow
+                      label="Claim Deposit"
+                      value={<CurrencyDisplay amount={detail.claimDepositCents} currencyCode={detail.currencyCode} />}
+                    />
+                  </ListSection>
+
+                  <ListSection title="Item">
+                    <ListRow label="Condition" value={detail.gradeLabel} />
+                    <ListRow
+                      label="Category"
+                      value={
+                        <View className="flex-row flex-wrap justify-end gap-1">
+                          {(itemBreadcrumb.length ? itemBreadcrumb : [detail.marketVelocityLabel]).map((part, index) => (
+                            <View className="flex-row items-center gap-1" key={`${part}-${index}`}>
+                              {index > 0 ? <Text className="text-xs text-tato-dim">·</Text> : null}
+                              <Text className="text-right text-xs text-tato-muted">{part}</Text>
+                            </View>
+                          ))}
+                        </View>
+                      }
+                    />
+                    <ListRow label="Item ID" value={detail.sku} />
+                    <ListRow label="Queue Status" value={humanizeStatus(detail.digitalStatus)} />
+                    <ListRow
+                      label="Edit Window"
+                      value={
+                        <Text className={supplierCanEdit ? 'text-sm font-semibold text-tato-profit' : 'text-sm font-semibold text-[#f5b942]'}>
+                          {supplierCanEdit ? 'Open' : 'Locked'}
+                        </Text>
+                      }
+                    />
+                  </ListSection>
+
+                  <ContentCard title="Photo Set">
+                    {detail.photoUrls.length ? (
+                      <ScrollView
+                        contentContainerClassName="gap-3"
+                        horizontal
+                        showsHorizontalScrollIndicator={false}>
+                        {detail.photoUrls.map((photoUrl, index) => (
+                          <Pressable
+                            className={`overflow-hidden rounded-[18px] border ${
+                              index === selectedPhotoIndex
+                                ? 'border-tato-accent bg-tato-accent/10'
+                                : 'border-tato-line bg-tato-panelSoft'
+                            }`}
+                            key={`${photoUrl}-${index}`}
+                            onPress={() => setSelectedPhotoIndex(index)}>
+                            <Image
+                              cachePolicy="disk"
+                              contentFit="cover"
+                              source={{ uri: photoUrl }}
+                              style={styles.photoThumb}
+                              transition={100}
+                            />
+                          </Pressable>
+                        ))}
+                      </ScrollView>
+                    ) : (
+                      <Text className="text-sm text-tato-muted">No supplier photos are saved on this item yet.</Text>
+                    )}
+                  </ContentCard>
+
+                  <ContentCard title="Review Signals">
+                    <ListSection first title="Capture">
+                      <ListRow label="AI Confidence" value={`${(detail.ingestionConfidence * 100).toFixed(0)}%`} />
+                      <ListRow label="Velocity" value={detail.marketVelocityLabel} />
+                      <ListRow label="Next Capture" value={detail.nextBestAction ?? 'None'} />
+                    </ListSection>
+                    <ListSection title="Observed Details">
+                      {detail.observedDetails.length ? (
+                        detail.observedDetails.slice(0, 5).map((detailRow) => (
+                          <ListRow
+                            key={`${detailRow.label}-${detailRow.value}`}
+                            label={detailRow.label}
+                            value={detailRow.value}
+                          />
+                        ))
+                      ) : (
+                        <ListRow label="Captured" value="None" />
+                      )}
+                    </ListSection>
+                    <ListSection title="Condition">
+                      <ListRow label="Summary" value={detail.editableConditionSummary || detail.gradeLabel} />
+                      <ListRow
+                        label="Missing Views"
+                        value={detail.missingViews.length ? detail.missingViews.join(', ') : 'None'}
+                      />
+                    </ListSection>
+                    {detail.candidateItems.length ? (
+                      <ListSection title="Candidate Matches">
+                        {detail.candidateItems.slice(0, 3).map((candidate, index) => (
+                          <ListRow
+                            key={`${candidate.title}-${index}`}
+                            label={candidate.title}
+                            value={`${(candidate.confidence * 100).toFixed(0)}%`}
+                          />
+                        ))}
+                      </ListSection>
+                    ) : null}
+                  </ContentCard>
+                </>
+              ) : null}
+
+              {selectedTab === 'edit' ? (
+                <>
+                  {supplierOwnsItem ? (
+                    <>
+                      <ActionTierButton
+                        disabled={!supplierCanEdit || Boolean(photoActionKey)}
+                        label="Upload New Photo"
+                        loading={photoActionKey === 'append'}
+                        onPress={handleAppendPhoto}
+                        tier="primary"
+                      />
+
+                      <ContentCard
+                        description={supplierCanEdit
                           ? 'Replace weak images, remove extras, or add fresh ones here.'
                           : 'Photo edits are locked because downstream broker work has already started.'}
-                      </Text>
-                    </View>
-                    {supplierCanEdit ? (
-                      <Pressable
-                        className="rounded-full bg-tato-accent px-4 py-2.5"
-                        disabled={Boolean(photoActionKey)}
-                        onPress={handleAppendPhoto}>
-                        {photoActionKey === 'append' ? (
-                          <ActivityIndicator color="#fff" />
+                        title="Photo Management">
+                        {photoActionError ? (
+                          <Text className="mb-3 text-sm text-tato-error">{photoActionError}</Text>
+                        ) : null}
+                        {photoActionSuccess ? (
+                          <Text className="mb-3 text-sm text-tato-profit">{photoActionSuccess}</Text>
+                        ) : null}
+                        {detail.photoUrls.length ? (
+                          <View className="gap-3">
+                            {detail.photoUrls.map((photoUrl, index) => (
+                              <View
+                                className={`rounded-[18px] border p-3 ${
+                                  index === selectedPhotoIndex
+                                    ? 'border-tato-accent bg-tato-accent/10'
+                                    : 'border-tato-line bg-tato-panel'
+                                }`}
+                                key={`${photoUrl}-${index}`}>
+                                <View className={`gap-3 ${!isPhone ? 'flex-row items-center' : ''}`}>
+                                  <Pressable className={!isPhone ? 'w-[124px]' : ''} onPress={() => setSelectedPhotoIndex(index)}>
+                                    <Image
+                                      cachePolicy="disk"
+                                      contentFit="cover"
+                                      source={{ uri: photoUrl }}
+                                      style={styles.supplierPhoto}
+                                      transition={100}
+                                    />
+                                  </Pressable>
+                                  <View className="flex-1">
+                                    <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-dim">
+                                      Photo {index + 1}
+                                    </Text>
+                                    <Text className="mt-2 text-sm leading-6 text-tato-muted">
+                                      {index === 0 ? 'Cover photo' : 'Additional item photo'}
+                                    </Text>
+                                  </View>
+                                </View>
+
+                                {supplierCanEdit ? (
+                                  <View className={`mt-4 gap-3 ${!isPhone ? 'flex-row items-center' : ''}`}>
+                                    <ActionTierButton
+                                      disabled={photoActionKey === `replace:${index}` || Boolean(photoActionKey)}
+                                      label="Replace"
+                                      loading={photoActionKey === `replace:${index}`}
+                                      onPress={() => handleReplacePhoto(index)}
+                                      tier="secondary"
+                                    />
+                                    <ActionTierButton
+                                      disabled={detail.photoUrls.length === 1 || photoActionKey === `remove:${index}` || Boolean(photoActionKey)}
+                                      fullWidth={false}
+                                      label="Remove"
+                                      loading={photoActionKey === `remove:${index}`}
+                                      onPress={() => handleRemovePhoto(index)}
+                                      style={{ marginLeft: !isPhone ? 'auto' : 0 }}
+                                      tier="destructive"
+                                    />
+                                  </View>
+                                ) : null}
+                              </View>
+                            ))}
+                          </View>
                         ) : (
-                          <Text className="font-mono text-[11px] font-semibold uppercase tracking-[1px] text-white">
-                            Upload New Photo
-                          </Text>
+                          <Text className="text-sm text-tato-muted">No photos are saved yet.</Text>
                         )}
-                      </Pressable>
-                    ) : null}
-                  </View>
+                      </ContentCard>
 
-                  {photoActionError ? (
-                    <View className="mt-4 rounded-[16px] border border-tato-error/30 bg-tato-error/10 p-3">
-                      <Text className="text-sm text-tato-error">{photoActionError}</Text>
-                    </View>
-                  ) : null}
+                      <ContentCard
+                        description={supplierCanEdit
+                          ? 'Verify title, condition, notes, floor price, and suggested list price before the item moves forward.'
+                          : 'A broker has already started work on this item, so title, photo, and price edits are locked.'}
+                        title="Supplier Review">
+                        {supplierActionConfirmation ? (
+                          <View className="mb-4">
+                            <ActionConfirmation
+                              acknowledgment={supplierActionConfirmation.acknowledgment}
+                              crossPersonaNote={supplierActionConfirmation.crossPersonaNote}
+                              nextSteps={[{ label: 'View My Listings', href: '/(app)/(supplier)/inventory' }]}
+                              systemContext={supplierActionConfirmation.systemContext}
+                              testID="supplier-item-action-confirmation"
+                            />
+                          </View>
+                        ) : null}
 
-                  {photoActionSuccess ? (
-                    <View className="mt-4 rounded-[16px] border border-tato-profit/30 bg-tato-profit/10 p-3">
-                      <Text className="text-sm text-tato-profit">{photoActionSuccess}</Text>
-                    </View>
-                  ) : null}
+                        {supplierCanEdit ? (
+                          <View className="gap-4">
+                            <View className={`gap-4 ${!isPhone ? 'flex-row' : ''}`}>
+                              <View className="flex-1">
+                                <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-dim">Supplier Title</Text>
+                                <TextInput
+                                  className="mt-2 rounded-[18px] border border-tato-line bg-tato-panelSoft px-4 py-3 text-base text-tato-text"
+                                  placeholder="Marketplace-ready title"
+                                  placeholderTextColor="#8ea4c8"
+                                  value={supplierDraft.title}
+                                  onChangeText={(value) => {
+                                    setSupplierDraft((current) => ({ ...current, title: value }));
+                                    setSupplierSaveError(null);
+                                    setSupplierSaveSuccess(null);
+                                  }}
+                                />
+                              </View>
+                              <View className={!isPhone ? 'w-[280px]' : ''}>
+                                <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-dim">Condition Summary</Text>
+                                <TextInput
+                                  className="mt-2 rounded-[18px] border border-tato-line bg-tato-panelSoft px-4 py-3 text-base text-tato-text"
+                                  placeholder="Good / Fair / Parts"
+                                  placeholderTextColor="#8ea4c8"
+                                  value={supplierDraft.conditionSummary}
+                                  onChangeText={(value) => {
+                                    setSupplierDraft((current) => ({ ...current, conditionSummary: value }));
+                                    setSupplierSaveError(null);
+                                    setSupplierSaveSuccess(null);
+                                  }}
+                                />
+                              </View>
+                            </View>
 
-                  {detail.photoUrls.length ? (
-                    <View className="mt-4 gap-3">
-                      {detail.photoUrls.map((photoUrl, index) => (
-                        <View
-                          className={`rounded-[18px] border p-3 ${
-                            index === selectedPhotoIndex
-                              ? 'border-tato-accent bg-tato-accent/10'
-                              : 'border-tato-line bg-tato-panel'
-                          }`}
-                          key={`${photoUrl}-${index}`}>
-                          <View className={`gap-3 ${!isPhone ? 'flex-row items-center' : ''}`}>
-                            <Pressable className={!isPhone ? 'w-[124px]' : ''} onPress={() => setSelectedPhotoIndex(index)}>
-                              <Image
-                                cachePolicy="disk"
-                                contentFit="cover"
-                                source={{ uri: photoUrl }}
-                                style={styles.supplierPhoto}
-                                transition={100}
+                            <View>
+                              <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-dim">Notes / Description</Text>
+                              <TextInput
+                                className="mt-2 rounded-[18px] border border-tato-line bg-tato-panelSoft px-4 py-3 text-base text-tato-text"
+                                multiline
+                                numberOfLines={4}
+                                placeholder="Add the key details a broker should trust when they open this item."
+                                placeholderTextColor="#8ea4c8"
+                                style={{ minHeight: 112, textAlignVertical: 'top' }}
+                                value={supplierDraft.description}
+                                onChangeText={(value) => {
+                                  setSupplierDraft((current) => ({ ...current, description: value }));
+                                  setSupplierSaveError(null);
+                                  setSupplierSaveSuccess(null);
+                                }}
                               />
-                            </Pressable>
-                            <View className="flex-1">
-                              <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-dim">
-                                Photo {index + 1}
-                              </Text>
-                              <Text className="mt-2 text-sm leading-6 text-tato-muted">
-                                {index === 0
-                                  ? 'This image is currently being used as the cover photo.'
-                                  : 'Tap the thumbnail to make this the active preview while you review the item.'}
-                              </Text>
+                            </View>
+
+                            <View className={`gap-4 ${!isPhone ? 'flex-row' : ''}`}>
+                              <View className="flex-1">
+                                <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-dim">Floor Price</Text>
+                                <TextInput
+                                  className="mt-2 rounded-[18px] border border-tato-line bg-tato-panelSoft px-4 py-3 text-base text-tato-text"
+                                  keyboardType="decimal-pad"
+                                  placeholder="0.00"
+                                  placeholderTextColor="#8ea4c8"
+                                  value={supplierDraft.floorPriceInput}
+                                  onChangeText={(value) => {
+                                    setSupplierDraft((current) => ({ ...current, floorPriceInput: value }));
+                                    setSupplierSaveError(null);
+                                    setSupplierSaveSuccess(null);
+                                  }}
+                                />
+                              </View>
+                              <View className="flex-1">
+                                <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-dim">Suggested List</Text>
+                                <TextInput
+                                  className="mt-2 rounded-[18px] border border-tato-line bg-tato-panelSoft px-4 py-3 text-base text-tato-text"
+                                  keyboardType="decimal-pad"
+                                  placeholder="0.00"
+                                  placeholderTextColor="#8ea4c8"
+                                  value={supplierDraft.suggestedListPriceInput}
+                                  onChangeText={(value) => {
+                                    setSupplierDraft((current) => ({ ...current, suggestedListPriceInput: value }));
+                                    setSupplierSaveError(null);
+                                    setSupplierSaveSuccess(null);
+                                  }}
+                                />
+                              </View>
+                            </View>
+
+                            {supplierSaveError ? (
+                              <Text className="text-sm text-tato-error">{supplierSaveError}</Text>
+                            ) : null}
+                            {supplierSaveSuccess ? (
+                              <Text className="text-sm text-tato-profit">{supplierSaveSuccess}</Text>
+                            ) : null}
+
+                            <View className={`gap-3 ${!isPhone ? 'flex-row items-center' : ''}`}>
+                              <ActionTierButton
+                                disabled={!supplierHasChanges || savingSupplierDraft}
+                                label="Save Supplier Changes"
+                                loading={savingSupplierDraft}
+                                onPress={handleSaveSupplierDraft}
+                                tier="primary"
+                              />
+                              <ActionTierButton
+                                label="Reopen Intake"
+                                onPress={() => router.push('/(app)/(supplier)/intake' as never)}
+                                tier="secondary"
+                              />
+                              <ActionTierButton
+                                fullWidth={false}
+                                label="Reset"
+                                onPress={handleResetSupplierDraft}
+                                tier="tertiary"
+                              />
                             </View>
                           </View>
+                        ) : null}
+                      </ContentCard>
+                    </>
+                  ) : (
+                    <ContentCard
+                      description="Supplier editing is only available to the item owner."
+                      title="Edit Unavailable"
+                      variant="warning"
+                    />
+                  )}
+                </>
+              ) : null}
 
-                          {supplierCanEdit ? (
-                            <View className={`mt-4 gap-3 ${!isPhone ? 'flex-row' : ''}`}>
-                              <Pressable
-                                className="flex-1 rounded-full border border-tato-line bg-tato-panelSoft px-4 py-2.5"
-                                disabled={photoActionKey === `replace:${index}` || Boolean(photoActionKey)}
-                                onPress={() => handleReplacePhoto(index)}>
-                                {photoActionKey === `replace:${index}` ? (
-                                  <ActivityIndicator color="#edf4ff" />
-                                ) : (
-                                  <Text className="text-center font-mono text-[11px] font-semibold uppercase tracking-[1px] text-tato-text">
-                                    Replace
-                                  </Text>
-                                )}
-                              </Pressable>
-                              <Pressable
-                                className="flex-1 rounded-full border border-tato-error/40 bg-tato-error/10 px-4 py-2.5"
-                                disabled={detail.photoUrls.length === 1 || photoActionKey === `remove:${index}` || Boolean(photoActionKey)}
-                                onPress={() => handleRemovePhoto(index)}>
-                                {photoActionKey === `remove:${index}` ? (
-                                  <ActivityIndicator color="#ff8f8f" />
-                                ) : (
-                                  <Text className="text-center font-mono text-[11px] font-semibold uppercase tracking-[1px] text-tato-error">
-                                    Remove
-                                  </Text>
-                                )}
-                              </Pressable>
-                            </View>
-                          ) : null}
-                        </View>
-                      ))}
-                    </View>
-                  ) : null}
-                </View>
+              {selectedTab === 'activity' ? (
+                <>
+                  <ListSection first title="Broker Activity">
+                    <ListRow label="Claimed By" value={detail.brokerActivity.brokerName ?? 'Available'} />
+                    <ListRow
+                      label="Listed At"
+                      value={detail.brokerActivity.listedPriceCents
+                        ? <CurrencyDisplay amount={detail.brokerActivity.listedPriceCents} currencyCode={detail.currencyCode} />
+                        : 'Not yet listed'}
+                    />
+                    <ListRow label="Last Activity" value={formatNullableTimestamp(detail.brokerActivity.lastActivityAt)} />
+                    <ListRow
+                      label="External Platforms"
+                      value={detail.brokerActivity.externalPlatforms.length ? detail.brokerActivity.externalPlatforms.join(', ') : 'None'}
+                    />
+                  </ListSection>
 
-                {supplierCanEdit ? (
-                  <>
-                    <View className={`mt-5 gap-4 ${!isPhone ? 'flex-row' : ''}`}>
-                      <View className="flex-1">
-                        <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-dim">Supplier Title</Text>
-                        <TextInput
-                          className="mt-2 rounded-[18px] border border-tato-line bg-tato-panelSoft px-4 py-3 text-base text-tato-text"
-                          placeholder="Marketplace-ready title"
-                          placeholderTextColor="#8ea4c8"
-                          value={supplierDraft.title}
-                          onChangeText={(value) => {
-                            setSupplierDraft((current) => ({ ...current, title: value }));
-                            setSupplierSaveError(null);
-                            setSupplierSaveSuccess(null);
-                          }}
-                        />
-                      </View>
-                      <View className={!isPhone ? 'w-[280px]' : ''}>
-                        <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-dim">Condition Summary</Text>
-                        <TextInput
-                          className="mt-2 rounded-[18px] border border-tato-line bg-tato-panelSoft px-4 py-3 text-base text-tato-text"
-                          placeholder="Good / Fair / Parts"
-                          placeholderTextColor="#8ea4c8"
-                          value={supplierDraft.conditionSummary}
-                          onChangeText={(value) => {
-                            setSupplierDraft((current) => ({ ...current, conditionSummary: value }));
-                            setSupplierSaveError(null);
-                            setSupplierSaveSuccess(null);
-                          }}
-                        />
-                      </View>
-                    </View>
+                  <ListSection title="Supplier Review">
+                    <ListRow label="Queue Status" value={humanizeStatus(detail.digitalStatus)} />
+                    <ListRow label="Last Updated" value={formatUpdatedAtLabel(detail.updatedAt)} />
+                    <ListRow label="Edit Window" value={supplierCanEdit ? 'Open' : 'Locked'} />
+                  </ListSection>
 
-                    <View className="mt-4">
-                      <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-dim">Supplier Notes / Description</Text>
-                      <TextInput
-                        className="mt-2 rounded-[18px] border border-tato-line bg-tato-panelSoft px-4 py-3 text-base text-tato-text"
-                        multiline
-                        numberOfLines={4}
-                        placeholder="Add the key details a broker should trust when they open this item."
-                        placeholderTextColor="#8ea4c8"
-                        style={{ minHeight: 112, textAlignVertical: 'top' }}
-                        value={supplierDraft.description}
-                        onChangeText={(value) => {
-                          setSupplierDraft((current) => ({ ...current, description: value }));
-                          setSupplierSaveError(null);
-                          setSupplierSaveSuccess(null);
-                        }}
+                  <SectionErrorBoundary
+                    action={{ label: 'Retry', onPress: () => { void refresh(); } }}
+                    description="Timeline activity could not load. Pull to refresh."
+                    sectionName="item-state-timeline"
+                    title="State timeline unavailable">
+                    <StockStateTimeline currentState={detail.stockState} states={detail.stateHistory} />
+                  </SectionErrorBoundary>
+
+                  {supplierOwnsItem && detail.activeClaimId ? (
+                    <SectionErrorBoundary
+                      action={{ label: 'Retry', onPress: () => { void refresh(); } }}
+                      description="Claim messages could not load. Pull to refresh."
+                      sectionName="item-claim-conversation"
+                      title="Claim conversation unavailable">
+                      <ClaimConversation
+                        claimId={detail.activeClaimId}
+                        counterpartLabel={detail.brokerActivity.brokerName ?? 'broker'}
                       />
-                    </View>
+                    </SectionErrorBoundary>
+                  ) : null}
 
-                    <View className={`mt-4 gap-4 ${!isPhone ? 'flex-row' : ''}`}>
-                      <View className="flex-1">
-                        <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-dim">Floor Price</Text>
-                        <TextInput
-                          className="mt-2 rounded-[18px] border border-tato-line bg-tato-panelSoft px-4 py-3 text-base text-tato-text"
-                          keyboardType="decimal-pad"
-                          placeholder="0.00"
-                          placeholderTextColor="#8ea4c8"
-                          value={supplierDraft.floorPriceInput}
-                          onChangeText={(value) => {
-                            setSupplierDraft((current) => ({ ...current, floorPriceInput: value }));
-                            setSupplierSaveError(null);
-                            setSupplierSaveSuccess(null);
-                          }}
+                  <ContentCard description={workflowNote(detail.digitalStatus)} title="Workflow Note">
+                    <View className={`mt-4 gap-3 ${!isPhone ? 'flex-row' : ''}`}>
+                      <ActionTierButton
+                        label={detail.lifecycleStage === 'inventoried' ? 'Open Supplier Inventory' : 'Open Claim Desk'}
+                        onPress={() =>
+                          router.push(
+                            detail.lifecycleStage === 'inventoried'
+                              ? '/(app)/(supplier)/inventory'
+                              : '/(app)/(broker)/claims',
+                          )
+                        }
+                        tier="primary"
+                      />
+                      {profile?.can_broker ? (
+                        <ActionTierButton
+                          label="Open Broker Workspace"
+                          onPress={() => router.push('/(app)/(broker)/workspace')}
+                          tier="secondary"
                         />
-                      </View>
-                      <View className="flex-1">
-                        <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-dim">Suggested List</Text>
-                        <TextInput
-                          className="mt-2 rounded-[18px] border border-tato-line bg-tato-panelSoft px-4 py-3 text-base text-tato-text"
-                          keyboardType="decimal-pad"
-                          placeholder="0.00"
-                          placeholderTextColor="#8ea4c8"
-                          value={supplierDraft.suggestedListPriceInput}
-                          onChangeText={(value) => {
-                            setSupplierDraft((current) => ({ ...current, suggestedListPriceInput: value }));
-                            setSupplierSaveError(null);
-                            setSupplierSaveSuccess(null);
-                          }}
-                        />
-                      </View>
+                      ) : null}
                     </View>
+                  </ContentCard>
 
-                    <Text className="mt-4 text-sm leading-7 text-tato-muted">
-                      Save lightweight corrections here. You can also refresh the photo set above if the original capture needs better images.
-                    </Text>
-
-                    {supplierSaveError ? (
-                      <View className="mt-4 rounded-[18px] border border-tato-error/30 bg-tato-error/10 p-3">
-                        <Text className="text-sm text-tato-error">{supplierSaveError}</Text>
-                      </View>
-                    ) : null}
-
-                    {supplierSaveSuccess ? (
-                      <View className="mt-4 rounded-[18px] border border-tato-profit/30 bg-tato-profit/10 p-3">
-                        <Text className="text-sm text-tato-profit">{supplierSaveSuccess}</Text>
-                      </View>
-                    ) : null}
-
-                    <View className={`mt-5 gap-3 ${!isPhone ? 'flex-row' : ''}`}>
-                      <Pressable
-                        className={`flex-1 rounded-full px-5 py-3.5 ${supplierHasChanges ? 'bg-tato-accent' : 'bg-[#21406d]'}`}
-                        disabled={!supplierHasChanges || savingSupplierDraft}
-                        onPress={handleSaveSupplierDraft}>
-                        {savingSupplierDraft ? (
-                          <ActivityIndicator color="#fff" />
-                        ) : (
-                          <Text className={`text-center font-mono text-xs font-semibold uppercase tracking-[1px] ${supplierHasChanges ? 'text-white' : 'text-tato-dim'}`}>
-                            Save Supplier Changes
-                          </Text>
-                        )}
-                      </Pressable>
-                      <Pressable
-                        className="flex-1 rounded-full border border-tato-line bg-tato-panelSoft px-5 py-3.5"
-                        onPress={handleResetSupplierDraft}>
-                        <Text className="text-center font-mono text-xs font-semibold uppercase tracking-[1px] text-tato-text">
-                          Reset
-                        </Text>
-                      </Pressable>
-                      <Pressable
-                        className="flex-1 rounded-full border border-tato-line bg-tato-panelSoft px-5 py-3.5"
-                        onPress={() => router.push('/(app)/(supplier)/intake' as never)}>
-                        <Text className="text-center font-mono text-xs font-semibold uppercase tracking-[1px] text-tato-text">
-                          Reopen Intake
-                        </Text>
-                      </Pressable>
-                    </View>
-                  </>
-                ) : (
-                  <View className="mt-5 rounded-[20px] border border-[#f5b942]/30 bg-[#f5b942]/10 p-4">
-                    <Text className="text-sm leading-7 text-tato-text">
-                      A broker has already moved this item forward. Keep using this screen to review title, condition, pricing, and workflow status, but treat those fields as locked from the supplier side now.
-                    </Text>
-                  </View>
-                )}
-              </View>
-            ) : null}
-
-            <View className={`gap-4 ${!isPhone ? 'flex-row flex-wrap' : ''}`}>
-              <View className="flex-1 rounded-[24px] border border-tato-line bg-tato-panel p-5">
-                <Text className="text-xs uppercase tracking-[1px] text-tato-dim">Broker Payout At Suggested</Text>
-                <Text className="mt-2 text-3xl font-bold text-tato-profit">
-                  {formatMoney(detail.estimatedBrokerPayoutCents, detail.currencyCode, 2)}
-                </Text>
-              </View>
-              <View className="flex-1 rounded-[24px] border border-tato-line bg-tato-panel p-5">
-                <Text className="text-xs uppercase tracking-[1px] text-tato-dim">Claim Deposit</Text>
-                <Text className="mt-2 text-3xl font-bold text-tato-accent">
-                  {formatMoney(detail.claimDepositCents, detail.currencyCode, 2)}
-                </Text>
-              </View>
-              <View className="flex-1 rounded-[24px] border border-tato-line bg-tato-panel p-5">
-                <Text className="text-xs uppercase tracking-[1px] text-tato-dim">Floor / Suggested</Text>
-                <Text className="mt-2 text-xl font-bold text-tato-text">
-                  {formatMoney(detail.floorPriceCents, detail.currencyCode, 2)}
-                </Text>
-                <Text className="mt-1 text-sm text-tato-muted">
-                  {formatMoney(detail.suggestedListPriceCents, detail.currencyCode, 2)} suggested
-                </Text>
-              </View>
-              <View className="flex-1 rounded-[24px] border border-tato-line bg-tato-panel p-5">
-                <Text className="text-xs uppercase tracking-[1px] text-tato-dim">AI Confidence / Velocity</Text>
-                <Text className="mt-2 text-xl font-bold text-tato-text">
-                  {(detail.ingestionConfidence * 100).toFixed(0)}%
-                </Text>
-                <Text className="mt-1 text-sm text-tato-muted">{detail.marketVelocityLabel} velocity</Text>
-              </View>
-            </View>
-
-            <View className="rounded-[24px] border border-tato-line bg-tato-panel p-5">
-              <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-dim">Pipeline Status</Text>
-              <Text className="mt-3 text-sm leading-7 text-tato-muted">{workflowNote(detail.digitalStatus)}</Text>
-              <View className="mt-4 flex-row flex-wrap gap-2">
-                {PIPELINE_STEPS.map((step, index) => {
-                  const stageIndex = pipelineStageIndex(detail.digitalStatus);
-                  const active = index === stageIndex;
-                  const complete = index < stageIndex;
-
-                  return (
-                    <View
-                      className={`rounded-full border px-3 py-1.5 ${
-                        active
-                          ? 'border-tato-accent bg-tato-accent/15'
-                          : complete
-                            ? 'border-tato-profit/30 bg-tato-profit/10'
-                            : 'border-tato-line bg-tato-panelSoft'
-                      }`}
-                      key={step}>
-                      <Text
-                        className={`font-mono text-[11px] uppercase tracking-[1px] ${
-                          active ? 'text-tato-accent' : complete ? 'text-tato-profit' : 'text-tato-muted'
-                        }`}>
-                        {step}
-                      </Text>
-                    </View>
-                  );
-                })}
-              </View>
-            </View>
-
-            <View className={`gap-4 ${!isPhone ? 'flex-row' : ''}`}>
-              <View className="flex-1 rounded-[24px] border border-tato-line bg-tato-panel p-5">
-                <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-dim">Observed Details</Text>
-                <View className="mt-4 gap-3">
-                  {detail.observedDetails.length ? (
-                    detail.observedDetails.map((detailRow) => (
-                      <View className="flex-row items-start justify-between gap-4" key={`${detailRow.label}-${detailRow.value}`}>
-                        <Text className="text-sm text-tato-dim">{detailRow.label}</Text>
-                        <Text className="max-w-[62%] text-right text-sm font-semibold text-tato-text">{detailRow.value}</Text>
-                      </View>
-                    ))
-                  ) : (
-                    <Text className="text-sm leading-7 text-tato-muted">
-                      None captured.
-                    </Text>
-                  )}
-                </View>
-              </View>
-
-              <View className="flex-1 rounded-[24px] border border-tato-line bg-tato-panel p-5">
-                <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-dim">Condition Review</Text>
-                <Text className="mt-3 text-lg font-bold text-tato-text">{detail.gradeLabel}</Text>
-                <View className="mt-4 gap-2">
-                  {detail.conditionSignals.length ? (
-                    detail.conditionSignals.map((signal) => (
-                      <Text className="text-sm text-tato-text" key={signal}>• {signal}</Text>
-                    ))
-                  ) : (
-                    <Text className="text-sm leading-7 text-tato-muted">
-                      None detected.
-                    </Text>
-                  )}
-                </View>
-
-                <Text className="mt-5 font-mono text-[11px] uppercase tracking-[1px] text-tato-dim">Next Best Action</Text>
-                <Text className="mt-2 text-sm leading-7 text-tato-muted">
-                  {detail.nextBestAction ?? 'No further capture action is required right now.'}
-                </Text>
-
-                <Text className="mt-5 font-mono text-[11px] uppercase tracking-[1px] text-tato-dim">Missing Views</Text>
-                <View className="mt-2 gap-2">
-                  {detail.missingViews.length ? (
-                    detail.missingViews.map((view) => (
-                      <Text className="text-sm text-tato-text" key={view}>• {view}</Text>
-                    ))
-                  ) : (
-                    <Text className="text-sm leading-7 text-tato-muted">
-                      All views captured.
-                    </Text>
-                  )}
-                </View>
-              </View>
-            </View>
-
-            {detail.candidateItems.length ? (
-              <View className="rounded-[24px] border border-tato-line bg-tato-panel p-5">
-                <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-dim">Candidate Matches</Text>
-                <View className="mt-4 gap-3">
-                  {detail.candidateItems.map((candidate, index) => (
-                    <View className="rounded-[18px] border border-tato-line bg-tato-panelSoft px-4 py-3" key={`${candidate.title}-${index}`}>
-                      <View className="flex-row items-center justify-between gap-3">
-                        <Text className="flex-1 text-sm font-semibold text-tato-text">{candidate.title}</Text>
-                        <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-accent">
-                          {(candidate.confidence * 100).toFixed(0)}%
-                        </Text>
-                      </View>
-                      <Text className="mt-1 text-sm text-tato-muted">{candidate.subtitle || 'No secondary details saved.'}</Text>
-                    </View>
-                  ))}
-                </View>
-              </View>
-            ) : null}
-
-            <View className="rounded-[24px] border border-tato-line bg-tato-panel p-5">
-              <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-dim">
-                Workflow Note
-              </Text>
-              <Text className="mt-3 text-sm leading-7 text-tato-muted">{workflowNote(detail.digitalStatus)}</Text>
-              <View className={`mt-4 gap-3 ${!isPhone ? 'flex-row' : ''}`}>
-                <Pressable
-                  className="flex-1 rounded-full bg-tato-accent px-5 py-3.5"
-                  onPress={() =>
-                    router.push(
-                      detail.lifecycleStage === 'inventoried'
-                        ? '/(app)/(supplier)/inventory'
-                        : '/(app)/(broker)/claims',
-                    )
-                  }>
-                  <Text className="text-center font-mono text-xs font-semibold uppercase tracking-[1px] text-white">
-                    {detail.lifecycleStage === 'inventoried' ? 'Open Supplier Inventory' : 'Open Claim Desk'}
-                  </Text>
-                </Pressable>
-                {profile?.can_broker ? (
-                  <Pressable
-                    className="flex-1 rounded-full border border-tato-line bg-tato-panelSoft px-5 py-3.5"
-                    onPress={() => router.push('/(app)/(broker)/workspace')}>
-                    <Text className="text-center font-mono text-xs font-semibold uppercase tracking-[1px] text-tato-text">
-                      Open Broker Workspace
-                    </Text>
-                  </Pressable>
-                ) : null}
-              </View>
-            </View>
-          </ScrollView>
+                  {profile?.can_broker && detail.activeClaimId ? (
+                    <ContextualAction
+                      description="Open the active claim to update listings, buyer payment, or fulfillment."
+                      href={`/(app)/(broker)/claims?claimId=${detail.activeClaimId}`}
+                      label="Manage broker claim"
+                      status="Open"
+                    />
+                  ) : null}
+                  {detail.stockState === 'fulfilled' ? (
+                    <ContextualAction
+                      description="Review ledger activity and payout readiness for this completed item."
+                      href="/(app)/payments"
+                      label="Payout pending"
+                      status="View"
+                    />
+                  ) : null}
+                </>
+              ) : null}
+            </ScrollView>
           </KeyboardAvoidingView>
         )}
       </View>
@@ -944,7 +939,7 @@ export default function ItemDetailsScreen() {
 
 const styles = StyleSheet.create({
   heroImage: {
-    height: 320,
+    height: 200,
     width: '100%',
   },
   photoThumb: {

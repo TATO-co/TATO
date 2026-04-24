@@ -2,6 +2,7 @@ import { captureException } from '@/lib/analytics';
 import { readFunctionErrorPayload } from '@/lib/function-errors';
 import type { SupplierHub, SupplierHubDraft, SupplierHubStatus } from '@/lib/hubs';
 import { createRequestKey } from '@/lib/models';
+import { toStripeActionErrorMessage } from '@/lib/stripe-actions';
 import { supabase } from '@/lib/supabase';
 
 type SupplierHubRow = {
@@ -96,7 +97,13 @@ export async function createSupplierHub(args: {
     return {
       ok: false,
       code: parsed.code,
-      message: parsed.message ?? error.message ?? 'Unable to create a supplier hub.',
+      message: toStripeActionErrorMessage({
+        code: parsed.code,
+        context: 'supplier_hub',
+        fallback: 'Unable to create a supplier hub.',
+        message: parsed.message ?? error.message,
+        status: parsed.status,
+      }),
     };
   }
 
@@ -107,7 +114,12 @@ export async function createSupplierHub(args: {
     return {
       ok: false,
       code: payload?.code,
-      message: payload?.message ?? 'Unable to create a supplier hub.',
+      message: toStripeActionErrorMessage({
+        code: payload?.code,
+        context: 'supplier_hub',
+        fallback: 'Unable to create a supplier hub.',
+        message: payload?.message,
+      }),
     };
   }
 

@@ -15,7 +15,8 @@ async function signInWithDevBypass(page: Page) {
   }
 
   if (!(await page.getByText('Supplier Mode', { exact: false }).first().isVisible())) {
-    await page.goto('/profile', { waitUntil: 'networkidle' });
+    await page.goto('/profile', { waitUntil: 'domcontentloaded' });
+    await expect(page.getByText(/Supplier Mode|Broker Mode|Switch to Supplier/).first()).toBeVisible();
 
     const switchToSupplier = page.getByText('Switch to Supplier', { exact: false }).first();
     if (await switchToSupplier.isVisible()) {

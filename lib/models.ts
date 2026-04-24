@@ -6,6 +6,7 @@ export type ProfileStatus = 'active' | 'suspended';
 export type PayoutReadiness = 'not_ready' | 'pending' | 'enabled';
 export type BrokerCategory = 'Nearby' | 'Best Payout' | 'Newest' | 'Electronics';
 export type SupplierItemStatus = 'available' | 'claimed' | 'pending_pickup';
+export type BuyerPaymentStatus = 'not_started' | 'link_ready' | 'checkout_open' | 'paid' | 'expired';
 export type ClaimStatus =
   | 'active'
   | 'listing_generated'
@@ -14,8 +15,26 @@ export type ClaimStatus =
   | 'awaiting_pickup'
   | 'completed'
   | 'expired'
+  | 'deposit_expired'
   | 'cancelled';
 export type ItemLifecycleStage = 'inventoried' | 'claimed' | 'listed' | 'sold';
+export type StockState =
+  | 'draft'
+  | 'available'
+  | 'claimed'
+  | 'listed'
+  | 'sold'
+  | 'pending_fulfillment'
+  | 'fulfilled'
+  | 'archived';
+export type StockViewer = 'supplier' | 'broker';
+
+export type StockStateHistoryEntry = {
+  state: StockState;
+  label: string;
+  timestamp: string;
+  actor: StockViewer | 'system';
+};
 
 export type ClaimPlatformVariant = {
   title: string;
@@ -48,6 +67,10 @@ export type BrokerFeedItem = {
   imageUrl: string;
   sellerBadges: string[];
   hubId?: string;
+  pendingClaimCheckout?: {
+    transactionId: string;
+    startedAt: string;
+  };
   shippable: boolean;
   currencyCode: CurrencyCode;
 };
@@ -91,6 +114,29 @@ export type ClaimSnapshot = {
   externalListings: ClaimExternalListing[];
   buyerCommittedAt: string | null;
   pickupDueAt: string | null;
+  buyerPaymentAmountCents: number | null;
+  buyerPaymentToken: string | null;
+  buyerPaymentStatus: BuyerPaymentStatus;
+  buyerPaymentCheckoutSessionId: string | null;
+  buyerPaymentPaidAt: string | null;
+};
+
+export type PublicBuyerPaymentSnapshot = {
+  claimId: string;
+  itemTitle: string;
+  itemDescription: string;
+  imageUrl: string | null;
+  amountCents: number;
+  currencyCode: CurrencyCode;
+  paymentStatus: 'ready' | 'paid' | 'inactive';
+  claimStatus: ClaimStatus | string;
+  buyerPaymentStatus: BuyerPaymentStatus;
+  paidAt: string | null;
+  checkoutSessionId: string | null;
+  paymentLinkCreatedAt: string | null;
+  supportUrl: string;
+  termsUrl: string;
+  privacyUrl: string;
 };
 
 export type ItemDetailInsight = {
@@ -102,6 +148,15 @@ export type ItemDetailCandidate = {
   title: string;
   subtitle: string;
   confidence: number;
+};
+
+export type ItemBrokerActivityDetail = {
+  brokerName: string | null;
+  claimId: string | null;
+  claimedAt: string | null;
+  listedPriceCents: number | null;
+  externalPlatforms: string[];
+  lastActivityAt: string | null;
 };
 
 export type ItemDetail = {
@@ -117,6 +172,10 @@ export type ItemDetail = {
   imageUrl: string;
   photoUrls: string[];
   lifecycleStage: ItemLifecycleStage;
+  stockState: StockState;
+  stateHistory: StockStateHistoryEntry[];
+  brokerActivity: ItemBrokerActivityDetail;
+  activeClaimId: string | null;
   estimatedBrokerPayoutCents: number;
   marketVelocityLabel: string;
   claimDepositCents: number;
@@ -134,6 +193,29 @@ export type ItemDetail = {
   updatedAt: string;
 };
 
+export type UserNotification = {
+  id: string;
+  eventType: string;
+  title: string;
+  body: string;
+  actionHref: string | null;
+  itemId: string | null;
+  claimId: string | null;
+  readAt: string | null;
+  createdAt: string;
+};
+
+export type ClaimMessage = {
+  id: string;
+  claimId: string;
+  itemId: string;
+  senderProfileId: string;
+  recipientProfileId: string;
+  body: string;
+  readAt: string | null;
+  createdAt: string;
+};
+
 export type RecentFlip = {
   title: string;
   payoutCents: number;
@@ -143,6 +225,7 @@ export type RecentFlip = {
 
 export type CrosslistingDescription = {
   platform: string;
+  title: string;
   description: string;
   pushLabel: string;
   copyLabel: string;
@@ -160,7 +243,15 @@ export const claimStatuses: ClaimStatus[] = [
   'awaiting_pickup',
   'completed',
   'expired',
+  'deposit_expired',
   'cancelled',
+];
+export const buyerPaymentStatuses: BuyerPaymentStatus[] = [
+  'not_started',
+  'link_ready',
+  'checkout_open',
+  'paid',
+  'expired',
 ];
 
 export function isSupportedCurrencyCode(value: string | null | undefined): value is CurrencyCode {
@@ -169,6 +260,12 @@ export function isSupportedCurrencyCode(value: string | null | undefined): value
 
 export function normalizeClaimStatus(value: string | null | undefined): ClaimStatus {
   return claimStatuses.includes((value ?? '') as ClaimStatus) ? (value as ClaimStatus) : 'active';
+}
+
+export function normalizeBuyerPaymentStatus(value: string | null | undefined): BuyerPaymentStatus {
+  return buyerPaymentStatuses.includes((value ?? '') as BuyerPaymentStatus)
+    ? (value as BuyerPaymentStatus)
+    : 'not_started';
 }
 
 export function lifecycleFromClaimStatus(status: ClaimStatus): ItemLifecycleStage {
@@ -305,28 +402,50 @@ export function buildCrosslistingDescriptions(detail: Pick<ItemDetail, 'title' |
   return [
     {
       platform: 'eBay',
+      title: detail.title,
       description: `${detail.title}. ${excerpt}`,
-      pushLabel: 'Push to eBay',
+      pushLabel: 'Open eBay',
       copyLabel: 'Copy eBay',
       tone: 'accent',
     },
     {
       platform: 'Facebook Marketplace',
-      description: `${detail.title}. Local-buyer friendly copy built from TATO item data. ${excerpt}`,
-      pushLabel: 'Push to FB',
+      title: detail.title,
+      description: `${detail.title}. Local pickup available. Reasonable offers considered. ${excerpt}`,
+      pushLabel: 'Open FB',
       copyLabel: 'Copy FB',
       tone: 'neutral',
     },
     {
       platform: 'Mercari',
+      title: detail.title,
       description: `${detail.title}. Marketplace-ready summary with a conservative resale framing. ${excerpt}`,
-      pushLabel: 'Push to Mercari',
+      pushLabel: 'Open Mercari',
       copyLabel: 'Copy Mercari',
       tone: 'warning',
+    },
+    {
+      platform: 'OfferUp',
+      title: detail.title,
+      description: `${detail.title}. Pickup or local handoff available. Public meetup preferred. ${excerpt}`,
+      pushLabel: 'Open OfferUp',
+      copyLabel: 'Copy OfferUp',
+      tone: 'neutral',
+    },
+    {
+      platform: 'Nextdoor',
+      title: detail.title,
+      description: `${detail.title}. Available nearby for local pickup. ${excerpt}`,
+      pushLabel: 'Open Nextdoor',
+      copyLabel: 'Copy Nextdoor',
+      tone: 'accent',
     },
   ];
 }
 
 export function createRequestKey(prefix = 'req') {
-  return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+  const randomId = globalThis.crypto?.randomUUID?.()
+    ?? Math.random().toString(36).slice(2, 10);
+
+  return `${prefix}_${Date.now()}_${randomId}`;
 }

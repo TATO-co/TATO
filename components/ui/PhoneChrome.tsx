@@ -1,6 +1,13 @@
 import { LinearGradient } from 'expo-linear-gradient';
 import { PropsWithChildren } from 'react';
-import { Text, View, type PressableProps } from 'react-native';
+import {
+  StyleSheet,
+  Text,
+  View,
+  type PressableProps,
+  type StyleProp,
+  type ViewStyle,
+} from 'react-native';
 
 import { PressableScale } from '@/components/ui/PressableScale';
 
@@ -8,12 +15,16 @@ type PhonePanelProps = PropsWithChildren<{
   className?: string;
   gradientTone?: 'accent' | 'neutral' | 'profit';
   padded?: 'sm' | 'md' | 'lg';
+  /** Optional testID for E2E testing. */
+  testID?: string;
 }>;
 
 type PhoneEyebrowProps = {
   children: string;
   tone?: 'muted' | 'accent' | 'profit';
   className?: string;
+  /** Optional testID for E2E testing. */
+  testID?: string;
 };
 
 type PhoneMetricChipProps = {
@@ -24,10 +35,12 @@ type PhoneMetricChipProps = {
   className?: string;
 };
 
-type PhoneActionButtonProps = PressableProps & {
+type PhoneActionButtonProps = Omit<PressableProps, 'style'> & {
   label: string;
   variant?: 'primary' | 'secondary';
   className?: string;
+  containerClassName?: string;
+  containerStyle?: StyleProp<ViewStyle>;
 };
 
 const panelPadding = {
@@ -43,15 +56,15 @@ const panelGradients = {
 } as const;
 
 const eyebrowTones = {
-  muted: 'text-[#9cb7e1]',
+  muted: 'text-tato-textSoft',
   accent: 'text-tato-accent',
   profit: 'text-tato-profit',
 } as const;
 
 const metricToneStyles = {
   neutral: {
-    border: 'border-[#17355f]',
-    bg: 'bg-[#0f2140]',
+    border: 'border-tato-lineSoft',
+    bg: 'bg-tato-panelSoft',
     value: 'text-tato-text',
   },
   accent: {
@@ -76,29 +89,29 @@ export function PhonePanel({
   className = '',
   gradientTone,
   padded = 'md',
+  testID,
 }: PhonePanelProps) {
   return (
-    <View className={`overflow-hidden rounded-[30px] border border-[#16355f] bg-[#07172d] ${panelPadding[padded]} ${className}`}>
+    <View className={`overflow-hidden rounded-[24px] border border-tato-lineSoft bg-tato-panelDeep ${panelPadding[padded]} ${className}`} testID={testID}>
       {gradientTone ? (
-        <>
-          <LinearGradient
-            className="absolute inset-0"
-            colors={panelGradients[gradientTone]}
-            end={{ x: 1, y: 1 }}
-            start={{ x: 0, y: 0 }}
-          />
-          <View className="absolute -right-10 -top-10 h-24 w-24 rounded-full bg-white/5" />
-          <View className="absolute -left-8 bottom-0 h-20 w-20 rounded-full bg-tato-accent/8" />
-        </>
+        <LinearGradient
+          className="absolute inset-0"
+          colors={panelGradients[gradientTone]}
+          end={{ x: 1, y: 1 }}
+          start={{ x: 0, y: 0 }}
+        />
       ) : null}
       <View>{children}</View>
     </View>
   );
 }
 
-export function PhoneEyebrow({ children, tone = 'muted', className = '' }: PhoneEyebrowProps) {
+export function PhoneEyebrow({ children, tone = 'muted', className = '', testID }: PhoneEyebrowProps) {
   return (
-    <Text className={`font-mono text-[12px] uppercase tracking-[2px] ${eyebrowTones[tone]} ${className}`}>
+    <Text
+      className={`font-mono text-[12px] uppercase tracking-[2px] ${eyebrowTones[tone]} ${className}`}
+      style={{ includeFontPadding: false, lineHeight: 14 }}
+      testID={testID}>
       {children}
     </Text>
   );
@@ -114,15 +127,15 @@ export function PhoneMetricChip({
   const styles = metricToneStyles[tone];
 
   return (
-    <View className={`min-w-[132px] flex-1 rounded-[24px] border px-4 py-3 ${styles.border} ${styles.bg} ${className}`}>
+    <View className={`min-w-[132px] flex-1 rounded-[20px] border px-4 py-3 ${styles.border} ${styles.bg} ${className}`}>
       <PhoneEyebrow className="text-[10px]" tone="muted">
         {label}
       </PhoneEyebrow>
-      <Text className={`mt-2 text-[28px] font-sans-bold leading-[30px] ${styles.value}`}>
+      <Text className={`mt-2 text-[28px] font-sans-bold leading-[30px] ${styles.value}`} style={{ includeFontPadding: false }}>
         {value}
       </Text>
       {helper ? (
-        <Text className="mt-1 text-sm leading-6 text-tato-muted">
+        <Text className="mt-1 text-[13px] leading-[18px] text-tato-muted">
           {helper}
         </Text>
       ) : null}
@@ -132,6 +145,8 @@ export function PhoneMetricChip({
 
 export function PhoneActionButton({
   className = '',
+  containerClassName,
+  containerStyle,
   label,
   variant = 'primary',
   ...rest
@@ -140,9 +155,17 @@ export function PhoneActionButton({
     return (
       <PressableScale
         activeScale={0.985}
-        className={`rounded-[24px] border border-[#1b3e70] bg-[#091a31] px-5 py-4 ${className}`}
+        className={`items-center justify-center rounded-[20px] border border-tato-lineSoft bg-tato-panel px-4 py-0 ${className}`}
+        containerClassName={containerClassName}
+        containerStyle={[styles.actionButtonWrapper, containerStyle]}
+        style={styles.actionButtonPressable}
         {...rest}>
-        <Text className="text-center font-mono text-[12px] font-semibold uppercase tracking-[1.4px] text-tato-text">
+        <Text
+          adjustsFontSizeToFit
+          className="text-center font-mono text-[11px] font-semibold uppercase tracking-[1.2px] text-tato-text"
+          minimumFontScale={0.82}
+          numberOfLines={1}
+          style={{ includeFontPadding: false, lineHeight: 13 }}>
           {label}
         </Text>
       </PressableScale>
@@ -150,16 +173,46 @@ export function PhoneActionButton({
   }
 
   return (
-    <PressableScale activeScale={0.985} className={`overflow-hidden rounded-[24px] ${className}`} {...rest}>
+    <PressableScale
+      activeScale={0.985}
+      className={`overflow-hidden rounded-[20px] ${className}`}
+      containerClassName={containerClassName}
+      containerStyle={[styles.actionButtonWrapper, containerStyle]}
+      style={styles.actionButtonPressable}
+      {...rest}>
       <LinearGradient
-        className="rounded-[24px] px-5 py-4"
         colors={['#3278ff', '#1556d6']}
         end={{ x: 1, y: 1 }}
-        start={{ x: 0, y: 0 }}>
-        <Text className="text-center font-mono text-[12px] font-semibold uppercase tracking-[1.4px] text-white">
+        start={{ x: 0, y: 0 }}
+        style={styles.actionButtonFill}>
+        <Text
+          adjustsFontSizeToFit
+          className="text-center font-mono text-[11px] font-semibold uppercase tracking-[1.2px] text-white"
+          minimumFontScale={0.82}
+          numberOfLines={1}
+          style={{ includeFontPadding: false, lineHeight: 13 }}>
           {label}
         </Text>
       </LinearGradient>
     </PressableScale>
   );
 }
+
+const styles = StyleSheet.create({
+  actionButtonFill: {
+    alignItems: 'center',
+    borderRadius: 20,
+    height: 48,
+    justifyContent: 'center',
+    minHeight: 48,
+    paddingHorizontal: 16,
+  },
+  actionButtonPressable: {
+    height: 48,
+    minHeight: 48,
+  },
+  actionButtonWrapper: {
+    height: 48,
+    minHeight: 48,
+  },
+});

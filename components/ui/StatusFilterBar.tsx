@@ -1,5 +1,7 @@
 import { Pressable, ScrollView, Text, View } from 'react-native';
 
+import { HIT_SLOP, PRESS_FEEDBACK, TOUCH_TARGET } from '@/lib/ui';
+
 export type StatusFilter = 'all' | 'available' | 'claimed' | 'pending';
 
 type StatusFilterBarProps = {
@@ -25,19 +27,35 @@ export function StatusFilterBar({
   const items = filters.map(({ key, label }) => {
     const active = activeFilter === key;
     const buttonClassName = compact
-      ? `rounded-full border px-4 py-2.5 ${
-          active ? 'border-[#2a5eb3] bg-[#1556d6]' : 'border-[#17355f] bg-[#091a31]'
+      ? `items-center justify-center rounded-full border px-3.5 py-0 ${
+          active
+            ? 'border-tato-accent bg-tato-accentStrong'
+            : 'border-tato-lineSoft bg-tato-panel hover:bg-tato-panelSoft focus:bg-tato-panelSoft active:bg-tato-panelSoft'
         }`
-      : `rounded-md px-3 py-1.5 ${active ? 'bg-tato-panel' : ''}`;
+      : `items-center justify-center rounded-md px-3 py-2 ${
+          active ? 'bg-tato-panel' : 'hover:bg-tato-panelSoft focus:bg-tato-panelSoft active:bg-tato-panelSoft'
+        }`;
     const labelClassName = compact
-      ? `font-mono text-[11px] font-semibold uppercase tracking-[1px] ${
+      ? `font-mono text-[11px] font-semibold uppercase tracking-[0.8px] ${
           active ? 'text-white' : 'text-[#8ea4c8]'
         }`
       : `font-mono text-[11px] font-semibold ${active ? 'text-tato-text' : 'text-tato-dim'}`;
 
     return (
-      <Pressable className={buttonClassName} key={key} onPress={() => onFilterChange(key)}>
-        <Text className={labelClassName}>{label}</Text>
+      <Pressable
+        accessibilityRole="tab"
+        accessibilityState={{ selected: active }}
+        accessibilityLabel={`Show ${label.toLowerCase()} items`}
+        android_ripple={PRESS_FEEDBACK.ripple.subtle}
+        className={buttonClassName}
+        hitSlop={HIT_SLOP.comfortable}
+        key={key}
+        onPress={() => onFilterChange(key)}
+        style={{ height: compact ? TOUCH_TARGET.minimum : undefined, minHeight: TOUCH_TARGET.minimum }}
+        testID={`status-filter-${key}`}>
+        <Text className={labelClassName} style={{ includeFontPadding: false, lineHeight: 12 }}>
+          {label}
+        </Text>
       </Pressable>
     );
   });

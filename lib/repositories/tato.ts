@@ -3,28 +3,41 @@ import {
   lifecycleFromClaimStatus,
   createRequestKey,
   formatMoney,
+  normalizeBuyerPaymentStatus,
   normalizeClaimPlatformVariants,
   normalizeClaimStatus,
   normalizeExternalListingRefs,
   resolveCurrencyCode,
-  serializeExternalListingRefs,
-  slugifyClaimPlatform,
-  type ClaimExternalListing,
   type BrokerFeedItem,
+  type ClaimMessage,
   type ClaimSnapshot,
   type ClaimStatus,
   type CurrencyCode,
   type ItemDetail,
+  type PublicBuyerPaymentSnapshot,
   type SupplierItem,
   type SupplierMetric,
+  type UserNotification,
 } from '@/lib/models';
 import { captureException } from '@/lib/analytics';
+import { buildBuyerCheckoutReturnUrl, buildClaimCheckoutReturnUrl } from '@/lib/checkout';
+import { resolvePublishableKey } from '@/lib/stripe-payments';
 import {
   DEFAULT_BROKER_UPSIDE_BPS,
   DEFAULT_PLATFORM_UPSIDE_BPS,
   DEFAULT_SUPPLIER_UPSIDE_BPS,
   resolveEstimatedClaimEconomics,
 } from '@/lib/economics';
+import {
+  buildStockStateHistory,
+  getLatestListingActivity,
+  stockStateFromDigitalStatus,
+} from '@/lib/stock-state';
+import {
+  readStripeActionFunctionError,
+  toStripeActionErrorMessage,
+  type StripeActionContext,
+} from '@/lib/stripe-actions';
 import {
   canSupplierDeleteItem,
   canSupplierEditItem,
@@ -77,6 +90,14 @@ type ClaimRecord = {
   external_listing_refs: Record<string, unknown> | null;
   buyer_committed_at: string | null;
   pickup_due_at: string | null;
+  buyer_payment_amount_cents: number | null;
+  buyer_payment_token: string | null;
+  buyer_payment_status: string | null;
+  buyer_payment_checkout_session_id: string | null;
+  buyer_payment_paid_at: string | null;
+  claimed_at?: string | null;
+  listing_ai_ran_at?: string | null;
+  updated_at?: string | null;
 };
 
 type ItemDetailRecord = {
@@ -93,7 +114,11 @@ type ItemDetailRecord = {
   photo_paths: string[] | null;
   digital_status: string;
   currency_code: string | null;
+  created_at: string;
   updated_at: string;
+  listed_at: string | null;
+  sold_at: string | null;
+  archived_at: string | null;
 };
 
 type SupplierItemPhotoRecord = {
@@ -125,6 +150,39 @@ type TransactionRecord = {
   item_id: string;
   supplier_id: string;
   broker_id: string | null;
+};
+
+type PendingClaimCheckoutTransactionRecord = {
+  id: string;
+  claim_id: string | null;
+  item_id: string;
+  status: string;
+  gross_amount_cents: number;
+  currency_code: string;
+  occurred_at: string;
+};
+
+type UserNotificationRecord = {
+  id: string;
+  event_type: string;
+  title: string;
+  body: string;
+  action_href: string | null;
+  item_id: string | null;
+  claim_id: string | null;
+  read_at: string | null;
+  created_at: string;
+};
+
+type ClaimMessageRecord = {
+  id: string;
+  claim_id: string;
+  item_id: string;
+  sender_profile_id: string;
+  recipient_profile_id: string;
+  body: string;
+  read_at: string | null;
+  created_at: string;
 };
 
 type MutationErrorResponse = {
@@ -194,6 +252,39 @@ export type SalePaymentIntentResult =
     }
   | {
       ok: false;
+    message: string;
+    };
+
+export type ClaimCreationResult =
+  | {
+      ok: true;
+      id: string;
+      paymentIntentId: string | null;
+      transactionId: string | null;
+      checkoutRequired: false;
+      checkoutUrl: null;
+      paymentFlow: null;
+      clientSecret: null;
+      publishableKey: null;
+      customerId: null;
+      ephemeralKeySecret: null;
+    }
+  | {
+      ok: true;
+      id: string;
+      paymentIntentId: string | null;
+      transactionId: string | null;
+      checkoutRequired: true;
+      checkoutUrl: string | null;
+      paymentFlow: 'embedded' | 'hosted';
+      clientSecret: string | null;
+      publishableKey: string | null;
+      customerId: string | null;
+      ephemeralKeySecret: string | null;
+    }
+  | {
+      ok: false;
+      code?: string;
       message: string;
     };
 
@@ -234,6 +325,25 @@ function normalizeJsonStringArray(value: unknown) {
   return value
     .map((entry) => (typeof entry === 'string' ? entry.trim() : ''))
     .filter(Boolean);
+}
+
+function readMetadataString(metadata: Record<string, unknown> | null | undefined, key: string) {
+  const value = metadata?.[key];
+  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
+}
+
+function readMetadataNumber(metadata: Record<string, unknown> | null | undefined, key: string, fallback: number | null = null) {
+  const value = metadata?.[key];
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return Math.round(value);
+  }
+
+  if (typeof value === 'string' && value.trim().length > 0) {
+    const parsed = Number.parseInt(value, 10);
+    return Number.isFinite(parsed) ? parsed : fallback;
+  }
+
+  return fallback;
 }
 
 function humanizeLabel(value: string) {
@@ -386,6 +496,11 @@ function supplierStatusFromItemStatus(digitalStatus: string): SupplierItem['stat
   return 'available';
 }
 
+type ImageResolutionInput = {
+  path: string | null | undefined;
+  label: string;
+};
+
 async function resolveImage(path: string | null | undefined, label: string) {
   if (!path) {
     return placeholderImage(label);
@@ -409,6 +524,80 @@ async function resolveImage(path: string | null | undefined, label: string) {
   }
 
   return data.signedUrl;
+}
+
+async function resolveImages(inputs: ImageResolutionInput[]) {
+  const client = requireSupabase();
+  const resolved = inputs.map(({ path, label }) => {
+    if (!path) {
+      return {
+        kind: 'resolved' as const,
+        value: placeholderImage(label),
+      };
+    }
+
+    if (path.startsWith('http://') || path.startsWith('https://') || path.startsWith('data:')) {
+      return {
+        kind: 'resolved' as const,
+        value: path,
+      };
+    }
+
+    const parsed = parseStoragePath(path);
+    if (!parsed) {
+      return {
+        kind: 'resolved' as const,
+        value: placeholderImage(label),
+      };
+    }
+
+    return {
+      kind: 'storage' as const,
+      bucket: parsed.bucket,
+      objectPath: parsed.objectPath,
+      fallback: placeholderImage(label),
+    };
+  });
+  const bucketPaths = resolved.reduce<Map<string, Set<string>>>((current, entry) => {
+    if (entry.kind !== 'storage') {
+      return current;
+    }
+
+    const paths = current.get(entry.bucket) ?? new Set<string>();
+    paths.add(entry.objectPath);
+    current.set(entry.bucket, paths);
+    return current;
+  }, new Map());
+  const signedUrlByPath = new Map<string, string>();
+
+  await Promise.all(
+    [...bucketPaths.entries()].map(async ([bucket, paths]) => {
+      const objectPaths = [...paths];
+      const { data, error } = await client.storage.from(bucket).createSignedUrls(objectPaths, 60 * 60);
+      if (error || !data) {
+        captureException(error ?? new Error('Unable to create signed image URLs.'), {
+          flow: 'repo.resolveImages',
+          bucket,
+          objectPathCount: objectPaths.length,
+        });
+        return;
+      }
+
+      data.forEach((entry) => {
+        if (entry.path && entry.signedUrl) {
+          signedUrlByPath.set(`${bucket}/${entry.path}`, entry.signedUrl);
+        }
+      });
+    }),
+  );
+
+  return resolved.map((entry) => {
+    if (entry.kind === 'resolved') {
+      return entry.value;
+    }
+
+    return signedUrlByPath.get(`${entry.bucket}/${entry.objectPath}`) ?? entry.fallback;
+  });
 }
 
 function inferImageExtension(uri: string, mimeType?: string) {
@@ -523,6 +712,36 @@ function toMutationMessage(data: MutationErrorResponse | null | undefined, fallb
   return data?.message ?? fallback;
 }
 
+function toStripeMutationMessage(
+  data: MutationErrorResponse | null | undefined,
+  context: StripeActionContext,
+  fallback: string,
+) {
+  return toStripeActionErrorMessage({
+    code: data?.code,
+    context,
+    fallback,
+    message: data?.message,
+  });
+}
+
+async function toStripeFunctionErrorResult(
+  error: unknown,
+  context: StripeActionContext,
+  fallback: string,
+) {
+  const parsed = await readStripeActionFunctionError({
+    context,
+    error,
+    fallback,
+  });
+
+  return {
+    code: parsed.code,
+    message: parsed.actionMessage,
+  };
+}
+
 function toRepositoryErrorMessage(error: unknown, fallback: string) {
   if (error instanceof Error) {
     return error.message;
@@ -606,9 +825,122 @@ export async function fetchBrokerFeed(limit = 40): Promise<BrokerFeedItem[]> {
 
   const hubMap = new Map((hubRows as HubRecord[] | null | undefined)?.map((hub) => [hub.id, hub]) ?? []);
   const supplierMap = new Map((supplierRows as ProfileRecord[] | null | undefined)?.map((profile) => [profile.id, profile]) ?? []);
+  const imageUrls = await resolveImages(
+    items.map((item) => ({
+      path: item.photo_paths?.[0],
+      label: item.title ?? 'TATO Item',
+    })),
+  );
 
-  return Promise.all(
-    items.map(async (item) => {
+  return items.map((item, index) => {
+    const hub = hubMap.get(item.hub_id);
+    const supplier = supplierMap.get(item.supplier_id);
+    const economics = resolveEstimatedClaimEconomics({
+      floorPriceCents: item.floor_price_cents,
+      suggestedListPriceCents: item.suggested_list_price_cents,
+      supplierUpsideBps: DEFAULT_SUPPLIER_UPSIDE_BPS,
+      brokerUpsideBps: DEFAULT_BROKER_UPSIDE_BPS,
+      platformUpsideBps: DEFAULT_PLATFORM_UPSIDE_BPS,
+    });
+    const currencyCode = resolveCurrencyCode(item.currency_code);
+    const label = item.title ?? 'TATO Item';
+
+    return {
+      id: item.id,
+      title: item.title ?? 'Untitled Item',
+      subtitle: item.condition_summary ?? item.description ?? 'Supplier catalog item',
+      hubName: `Hub: ${hub?.name ?? 'Supplier Hub'}`,
+      city: hub?.city ?? 'Local',
+      floorPriceCents: economics.floorPriceCents,
+      claimDepositCents: economics.claimDepositCents,
+      estimatedSalePriceCents: economics.estimatedSalePriceCents,
+      estimatedBrokerPayoutCents: economics.estimatedBrokerPayoutCents,
+      photoCount: Math.max(item.photo_paths?.length ?? 0, 1),
+      aiIngestionConfidence: Math.min(0.999, Math.max(0.45, item.ingestion_ai_confidence ?? 0.82)),
+      tags: [
+        item.condition_summary ? item.condition_summary.toLowerCase() : 'verified photos',
+        hub?.city ? `${hub.city.toLowerCase()} pickup` : 'local pickup',
+      ],
+      gradeLabel: item.condition_summary ?? 'Verified',
+      imageUrl: imageUrls[index] ?? placeholderImage(label),
+      sellerBadges: [initials(supplier?.display_name)],
+      hubId: item.hub_id,
+      shippable: true,
+      currencyCode,
+    } satisfies BrokerFeedItem;
+  });
+}
+
+export async function fetchBrokerPendingClaimCheckouts(
+  brokerId: string | null,
+): Promise<BrokerFeedItem[]> {
+  if (!brokerId) {
+    return [];
+  }
+
+  const client = requireSupabase();
+
+  const { data: transactionRows, error } = await client
+    .from('transactions')
+    .select('id,claim_id,item_id,status,gross_amount_cents,currency_code,occurred_at')
+    .eq('broker_id', brokerId)
+    .eq('transaction_type', 'claim_deposit')
+    .eq('status', 'pending')
+    .order('created_at', { ascending: false })
+    .limit(20);
+
+  if (error) {
+    captureException(error, { flow: 'repo.fetchBrokerPendingClaimCheckouts.transactions' });
+    throw new Error(error.message);
+  }
+
+  const transactions = (transactionRows ?? []) as PendingClaimCheckoutTransactionRecord[];
+  if (!transactions.length) {
+    return [];
+  }
+
+  const itemIds = [...new Set(transactions.map((transaction) => transaction.item_id))];
+  const { data: itemRows, error: itemError } = await client
+    .from('items')
+    .select(
+      'id,title,description,condition_summary,floor_price_cents,suggested_list_price_cents,ingestion_ai_confidence,photo_paths,hub_id,supplier_id,currency_code',
+    )
+    .in('id', itemIds);
+
+  if (itemError) {
+    captureException(itemError, { flow: 'repo.fetchBrokerPendingClaimCheckouts.items' });
+    throw new Error(itemError.message);
+  }
+
+  const items = (itemRows ?? []) as BrokerFeedRecord[];
+  if (!items.length) {
+    return [];
+  }
+
+  const hubIds = [...new Set(items.map((item) => item.hub_id))];
+  const supplierIds = [...new Set(items.map((item) => item.supplier_id))];
+  const [{ data: hubRows }, { data: supplierRows }] = await Promise.all([
+    client.from('hubs').select('id,name,city').in('id', hubIds),
+    client.from('profiles').select('id,display_name').in('id', supplierIds),
+  ]);
+
+  const hubMap = new Map((hubRows as HubRecord[] | null | undefined)?.map((hub) => [hub.id, hub]) ?? []);
+  const supplierMap = new Map((supplierRows as ProfileRecord[] | null | undefined)?.map((profile) => [profile.id, profile]) ?? []);
+  const transactionMap = new Map(transactions.map((transaction) => [transaction.item_id, transaction]));
+  const imageUrls = await resolveImages(
+    items.map((item) => ({
+      path: item.photo_paths?.[0],
+      label: item.title ?? 'TATO Item',
+    })),
+  );
+
+  return items
+    .flatMap((item, index): BrokerFeedItem[] => {
+      const transaction = transactionMap.get(item.id);
+      if (!transaction) {
+        return [];
+      }
+
       const hub = hubMap.get(item.hub_id);
       const supplier = supplierMap.get(item.supplier_id);
       const economics = resolveEstimatedClaimEconomics({
@@ -618,34 +950,36 @@ export async function fetchBrokerFeed(limit = 40): Promise<BrokerFeedItem[]> {
         brokerUpsideBps: DEFAULT_BROKER_UPSIDE_BPS,
         platformUpsideBps: DEFAULT_PLATFORM_UPSIDE_BPS,
       });
-      const currencyCode = resolveCurrencyCode(item.currency_code);
+      const currencyCode = resolveCurrencyCode(item.currency_code ?? transaction.currency_code);
       const label = item.title ?? 'TATO Item';
 
-      return {
+      const feedItem: BrokerFeedItem = {
         id: item.id,
         title: item.title ?? 'Untitled Item',
         subtitle: item.condition_summary ?? item.description ?? 'Supplier catalog item',
         hubName: `Hub: ${hub?.name ?? 'Supplier Hub'}`,
         city: hub?.city ?? 'Local',
         floorPriceCents: economics.floorPriceCents,
-        claimDepositCents: economics.claimDepositCents,
+        claimDepositCents: transaction.gross_amount_cents || economics.claimDepositCents,
         estimatedSalePriceCents: economics.estimatedSalePriceCents,
         estimatedBrokerPayoutCents: economics.estimatedBrokerPayoutCents,
         photoCount: Math.max(item.photo_paths?.length ?? 0, 1),
         aiIngestionConfidence: Math.min(0.999, Math.max(0.45, item.ingestion_ai_confidence ?? 0.82)),
-        tags: [
-          item.condition_summary ? item.condition_summary.toLowerCase() : 'verified photos',
-          hub?.city ? `${hub.city.toLowerCase()} pickup` : 'local pickup',
-        ],
-        gradeLabel: item.condition_summary ?? 'Verified',
-        imageUrl: await resolveImage(item.photo_paths?.[0], label),
+        tags: ['deposit pending', hub?.city ? `${hub.city.toLowerCase()} pickup` : 'local pickup'],
+        gradeLabel: item.condition_summary ?? 'Checkout pending',
+        imageUrl: imageUrls[index] ?? placeholderImage(label),
         sellerBadges: [initials(supplier?.display_name)],
         hubId: item.hub_id,
+        pendingClaimCheckout: {
+          transactionId: transaction.id,
+          startedAt: transaction.occurred_at,
+        },
         shippable: true,
         currencyCode,
-      } satisfies BrokerFeedItem;
-    }),
-  );
+      };
+
+      return [feedItem];
+    });
 }
 
 export async function createClaim(args: {
@@ -654,7 +988,7 @@ export async function createClaim(args: {
   hubId: string;
   claimDepositCents: number;
   expiresInDays?: number;
-}) {
+}): Promise<ClaimCreationResult> {
   const client = requireSupabase();
 
   const { data, error } = await client.functions.invoke('create-claim', {
@@ -662,6 +996,7 @@ export async function createClaim(args: {
       itemId: args.itemId,
       expiresInDays: args.expiresInDays ?? 3,
       requestKey: createRequestKey('claim'),
+      checkoutReturnUrl: buildClaimCheckoutReturnUrl(),
     },
   });
 
@@ -688,14 +1023,38 @@ export async function createClaim(args: {
     };
   }
 
-  return {
+  const base = {
     ok: true as const,
     id: data.claimId as string,
     paymentIntentId: (data.paymentIntentId ?? null) as string | null,
-    clientSecret: (data.clientSecret ?? null) as string | null,
     transactionId: (data.transactionId ?? null) as string | null,
   };
+
+  if (data.checkoutRequired) {
+    return {
+      ...base,
+      checkoutRequired: true as const,
+      checkoutUrl: typeof data.checkoutUrl === 'string' ? data.checkoutUrl : null,
+      paymentFlow: data.paymentFlow === 'embedded' ? 'embedded' : 'hosted',
+      clientSecret: typeof data.clientSecret === 'string' ? data.clientSecret : null,
+      publishableKey: resolvePublishableKey(typeof data.publishableKey === 'string' ? data.publishableKey : null),
+      customerId: typeof data.customerId === 'string' ? data.customerId : null,
+      ephemeralKeySecret: typeof data.ephemeralKeySecret === 'string' ? data.ephemeralKeySecret : null,
+    };
+  }
+
+  return {
+    ...base,
+    checkoutRequired: false as const,
+    checkoutUrl: null,
+    paymentFlow: null,
+    clientSecret: null,
+    publishableKey: null,
+    customerId: null,
+    ephemeralKeySecret: null,
+  };
 }
+
 
 export async function fetchBrokerClaims(brokerId: string | null): Promise<ClaimSnapshot[]> {
   if (!brokerId) {
@@ -704,21 +1063,41 @@ export async function fetchBrokerClaims(brokerId: string | null): Promise<ClaimS
 
   const client = requireSupabase();
 
-  const { data: claimRows, error } = await client
-    .from('claims')
-    .select(
-      'id,item_id,status,expires_at,claim_fee_cents,claim_deposit_cents,hub_id,currency_code,locked_floor_price_cents,locked_suggested_list_price_cents,supplier_upside_bps,broker_upside_bps,platform_upside_bps,listing_ai_title,listing_ai_description,listing_ai_platform_variants,external_listing_refs,buyer_committed_at,pickup_due_at',
-    )
-    .eq('broker_id', brokerId)
-    .order('created_at', { ascending: false })
-    .limit(40);
+  const claimSelectBase = 'id,item_id,status,expires_at,claim_fee_cents,claim_deposit_cents,hub_id,currency_code,locked_floor_price_cents,locked_suggested_list_price_cents,supplier_upside_bps,broker_upside_bps,platform_upside_bps,listing_ai_title,listing_ai_description,listing_ai_platform_variants,external_listing_refs,buyer_committed_at,pickup_due_at';
+  const claimSelectWithPayments = `${claimSelectBase},buyer_payment_amount_cents,buyer_payment_token,buyer_payment_status,buyer_payment_checkout_session_id,buyer_payment_paid_at`;
+  let claimRows: ClaimRecord[] | null = null;
+  let error = null as { message: string } | null;
+
+  {
+    const next = await client
+      .from('claims')
+      .select(claimSelectWithPayments)
+      .eq('broker_id', brokerId)
+      .order('created_at', { ascending: false })
+      .limit(40);
+
+    if (next.error && /buyer_payment_/.test(next.error.message)) {
+      const legacy = await client
+        .from('claims')
+        .select(claimSelectBase)
+        .eq('broker_id', brokerId)
+        .order('created_at', { ascending: false })
+        .limit(40);
+
+      claimRows = (legacy.data ?? []) as ClaimRecord[];
+      error = legacy.error;
+    } else {
+      claimRows = (next.data ?? []) as ClaimRecord[];
+      error = next.error;
+    }
+  }
 
   if (error) {
     captureException(error, { flow: 'repo.fetchBrokerClaims' });
     throw new Error(error.message);
   }
 
-  const claims = (claimRows ?? []) as ClaimRecord[];
+  const claims = claimRows ?? [];
   if (!claims.length) {
     return [];
   }
@@ -777,6 +1156,11 @@ export async function fetchBrokerClaims(brokerId: string | null): Promise<ClaimS
       externalListings: normalizeExternalListingRefs(claim.external_listing_refs),
       buyerCommittedAt: claim.buyer_committed_at,
       pickupDueAt: claim.pickup_due_at,
+      buyerPaymentAmountCents: claim.buyer_payment_amount_cents,
+      buyerPaymentToken: claim.buyer_payment_token,
+      buyerPaymentStatus: normalizeBuyerPaymentStatus(claim.buyer_payment_status),
+      buyerPaymentCheckoutSessionId: claim.buyer_payment_checkout_session_id,
+      buyerPaymentPaidAt: claim.buyer_payment_paid_at,
     } satisfies ClaimSnapshot;
   });
 }
@@ -788,59 +1172,25 @@ export async function saveBrokerExternalListing(args: {
   externalId?: string | null;
 }): Promise<{ ok: true } | { ok: false; message: string }> {
   const client = requireSupabase();
-  const platform = args.platform.trim();
-  const listingUrl = args.listingUrl?.trim() || null;
-  const externalId = args.externalId?.trim() || null;
-
-  if (!platform) {
-    return { ok: false, message: 'Enter a marketplace name before saving the listing.' };
-  }
-
-  if (!listingUrl && !externalId) {
-    return { ok: false, message: 'Add a listing URL or marketplace listing ID before saving.' };
-  }
-
-  const { data: claimRow, error: loadError } = await client
-    .from('claims')
-    .select('status,external_listing_refs')
-    .eq('id', args.claimId)
-    .maybeSingle<{ status: string; external_listing_refs: Record<string, unknown> | null }>();
-
-  if (loadError) {
-    captureException(loadError, { flow: 'repo.saveBrokerExternalListing.load' });
-    return { ok: false, message: 'Unable to load the current listing tracker.' };
-  }
-
-  const currentListings = normalizeExternalListingRefs(claimRow?.external_listing_refs);
-  const currentStatus = normalizeClaimStatus(claimRow?.status);
-  const key = slugifyClaimPlatform(platform);
-  const timestamp = new Date().toISOString();
-  const nextListings: ClaimExternalListing[] = [
-    ...currentListings.filter((listing) => listing.key !== key),
-    {
-      key,
-      platform,
-      url: listingUrl,
-      externalId,
-      source: 'manual',
-      updatedAt: timestamp,
+  const { data, error } = await client.functions.invoke('save-broker-external-listing', {
+    body: {
+      claimId: args.claimId,
+      platform: args.platform,
+      listingUrl: args.listingUrl ?? null,
+      externalId: args.externalId ?? null,
     },
-  ];
+  });
 
-  const { error: updateError } = await client
-    .from('claims')
-    .update({
-      external_listing_refs: serializeExternalListingRefs(nextListings),
-      status:
-        currentStatus === 'active' || currentStatus === 'listing_generated'
-          ? 'listed_externally'
-          : currentStatus,
-    })
-    .eq('id', args.claimId);
-
-  if (updateError) {
-    captureException(updateError, { flow: 'repo.saveBrokerExternalListing.update' });
+  if (error) {
+    captureException(error, { flow: 'repo.saveBrokerExternalListing' });
     return { ok: false, message: 'Unable to save the external listing right now.' };
+  }
+
+  if (!data?.ok) {
+    return {
+      ok: false,
+      message: toMutationMessage(data as MutationErrorResponse, 'Unable to save the external listing right now.'),
+    };
   }
 
   return { ok: true };
@@ -850,32 +1200,56 @@ export async function updateBrokerClaimWorkflow(args: {
   claimId: string;
   status: Extract<ClaimStatus, 'buyer_committed' | 'awaiting_pickup' | 'cancelled'>;
   buyerCommittedAt?: string | null;
+  buyerPaymentAmountCents?: number | null;
   pickupDueAt?: string | null;
-}): Promise<{ ok: true } | { ok: false; message: string }> {
+}): Promise<
+  | {
+      ok: true;
+      publicPaymentUrl?: string;
+      buyerPaymentAmountCents?: number;
+      pickupDueAt?: string | null;
+    }
+  | { ok: false; message: string }
+> {
   const client = requireSupabase();
-  const patch: Record<string, string | null> = {
-    status: args.status,
-  };
-
-  if (args.status === 'buyer_committed') {
-    patch.buyer_committed_at = args.buyerCommittedAt ?? new Date().toISOString();
-  }
-
-  if (args.status === 'awaiting_pickup') {
-    patch.pickup_due_at = args.pickupDueAt ?? null;
-  }
-
-  const { error } = await client
-    .from('claims')
-    .update(patch)
-    .eq('id', args.claimId);
+  const { data, error } = await client.functions.invoke('update-claim-workflow', {
+    body: {
+      claimId: args.claimId,
+      status: args.status,
+      buyerPaymentAmountCents: args.buyerPaymentAmountCents ?? undefined,
+      pickupDueAt: args.pickupDueAt ?? null,
+      buyerCommittedAt: args.buyerCommittedAt ?? undefined,
+    },
+  });
 
   if (error) {
     captureException(error, { flow: 'repo.updateBrokerClaimWorkflow' });
-    return { ok: false, message: 'Unable to update the claim workflow right now.' };
+    const parsed = await toStripeFunctionErrorResult(
+      error,
+      'claim_workflow',
+      'Unable to update the claim workflow right now.',
+    );
+    return { ok: false, message: parsed.message };
   }
 
-  return { ok: true };
+  if (!data?.ok) {
+    return {
+      ok: false,
+      message: toStripeMutationMessage(
+        data as MutationErrorResponse,
+        'claim_workflow',
+        'Unable to update the claim workflow right now.',
+      ),
+    };
+  }
+
+  return {
+    ok: true,
+    publicPaymentUrl: typeof data.publicPaymentUrl === 'string' ? data.publicPaymentUrl : undefined,
+    buyerPaymentAmountCents:
+      typeof data.buyerPaymentAmountCents === 'number' ? data.buyerPaymentAmountCents : undefined,
+    pickupDueAt: typeof data.pickupDueAt === 'string' ? data.pickupDueAt : null,
+  };
 }
 
 export async function fetchSupplierDashboard(supplierId: string | null): Promise<{
@@ -891,12 +1265,22 @@ export async function fetchSupplierDashboard(supplierId: string | null): Promise
 
   const client = requireSupabase();
 
-  const { data: itemRows, error } = await client
-    .from('items')
-    .select('id,title,digital_status,floor_price_cents,suggested_list_price_cents,photo_paths,quantity,currency_code')
-    .eq('supplier_id', supplierId)
-    .order('created_at', { ascending: false })
-    .limit(200);
+  const [{ data: itemRows, error }, { data: txRows, error: txError }] = await Promise.all([
+    client
+      .from('items')
+      .select('id,title,digital_status,floor_price_cents,suggested_list_price_cents,photo_paths,quantity,currency_code')
+      .eq('supplier_id', supplierId)
+      .order('created_at', { ascending: false })
+      .limit(200),
+    client
+      .from('transactions')
+      .select('gross_amount_cents,occurred_at,status,transaction_type,currency_code')
+      .eq('supplier_id', supplierId)
+      .eq('status', 'succeeded')
+      .eq('transaction_type', 'sale_payment')
+      .order('occurred_at', { ascending: false })
+      .limit(250),
+  ]);
 
   if (error) {
     captureException(error, { flow: 'repo.fetchSupplierDashboard.items' });
@@ -905,38 +1289,33 @@ export async function fetchSupplierDashboard(supplierId: string | null): Promise
 
   const items = (itemRows ?? []) as SupplierDashboardItemRecord[];
 
-  const { data: txRows, error: txError } = await client
-    .from('transactions')
-    .select('gross_amount_cents,occurred_at,status,transaction_type,currency_code')
-    .eq('supplier_id', supplierId)
-    .eq('status', 'succeeded')
-    .eq('transaction_type', 'sale_payment')
-    .order('occurred_at', { ascending: false })
-    .limit(250);
-
   if (txError) {
     captureException(txError, { flow: 'repo.fetchSupplierDashboard.transactions' });
     throw new Error(txError.message);
   }
 
-  const mappedItems = await Promise.all(
-    items.map(async (item) => {
-      const currencyCode = resolveCurrencyCode(item.currency_code);
-      return {
-        id: item.id,
-        sku: `SKU-${item.id.slice(0, 6).toUpperCase()}`,
-        title: item.title ?? 'Catalog Item',
-        askPriceCents: item.suggested_list_price_cents ?? item.floor_price_cents ?? 0,
-        status: supplierStatusFromItemStatus(item.digital_status),
-        quantity: item.quantity,
-        thumbUrl: await resolveImage(item.photo_paths?.[0], item.title ?? 'Inventory'),
-        subtitle: item.title ?? 'Catalog item',
-        brokerActivity: 'Medium' as const,
-        canDelete: canSupplierDeleteItem(item.digital_status),
-        currencyCode,
-      } satisfies SupplierItem;
-    }),
+  const imageUrls = await resolveImages(
+    items.map((item) => ({
+      path: item.photo_paths?.[0],
+      label: item.title ?? 'Inventory',
+    })),
   );
+  const mappedItems = items.map((item, index) => {
+    const currencyCode = resolveCurrencyCode(item.currency_code);
+    return {
+      id: item.id,
+      sku: `SKU-${item.id.slice(0, 6).toUpperCase()}`,
+      title: item.title ?? 'Catalog Item',
+      askPriceCents: item.suggested_list_price_cents ?? item.floor_price_cents ?? 0,
+      status: supplierStatusFromItemStatus(item.digital_status),
+      quantity: item.quantity,
+      thumbUrl: imageUrls[index] ?? placeholderImage(item.title ?? 'Inventory'),
+      subtitle: item.title ?? 'Catalog item',
+      brokerActivity: 'Medium' as const,
+      canDelete: canSupplierDeleteItem(item.digital_status),
+      currencyCode,
+    } satisfies SupplierItem;
+  });
 
   const now = new Date();
   const start30 = new Date(now);
@@ -995,7 +1374,7 @@ export async function fetchItemDetail(itemId: string): Promise<ItemDetail | null
   const { data, error } = await client
     .from('items')
     .select(
-      'id,supplier_id,title,description,condition_summary,floor_price_cents,suggested_list_price_cents,ingestion_ai_confidence,ingestion_ai_attributes,ingestion_ai_market_snapshot,photo_paths,digital_status,currency_code,updated_at',
+      'id,supplier_id,title,description,condition_summary,floor_price_cents,suggested_list_price_cents,ingestion_ai_confidence,ingestion_ai_attributes,ingestion_ai_market_snapshot,photo_paths,digital_status,currency_code,created_at,updated_at,listed_at,sold_at,archived_at',
     )
     .eq('id', itemId)
     .maybeSingle<ItemDetailRecord>();
@@ -1025,8 +1404,11 @@ export async function fetchItemDetail(itemId: string): Promise<ItemDetail | null
   const missingViews = normalizeJsonStringArray(marketSnapshot.missing_views ?? attributes.missing_views);
   const observedDetails = buildObservedDetails(attributes);
   const candidateItems = buildCandidateItems(attributes);
-  const photoUrls = await Promise.all(
-    (data.photo_paths ?? []).map((path) => resolveImage(path, data.title ?? 'Item Detail')),
+  const photoUrls = await resolveImages(
+    (data.photo_paths ?? []).map((path) => ({
+      path,
+      label: data.title ?? 'Item Detail',
+    })),
   );
   const nextBestAction =
     typeof marketSnapshot.next_best_action === 'string' && marketSnapshot.next_best_action.trim().length > 0
@@ -1039,7 +1421,51 @@ export async function fetchItemDetail(itemId: string): Promise<ItemDetail | null
       ? humanizeLabel(marketSnapshot.velocity)
       : suggested - floor > 5000
         ? 'High'
-        : 'Medium';
+      : 'Medium';
+  const { data: claimRows } = await client
+    .from('claims')
+    .select('id,broker_id,status,claimed_at,listing_ai_ran_at,external_listing_refs,buyer_committed_at,pickup_due_at,buyer_payment_amount_cents,buyer_payment_paid_at,updated_at')
+    .eq('item_id', itemId)
+    .order('created_at', { ascending: false })
+    .limit(5);
+  const claims = ((claimRows as Array<{
+    id: string;
+    broker_id: string;
+    status: string;
+    claimed_at: string | null;
+    listing_ai_ran_at: string | null;
+    external_listing_refs: Record<string, unknown> | null;
+    buyer_committed_at: string | null;
+    pickup_due_at: string | null;
+    buyer_payment_amount_cents: number | null;
+    buyer_payment_paid_at: string | null;
+    updated_at: string | null;
+  }> | null | undefined) ?? []);
+  const activeClaim = claims.find((claim) => (
+    ['active', 'listing_generated', 'listed_externally', 'buyer_committed', 'awaiting_pickup', 'completed'].includes(claim.status)
+  )) ?? claims[0] ?? null;
+  const { data: brokerProfile } = activeClaim?.broker_id
+    ? await client
+      .from('profiles')
+      .select('id,display_name')
+      .eq('id', activeClaim.broker_id)
+      .maybeSingle<ProfileRecord>()
+    : { data: null };
+  const activeExternalListings = normalizeExternalListingRefs(activeClaim?.external_listing_refs);
+  const latestListingActivity = getLatestListingActivity(activeExternalListings);
+  const stockState = stockStateFromDigitalStatus(data.digital_status, data.archived_at);
+  const fulfilledAt = activeClaim?.buyer_payment_paid_at ?? data.sold_at ?? null;
+  const stateHistory = buildStockStateHistory({
+    currentState: stockState,
+    createdAt: data.created_at,
+    readyAt: data.digital_status === 'ready_for_claim' ? data.updated_at : data.listed_at,
+    claimedAt: activeClaim?.claimed_at ?? null,
+    listedAt: latestListingActivity ?? activeClaim?.listing_ai_ran_at ?? null,
+    soldAt: activeClaim?.buyer_committed_at ?? null,
+    fulfillmentRequestedAt: activeClaim?.pickup_due_at ?? null,
+    fulfilledAt,
+    archivedAt: data.archived_at,
+  });
 
   return {
     id: data.id,
@@ -1056,6 +1482,22 @@ export async function fetchItemDetail(itemId: string): Promise<ItemDetail | null
     imageUrl: photoUrls[0] ?? placeholderImage(data.title ?? 'Item Detail'),
     photoUrls,
     lifecycleStage: lifecycleFromItemStatus(data.digital_status),
+    stockState,
+    stateHistory,
+    brokerActivity: {
+      brokerName: brokerProfile?.display_name ?? null,
+      claimId: activeClaim?.id ?? null,
+      claimedAt: activeClaim?.claimed_at ?? null,
+      listedPriceCents: activeClaim?.buyer_payment_amount_cents ?? null,
+      externalPlatforms: activeExternalListings.map((listing) => listing.platform),
+      lastActivityAt:
+        latestListingActivity
+        ?? activeClaim?.buyer_committed_at
+        ?? activeClaim?.pickup_due_at
+        ?? activeClaim?.updated_at
+        ?? null,
+    },
+    activeClaimId: activeClaim?.id ?? null,
     estimatedBrokerPayoutCents: economics.estimatedBrokerPayoutCents,
     marketVelocityLabel: velocity,
     claimDepositCents: economics.claimDepositCents,
@@ -1499,6 +1941,97 @@ export async function fetchLedger(userId: string | null): Promise<LedgerEntry[]>
   });
 }
 
+export async function fetchNotifications(userId: string | null): Promise<UserNotification[]> {
+  if (!userId) {
+    return [];
+  }
+
+  const client = requireSupabase();
+  const { data, error } = await client
+    .from('user_notifications')
+    .select('id,event_type,title,body,action_href,item_id,claim_id,read_at,created_at')
+    .eq('recipient_profile_id', userId)
+    .order('created_at', { ascending: false })
+    .limit(12);
+
+  if (error) {
+    captureException(error, { flow: 'repo.fetchNotifications' });
+    throw new Error(error.message);
+  }
+
+  return ((data as UserNotificationRecord[] | null | undefined) ?? []).map((row) => ({
+    id: row.id,
+    eventType: row.event_type,
+    title: row.title,
+    body: row.body,
+    actionHref: row.action_href,
+    itemId: row.item_id,
+    claimId: row.claim_id,
+    readAt: row.read_at,
+    createdAt: row.created_at,
+  }));
+}
+
+export async function fetchClaimMessages(claimId: string | null): Promise<ClaimMessage[]> {
+  if (!claimId) {
+    return [];
+  }
+
+  const client = requireSupabase();
+  const { data, error } = await client
+    .from('claim_messages')
+    .select('id,claim_id,item_id,sender_profile_id,recipient_profile_id,body,read_at,created_at')
+    .eq('claim_id', claimId)
+    .order('created_at', { ascending: true })
+    .limit(80);
+
+  if (error) {
+    captureException(error, { flow: 'repo.fetchClaimMessages', claimId });
+    throw new Error(error.message);
+  }
+
+  return ((data as ClaimMessageRecord[] | null | undefined) ?? []).map((row) => ({
+    id: row.id,
+    claimId: row.claim_id,
+    itemId: row.item_id,
+    senderProfileId: row.sender_profile_id,
+    recipientProfileId: row.recipient_profile_id,
+    body: row.body,
+    readAt: row.read_at,
+    createdAt: row.created_at,
+  }));
+}
+
+export async function sendClaimMessage(args: {
+  claimId: string;
+  body: string;
+}): Promise<{ ok: true; messageId: string } | { ok: false; message: string }> {
+  const client = requireSupabase();
+  const { data, error } = await client.functions.invoke('send-claim-message', {
+    body: {
+      claimId: args.claimId,
+      body: args.body,
+    },
+  });
+
+  if (error) {
+    captureException(error, { flow: 'repo.sendClaimMessage', claimId: args.claimId });
+    return { ok: false, message: 'Unable to send the message right now.' };
+  }
+
+  if (!data?.ok) {
+    return {
+      ok: false,
+      message: toMutationMessage(data as MutationErrorResponse, 'Unable to send the message right now.'),
+    };
+  }
+
+  return {
+    ok: true,
+    messageId: typeof data.messageId === 'string' ? data.messageId : '',
+  };
+}
+
 export async function runIngestionPipeline(args: {
   supplierId: string;
   photos: IngestionPhotoInput[];
@@ -1536,13 +2069,22 @@ export async function runIngestionPipeline(args: {
 
   if (startError) {
     captureException(startError, { flow: 'repo.startIngestion' });
-    return { ok: false, message: startError.message };
+    const parsed = await toStripeFunctionErrorResult(
+      startError,
+      'supplier_ingestion',
+      'Unable to start ingestion.',
+    );
+    return { ok: false, message: parsed.message };
   }
 
   if (!startData?.ok || !startData?.itemId || !startData?.storageKey || !startData?.storageBucket) {
     return {
       ok: false,
-      message: toMutationMessage(startData as MutationErrorResponse, 'Unable to start ingestion.'),
+      message: toStripeMutationMessage(
+        startData as MutationErrorResponse,
+        'supplier_ingestion',
+        'Unable to start ingestion.',
+      ),
     };
   }
 
@@ -1626,6 +2168,190 @@ export async function createClaimFeeIntent(_claimId: string): Promise<ClaimFeeIn
   };
 }
 
+export async function cancelPendingClaimCheckout(transactionId: string) {
+  const client = requireSupabase();
+  const { data, error } = await client.functions.invoke('cancel-claim-checkout', {
+    body: {
+      transactionId,
+    },
+  });
+
+  if (error) {
+    captureException(error, { flow: 'repo.cancelPendingClaimCheckout' });
+    const parsed = await toStripeFunctionErrorResult(
+      error,
+      'claim',
+      'Unable to cancel the pending claim checkout.',
+    );
+    return { ok: false as const, message: parsed.message };
+  }
+
+  if (!data?.ok) {
+    return {
+      ok: false as const,
+      message: toStripeMutationMessage(
+        data as MutationErrorResponse,
+        'claim',
+        'Unable to cancel the pending claim checkout.',
+      ),
+    };
+  }
+
+  return { ok: true as const };
+}
+
+export async function resumeClaimCheckout(transactionId: string): Promise<ClaimCreationResult> {
+  const client = requireSupabase();
+  const { data, error } = await client.functions.invoke('resume-claim-checkout', {
+    body: {
+      transactionId,
+    },
+  });
+
+  if (error) {
+    captureException(error, { flow: 'repo.resumeClaimCheckout' });
+    const parsed = await toStripeFunctionErrorResult(
+      error,
+      'claim',
+      'Unable to resume the pending claim checkout.',
+    );
+    return { ok: false, message: parsed.message };
+  }
+
+  if (!data?.ok) {
+    return {
+      ok: false,
+      message: toStripeMutationMessage(
+        data as MutationErrorResponse,
+        'claim',
+        'Unable to resume the pending claim checkout.',
+      ),
+    };
+  }
+
+  const base = {
+    ok: true as const,
+    id: data.claimId as string,
+    paymentIntentId: (data.paymentIntentId ?? null) as string | null,
+    transactionId: (data.transactionId ?? null) as string | null,
+  };
+
+  if (data.checkoutRequired) {
+    return {
+      ...base,
+      checkoutRequired: true as const,
+      checkoutUrl: typeof data.checkoutUrl === 'string' ? data.checkoutUrl : null,
+      paymentFlow: data.paymentFlow === 'embedded' ? 'embedded' : 'hosted',
+      clientSecret: typeof data.clientSecret === 'string' ? data.clientSecret : null,
+      publishableKey: resolvePublishableKey(typeof data.publishableKey === 'string' ? data.publishableKey : null),
+      customerId: typeof data.customerId === 'string' ? data.customerId : null,
+      ephemeralKeySecret: typeof data.ephemeralKeySecret === 'string' ? data.ephemeralKeySecret : null,
+    };
+  }
+
+  return {
+    ...base,
+    checkoutRequired: false as const,
+    checkoutUrl: null,
+    paymentFlow: null,
+    clientSecret: null,
+    publishableKey: null,
+    customerId: null,
+    ephemeralKeySecret: null,
+  };
+}
+
+export async function fetchPublicBuyerPayment(token: string): Promise<PublicBuyerPaymentSnapshot> {
+  const client = requireSupabase();
+  const { data, error } = await client.functions.invoke('get-buyer-payment', {
+    body: { token },
+  });
+
+  if (error) {
+    captureException(error, { flow: 'repo.fetchPublicBuyerPayment' });
+    throw new Error(error.message);
+  }
+
+  if (!data?.ok) {
+    throw new Error(toMutationMessage(data as MutationErrorResponse, 'This buyer payment link is no longer available.'));
+  }
+
+  return {
+    claimId: data.claimId as string,
+    itemTitle: (data.itemTitle ?? 'TATO item') as string,
+    itemDescription: (data.itemDescription ?? 'Secure the item with TATO Checkout before pickup.') as string,
+    imageUrl: (data.imageUrl ?? null) as string | null,
+    amountCents: Number(data.amountCents ?? 0),
+    currencyCode: resolveCurrencyCode(data.currencyCode as string | null),
+    paymentStatus: (data.paymentStatus ?? 'inactive') as PublicBuyerPaymentSnapshot['paymentStatus'],
+    claimStatus: (data.claimStatus ?? 'active') as PublicBuyerPaymentSnapshot['claimStatus'],
+    buyerPaymentStatus: normalizeBuyerPaymentStatus(data.buyerPaymentStatus as string | null),
+    paidAt: (data.paidAt ?? null) as string | null,
+    checkoutSessionId: (data.checkoutSessionId ?? null) as string | null,
+    paymentLinkCreatedAt: (data.paymentLinkCreatedAt ?? null) as string | null,
+    supportUrl: (data.supportUrl ?? '/support') as string,
+    termsUrl: (data.termsUrl ?? '/terms') as string,
+    privacyUrl: (data.privacyUrl ?? '/privacy') as string,
+  };
+}
+
+export async function createBuyerCheckoutSession(token: string) {
+  const client = requireSupabase();
+  const { data, error } = await client.functions.invoke('create-buyer-checkout-session', {
+    body: {
+      token,
+      checkoutReturnUrl: buildBuyerCheckoutReturnUrl(token),
+    },
+  });
+
+  if (error) {
+    captureException(error, { flow: 'repo.createBuyerCheckoutSession' });
+    const parsed = await toStripeFunctionErrorResult(
+      error,
+      'buyer_checkout',
+      'Unable to open buyer checkout.',
+    );
+    return { ok: false as const, message: parsed.message };
+  }
+
+  if (!data?.ok) {
+    return {
+      ok: false as const,
+      message: toStripeMutationMessage(
+        data as MutationErrorResponse,
+        'buyer_checkout',
+        'Unable to open buyer checkout.',
+      ),
+    };
+  }
+
+  if (data.alreadyPaid) {
+    return {
+      ok: true as const,
+      alreadyPaid: true as const,
+      checkoutUrl: null,
+      checkoutSessionId: null,
+      paymentFlow: null,
+      paymentIntentId: null,
+      clientSecret: null,
+      publishableKey: null,
+      transactionId: null,
+    };
+  }
+
+  return {
+    ok: true as const,
+    alreadyPaid: false as const,
+    checkoutUrl: typeof data.checkoutUrl === 'string' ? data.checkoutUrl : null,
+    checkoutSessionId: typeof data.checkoutSessionId === 'string' ? data.checkoutSessionId : null,
+    paymentFlow: data.paymentFlow === 'embedded' ? 'embedded' as const : 'hosted' as const,
+    paymentIntentId: (data.paymentIntentId ?? null) as string | null,
+    clientSecret: typeof data.clientSecret === 'string' ? data.clientSecret : null,
+    publishableKey: resolvePublishableKey(typeof data.publishableKey === 'string' ? data.publishableKey : null),
+    transactionId: (data.transactionId ?? null) as string | null,
+  };
+}
+
 export async function createSalePaymentIntent(args: {
   claimId: string;
   grossAmountCents: number;
@@ -1644,13 +2370,22 @@ export async function createSalePaymentIntent(args: {
 
   if (error) {
     captureException(error, { flow: 'repo.createSalePaymentIntent' });
-    return { ok: false, message: error.message };
+    const parsed = await toStripeFunctionErrorResult(
+      error,
+      'sale_payment',
+      'Sale payment intent did not return payment details.',
+    );
+    return { ok: false, message: parsed.message };
   }
 
   if (!data?.ok || !data?.paymentIntentId) {
     return {
       ok: false,
-      message: toMutationMessage(data as MutationErrorResponse, 'Sale payment intent did not return payment details.'),
+      message: toStripeMutationMessage(
+        data as MutationErrorResponse,
+        'sale_payment',
+        'Sale payment intent did not return payment details.',
+      ),
     };
   }
 
@@ -1669,13 +2404,22 @@ export async function createConnectOnboardingLink() {
 
   if (error) {
     captureException(error, { flow: 'repo.createConnectOnboardingLink' });
-    return { ok: false as const, message: error.message };
+    const parsed = await toStripeFunctionErrorResult(
+      error,
+      'connect_onboarding',
+      'Unable to create Stripe Connect onboarding link.',
+    );
+    return { ok: false as const, message: parsed.message };
   }
 
   if (!data?.ok || !data?.url) {
     return {
       ok: false as const,
-      message: toMutationMessage(data as MutationErrorResponse, 'Unable to create Stripe Connect onboarding link.'),
+      message: toStripeMutationMessage(
+        data as MutationErrorResponse,
+        'connect_onboarding',
+        'Unable to create Stripe Connect onboarding link.',
+      ),
     };
   }
 
@@ -1691,13 +2435,22 @@ export async function refreshConnectStatus() {
 
   if (error) {
     captureException(error, { flow: 'repo.refreshConnectStatus' });
-    return { ok: false as const, message: error.message };
+    const parsed = await toStripeFunctionErrorResult(
+      error,
+      'connect_status',
+      'Unable to refresh Stripe Connect status.',
+    );
+    return { ok: false as const, message: parsed.message };
   }
 
   if (!data?.ok) {
     return {
       ok: false as const,
-      message: toMutationMessage(data as MutationErrorResponse, 'Unable to refresh Stripe Connect status.'),
+      message: toStripeMutationMessage(
+        data as MutationErrorResponse,
+        'connect_status',
+        'Unable to refresh Stripe Connect status.',
+      ),
     };
   }
 

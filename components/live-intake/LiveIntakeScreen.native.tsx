@@ -1,7 +1,7 @@
 import { CameraView } from 'expo-camera';
 import { useRouter } from 'expo-router';
 import { PlatformIcon } from '@/components/ui/PlatformIcon';
-import { useCallback } from 'react';
+import { useCallback, useEffect } from 'react';
 import {
   ActivityIndicator,
   Pressable,
@@ -10,11 +10,16 @@ import {
   View,
 } from 'react-native';
 import Animated, { useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { hapticMedium, hapticSelection, hapticSuccess } from '@/lib/haptics';
-
 import { useLiveIntakeSession } from '@/lib/liveIntake/useLiveIntakeSession.native';
 import { useAuth } from '@/components/providers/AuthProvider';
+import {
+  getLiveIntakeBottomBarPadding,
+  getLiveIntakeScrollBottomPadding,
+  getLiveIntakeTopChromeOffset,
+} from '@/lib/liveIntake/layout';
 import {
   getLiveDraftActionState,
   getLiveDraftReadiness,
@@ -125,7 +130,7 @@ function DraftActionCard({
             <ActivityIndicator color="white" />
           ) : (
             <Text className={`text-base font-bold ${actionState.primaryDisabled ? 'text-tato-dim' : 'text-white'}`}>
-              {ready ? `✦ ${actionState.primaryLabel}` : actionState.primaryLabel}
+              {actionState.primaryLabel}
             </Text>
           )}
         </Pressable>
@@ -167,7 +172,7 @@ function PostedItemsTray({ items }: { items: LivePostedItem[] }) {
       </View>
       <View className="mt-2 gap-1.5">
         {items.map((item, index) => (
-          <View className="flex-row items-center justify-between gap-3 rounded-[12px] border border-tato-profit/20 bg-tato-profit/5 px-3 py-2" key={item.itemId}>
+          <View className="flex-row items-center justify-between gap-3 border-b border-tato-profit/20 py-2" key={item.itemId}>
             <Text className="flex-1 text-sm font-medium text-tato-text" numberOfLines={1}>
               {index + 1}. {item.title}
             </Text>
@@ -185,26 +190,28 @@ function UnavailableView({
   onSetupHub,
   onRetry,
   onBack,
+  topChromeOffset,
 }: {
   message: string;
   onFallback: () => void;
   onSetupHub?: (() => void) | null;
   onRetry: () => void;
   onBack: () => void;
+  topChromeOffset: number;
 }) {
   return (
     <View className="flex-1 bg-tato-base px-6">
-      <View className="pt-4">
+      <View style={{ paddingTop: topChromeOffset }}>
         <Pressable
           accessibilityLabel="Go back"
           accessibilityRole="button"
           className="h-11 w-11 items-center justify-center rounded-full bg-tato-panelSoft"
           onPress={onBack}>
-          <PlatformIcon name={{ ios: 'chevron.left', android: 'arrow_back', web: 'arrow_back' }} size={18} color="#edf4ff" />
+          <PlatformIcon name={{ ios: 'chevron.left', android: 'arrow-back', web: 'arrow-back' }} size={18} color="#edf4ff" />
         </Pressable>
       </View>
       <View className="flex-1 items-center justify-center">
-        <Text className="text-center text-3xl font-bold text-tato-text">Live Intake Unavailable</Text>
+        <Text aria-level={1} className="text-center text-3xl font-bold text-tato-text" role="heading">Live Intake Unavailable</Text>
         <Text className="mt-3 text-center text-sm leading-6 text-tato-muted">{message}</Text>
         <Pressable
           className="mt-8 rounded-full border border-tato-accent/50 bg-tato-accent/10 px-8 py-4"
@@ -230,6 +237,7 @@ function UnavailableView({
 
 export default function LiveIntakeScreen() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const { user } = useAuth();
   const supplierId = user?.id ?? null;
 
@@ -318,6 +326,20 @@ export default function LiveIntakeScreen() {
   const bestGuessTitle = draftState.bestGuess.title || 'Scanning…';
   const conditionGrade = draftState.confirmedConditionGrade ?? draftState.condition.proposedGrade;
   const conditionConfidence = draftState.condition.confidence;
+  const topChromeOffset = getLiveIntakeTopChromeOffset(insets.top);
+  const bottomBarPadding = getLiveIntakeBottomBarPadding(insets.bottom);
+  const scrollBottomPadding = getLiveIntakeScrollBottomPadding({
+    bottomInset: insets.bottom,
+    stickyBarVisible: canCreate,
+  });
+  const cameraHeight = useSharedValue(canCreate ? 240 : 360);
+  const cameraHeightStyle = useAnimatedStyle(() => ({
+    height: cameraHeight.value,
+  }));
+
+  useEffect(() => {
+    cameraHeight.value = withTiming(canCreate ? 240 : 360, { duration: 300 });
+  }, [cameraHeight, canCreate]);
 
   // Idle / pre-start state
   const liveUnavailable =
@@ -334,6 +356,7 @@ export default function LiveIntakeScreen() {
         onSetupHub={liveMissingHub ? () => router.push('/(app)/(supplier)/profile' as never) : null}
         onRetry={() => { void refreshAvailability(); }}
         onBack={() => router.back()}
+        topChromeOffset={topChromeOffset}
       />
     );
   }
@@ -341,22 +364,37 @@ export default function LiveIntakeScreen() {
   if (connectionState === 'idle' || connectionState === 'unsupported') {
     return (
       <View className="flex-1 bg-tato-base px-6">
-        <View className="pt-4">
+        <View style={{ paddingTop: topChromeOffset }}>
           <Pressable
             accessibilityLabel="Go back"
             accessibilityRole="button"
             className="h-11 w-11 items-center justify-center rounded-full bg-tato-panelSoft"
             onPress={() => router.back()}>
-            <PlatformIcon name={{ ios: 'chevron.left', android: 'arrow_back', web: 'arrow_back' }} size={18} color="#edf4ff" />
+            <PlatformIcon name={{ ios: 'chevron.left', android: 'arrow-back', web: 'arrow-back' }} size={18} color="#edf4ff" />
           </Pressable>
         </View>
-        <View className="flex-1 items-center justify-center">
-          <Text className="text-center text-3xl font-bold text-tato-text">Live Intake</Text>
+        <View className="flex-1 items-center justify-start pt-12">
+          <View className="w-full max-w-[420px] items-center">
+          <Text aria-level={1} className="text-center text-3xl font-bold text-tato-text" role="heading">Live Intake</Text>
           <Text className="mt-2 text-center text-sm text-tato-muted">
             {availabilityLoading
               ? 'Checking whether live posting is available before requesting camera and microphone access.'
               : 'Start a real-time Gemini Live session to catalog items using your camera and voice.'}
           </Text>
+
+          {availabilityLoading ? (
+            <View aria-live="polite" className="mt-6 w-full rounded-[18px] border border-tato-line bg-tato-panelSoft px-4 py-4">
+              <View className="flex-row items-center gap-3">
+                <ActivityIndicator color="#1e6dff" />
+                <View className="flex-1">
+                  <Text className="text-sm font-semibold text-tato-text">Checking live posting readiness.</Text>
+                  <Text className="mt-1 text-sm leading-6 text-tato-muted">
+                    We are confirming supplier access and live-posting availability. This usually takes a moment.
+                  </Text>
+                </View>
+              </View>
+            </View>
+          ) : null}
 
           {error ? (
             <View className="mt-4 rounded-[14px] border border-red-500/30 bg-red-900/20 p-3">
@@ -369,7 +407,7 @@ export default function LiveIntakeScreen() {
             disabled={availabilityLoading}
             onPress={requestPermissionsAndStart}>
             <Text className={`text-base font-semibold ${availabilityLoading ? 'text-tato-dim' : 'text-tato-accent'}`}>
-              {availabilityLoading ? 'Checking Live Posting' : '✦ Start Live Session'}
+              {availabilityLoading ? 'Checking Live Posting' : 'Start Live Session'}
             </Text>
           </Pressable>
 
@@ -378,6 +416,7 @@ export default function LiveIntakeScreen() {
             onPress={() => router.replace('/ingestion')}>
             <Text className="text-sm text-tato-muted">Use Photo Capture Instead</Text>
           </Pressable>
+          </View>
         </View>
       </View>
     );
@@ -399,7 +438,7 @@ export default function LiveIntakeScreen() {
   if (connectionState === 'error') {
     return (
       <View className="flex-1 items-center justify-center bg-tato-base px-6">
-        <Text className="text-center text-xl font-bold text-red-400">Session Error</Text>
+        <Text aria-level={1} className="text-center text-xl font-bold text-red-400" role="heading">Session Error</Text>
         <Text className="mt-2 text-center text-sm text-tato-muted">{error}</Text>
         <View className="mt-6 flex-row gap-3">
           {resumable ? (
@@ -414,19 +453,6 @@ export default function LiveIntakeScreen() {
       </View>
     );
   }
-
-  const cameraHeight = useSharedValue(canCreate ? 240 : 360);
-
-  // Animate camera height when canCreate changes
-  const prevCanCreate = useSharedValue(canCreate);
-  if (prevCanCreate.value !== canCreate) {
-    prevCanCreate.value = canCreate;
-    cameraHeight.value = withTiming(canCreate ? 240 : 360, { duration: 300 });
-  }
-
-  const cameraHeightStyle = useAnimatedStyle(() => ({
-    height: cameraHeight.value,
-  }));
 
   // Connected — full session UI
   return (
@@ -448,7 +474,7 @@ export default function LiveIntakeScreen() {
         )}
 
         {/* Top bar: back + badges */}
-        <View className="absolute left-4 right-4 top-4 flex-row items-center justify-between">
+        <View className="absolute left-4 right-4 flex-row items-center justify-between" style={{ top: topChromeOffset }}>
           <View className="flex-row items-center gap-2">
             <Pressable
               accessibilityLabel="Exit session"
@@ -456,20 +482,20 @@ export default function LiveIntakeScreen() {
               className="h-11 w-11 items-center justify-center rounded-full bg-black/60"
               hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
               onPress={handleEndSession}>
-              <PlatformIcon name={{ ios: 'chevron.left', android: 'arrow_back', web: 'arrow_back' }} size={16} color="#edf4ff" />
+              <PlatformIcon name={{ ios: 'chevron.left', android: 'arrow-back', web: 'arrow-back' }} size={16} color="#edf4ff" />
             </Pressable>
             <View className="rounded-full bg-black/60 px-3 py-1">
               <Text className="text-xs font-bold text-white">LIVE</Text>
             </View>
             {burstMode ? (
               <View className="rounded-full bg-red-500/80 px-3 py-1">
-                <Text className="text-xs font-bold text-white">● BURST</Text>
+                <Text className="text-xs font-bold text-white">BURST</Text>
               </View>
             ) : null}
           </View>
           {postedItems.length > 0 ? (
             <View className="rounded-full bg-tato-profit/90 px-3 py-1">
-              <Text className="text-xs font-bold text-white">✓ {postedItems.length} posted</Text>
+              <Text className="text-xs font-bold text-white">{postedItems.length} posted</Text>
             </View>
           ) : null}
         </View>
@@ -479,12 +505,15 @@ export default function LiveIntakeScreen() {
           <Pressable
             className="rounded-full bg-black/60 px-4 py-2"
             onPress={requestIdentifyBurst}>
-            <Text className="text-xs font-semibold text-white">🔍 Re-scan</Text>
+            <Text className="text-xs font-semibold text-white">Re-scan</Text>
           </Pressable>
         </View>
       </Animated.View>
 
-      <ScrollView className="flex-1" contentContainerClassName={`gap-4 p-4 ${canCreate ? 'pb-48' : 'pb-10'}`}>
+      <ScrollView
+        className="flex-1"
+        contentContainerClassName="gap-4 p-4"
+        contentContainerStyle={{ paddingBottom: scrollBottomPadding }}>
         <View className="rounded-[20px] border border-tato-line bg-tato-panel p-4">
           <Text className="text-xs uppercase tracking-[1px] text-tato-accent">
             {canCreate ? 'Draft Ready' : 'Live Draft'}
@@ -683,7 +712,9 @@ export default function LiveIntakeScreen() {
 
       {/* ── Sticky bottom action bar (appears when draft is ready) ── */}
       {canCreate ? (
-        <View className="absolute bottom-0 left-0 right-0 border-t border-tato-line bg-tato-base/95 px-4 pb-8 pt-4">
+        <View
+          className="absolute bottom-0 left-0 right-0 border-t border-tato-line bg-tato-base/95 px-4 pt-4"
+          style={{ paddingBottom: bottomBarPadding }}>
           <View className="flex-row items-center justify-between gap-3 px-1">
             <View className="flex-1">
               <Text className="text-sm font-bold text-tato-text" numberOfLines={1}>{bestGuessTitle}</Text>
@@ -703,7 +734,7 @@ export default function LiveIntakeScreen() {
               {creatingDraft ? (
                 <ActivityIndicator color="white" />
               ) : (
-                <Text className="text-sm font-bold text-white">✦ Post & Scan Next</Text>
+                <Text className="text-sm font-bold text-white">Post & Scan Next</Text>
               )}
             </Pressable>
             <Pressable

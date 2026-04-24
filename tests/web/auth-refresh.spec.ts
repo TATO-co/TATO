@@ -6,7 +6,7 @@ type RefreshSample = {
 };
 
 async function signInWithDevBypass(page: Page) {
-  await page.goto('/sign-in', { waitUntil: 'networkidle' });
+  await page.goto('/sign-in', { waitUntil: 'domcontentloaded' });
   await page.getByRole('button', { name: 'Toggle developer tools' }).click();
   await page.getByRole('button', { name: 'Continue as development user' }).click();
   await page.waitForURL((url) => !url.pathname.endsWith('/sign-in'), { timeout: 15_000 });
@@ -41,7 +41,7 @@ test('signed-out visitors can stay on the welcome root', async ({ page }) => {
   await page.goto('/', { waitUntil: 'networkidle' });
 
   await expect(page).toHaveURL(/\/$/);
-  await expect(page.getByText('Turn your inventory into cash, instantly.', { exact: false })).toBeVisible();
+  await expect(page.getByText('Inventory in. Cash out.', { exact: false })).toBeVisible();
 });
 
 test('signed-out protected routes still redirect to direct sign-in', async ({ page }) => {
@@ -60,7 +60,7 @@ test('authenticated visitors are redirected away from public entry points', asyn
   await page.goto('/', { waitUntil: 'networkidle' });
   await expect(page).toHaveURL(new RegExp(`${preferredPath.replace('/', '\\/')}$`), { timeout: 15_000 });
 
-  await page.goto('/sign-in', { waitUntil: 'networkidle' });
+  await page.goto('/sign-in', { waitUntil: 'domcontentloaded' });
   await expect(page).toHaveURL(new RegExp(`${preferredPath.replace('/', '\\/')}$`), { timeout: 15_000 });
 });
 
@@ -80,7 +80,7 @@ test('authenticated refresh stays out of auth recovery screens', async ({ page }
   expect(samples.some((sample) => sample.text.includes('TATO Boot'))).toBeFalsy();
   expect(samples.some((sample) => sample.text.includes('Initializing session and workspace routes.'))).toBeFalsy();
   expect(samples.some((sample) => sample.text.includes('TATO ACCESS'))).toBeFalsy();
-  expect(samples.some((sample) => sample.text.includes('Turn your inventory into cash, instantly.'))).toBeFalsy();
+  expect(samples.some((sample) => sample.text.includes('Inventory in. Cash out.'))).toBeFalsy();
 
   await expect(page).toHaveURL(/\/workspace$/);
 });

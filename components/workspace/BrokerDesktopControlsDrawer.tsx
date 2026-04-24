@@ -36,6 +36,8 @@ function ChoicePill({
 }) {
   return (
     <Pressable
+      accessibilityRole="button"
+      accessibilityState={{ selected: active }}
       className={`rounded-2xl border px-3 py-2.5 ${
         active ? 'border-tato-accent bg-tato-accent/15' : 'border-tato-line bg-[#0b1a30]'
       }`}
@@ -59,6 +61,8 @@ function SegmentButton({
 }) {
   return (
     <Pressable
+      accessibilityRole="button"
+      accessibilityState={{ selected: active }}
       className={`flex-1 rounded-full px-3 py-2.5 ${active ? 'bg-tato-accent' : 'bg-[#112443]'}`}
       onPress={onPress}>
       <Text className={`text-center font-mono text-[11px] uppercase tracking-[1px] ${active ? 'text-white' : 'text-tato-muted'}`}>
@@ -161,6 +165,7 @@ export function BrokerDesktopControlsDrawer({
 
             <Pressable
               accessibilityLabel="Close broker controls"
+              accessibilityRole="button"
               className="h-10 w-10 items-center justify-center rounded-full bg-[#112443]"
               onPress={onClose}>
               <Text className="text-lg text-tato-text">×</Text>
@@ -274,10 +279,16 @@ export function BrokerDesktopControlsDrawer({
             </View>
 
             <View className="mt-4 flex-row gap-3">
-              <Pressable className="flex-1 rounded-full border border-tato-line bg-[#0a1a31] px-4 py-3" onPress={onClear}>
+              <Pressable
+                accessibilityRole="button"
+                className="flex-1 rounded-full border border-tato-line bg-[#0a1a31] px-4 py-3"
+                onPress={onClear}>
                 <Text className="text-center font-mono text-[11px] uppercase tracking-[1px] text-tato-muted">Reset</Text>
               </Pressable>
-              <Pressable className="flex-1 rounded-full bg-tato-accent px-4 py-3" onPress={onClose}>
+              <Pressable
+                accessibilityRole="button"
+                className="flex-1 rounded-full bg-tato-accent px-4 py-3"
+                onPress={onClose}>
                 <Text className="text-center font-mono text-[11px] font-semibold uppercase tracking-[1px] text-white">
                   Return to feed
                 </Text>

@@ -1,5 +1,5 @@
 import { PropsWithChildren } from 'react';
-import { Pressable, type PressableProps } from 'react-native';
+import { Pressable, View, type PressableProps, type StyleProp, type ViewStyle } from 'react-native';
 import Animated, {
     useAnimatedStyle,
     useSharedValue,
@@ -7,11 +7,15 @@ import Animated, {
 } from 'react-native-reanimated';
 
 import { useReducedMotionPreference } from '@/lib/hooks/useReducedMotionPreference';
+import { PRESS_FEEDBACK, withMinimumHitSlop } from '@/lib/ui';
 
 type PressableScaleProps = PropsWithChildren<
     PressableProps & {
         /** Scale factor when pressed (default: 0.97). */
         activeScale?: number;
+        /** Layout styles for the animated wrapper, useful when the pressable participates in flex rows. */
+        containerClassName?: string;
+        containerStyle?: StyleProp<ViewStyle>;
     }
 >;
 
@@ -22,7 +26,11 @@ type PressableScaleProps = PropsWithChildren<
  */
 export function PressableScale({
     activeScale = 0.97,
+    android_ripple,
     children,
+    containerClassName,
+    containerStyle,
+    hitSlop,
     onPressIn,
     onPressOut,
     style,
@@ -36,16 +44,34 @@ export function PressableScale({
     }));
 
     if (reducedMotion) {
-        return (
-            <Pressable onPressIn={onPressIn} onPressOut={onPressOut} style={style} {...rest}>
+        const pressable = (
+            <Pressable
+                android_ripple={android_ripple ?? PRESS_FEEDBACK.ripple.subtle}
+                hitSlop={withMinimumHitSlop(hitSlop)}
+                onPressIn={onPressIn}
+                onPressOut={onPressOut}
+                style={style}
+                {...rest}>
                 {children}
             </Pressable>
+        );
+
+        if (!containerClassName && !containerStyle) {
+            return pressable;
+        }
+
+        return (
+            <View className={containerClassName} style={containerStyle}>
+                {pressable}
+            </View>
         );
     }
 
     return (
-        <Animated.View style={animatedStyle}>
+        <Animated.View className={containerClassName} style={[containerStyle, animatedStyle]}>
             <Pressable
+                android_ripple={android_ripple ?? PRESS_FEEDBACK.ripple.subtle}
+                hitSlop={withMinimumHitSlop(hitSlop)}
                 onPressIn={(event) => {
                     scale.value = withTiming(activeScale, { duration: 100 });
                     onPressIn?.(event);

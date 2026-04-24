@@ -4,7 +4,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '@/components/providers/AuthProvider';
 import type { ClaimSnapshot } from '@/lib/models';
 import { tatoQueryKeys } from '@/lib/query/keys';
-import { fetchBrokerClaims } from '@/lib/repositories/tato';
+import { brokerClaimsQueryOptions } from '@/lib/query/workspace';
 import { supabase } from '@/lib/supabase';
 
 export function useBrokerClaims() {
@@ -12,10 +12,8 @@ export function useBrokerClaims() {
   const queryClient = useQueryClient();
   const queryKey = tatoQueryKeys.brokerClaims(user?.id);
   const claimsQuery = useQuery({
-    queryKey,
-    queryFn: () => fetchBrokerClaims(user?.id ?? null),
+    ...brokerClaimsQueryOptions(user?.id),
     enabled: Boolean(user?.id),
-    staleTime: 20 * 1000,
   });
 
   useEffect(() => {
@@ -58,7 +56,7 @@ export function useBrokerClaims() {
 
   return {
     claims: claimsQuery.data ?? ([] as ClaimSnapshot[]),
-    loading: Boolean(user?.id) && claimsQuery.isPending,
+    loading: Boolean(user?.id) && !claimsQuery.data && claimsQuery.isPending,
     refreshing: claimsQuery.isRefetching,
     error: claimsQuery.error instanceof Error ? claimsQuery.error.message : null,
     refresh: async () => {

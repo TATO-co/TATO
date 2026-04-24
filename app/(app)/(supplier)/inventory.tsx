@@ -2,9 +2,11 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { startTransition, useCallback, useMemo, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { FlashList } from '@shopify/flash-list';
-import { Image } from 'expo-image';
+import { Image } from '@/components/ui/TatoImage';
 import Animated, { FadeInUp } from 'react-native-reanimated';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { getDockContentPadding } from '@/components/layout/PhoneTabBar';
 import { ModeShell } from '@/components/layout/ModeShell';
 import { InventoryTable } from '@/components/ui/InventoryTable';
 import { PhoneActionButton, PhoneEyebrow, PhonePanel } from '@/components/ui/PhoneChrome';
@@ -40,6 +42,7 @@ export default function SupplierInventoryScreen() {
   const { from } = useLocalSearchParams<{ from?: string }>();
   const { items, loading, refreshing, error, refresh } = useSupplierDashboard();
   const { isPhone, isTablet } = useViewportInfo();
+  const insets = useSafeAreaInsets();
   const [activeFilter, setActiveFilter] = useState<StatusFilter>('all');
   const fromLiveIntake = from === 'live-intake';
   const completionCopy = getLiveIntakeCompletionCopy('ready_for_claim');
@@ -85,7 +88,6 @@ export default function SupplierInventoryScreen() {
           className="overflow-hidden rounded-[28px] border border-[#16355f] bg-[#07172d]"
           entering={FadeInUp.duration(TIMING.quick).delay(Math.min(index * 35, TIMING.slow))}>
           <Pressable onPress={() => router.push(`/(app)/item/${item.id}` as never)}>
-            <View className="absolute -right-10 -top-10 h-28 w-28 rounded-full bg-tato-accent/10" />
             <View className="p-4">
               <View className="flex-row gap-3">
                 <Image
@@ -212,7 +214,7 @@ export default function SupplierInventoryScreen() {
           ItemSeparatorComponent={() => <View style={{ height: 16 }} />}
           keyExtractor={(item) => item.id}
           renderItem={renderMobileItem}
-          contentContainerStyle={{ paddingBottom: 144 }}
+          contentContainerStyle={{ paddingBottom: getDockContentPadding(insets.bottom) }}
           onRefresh={() => {
             handleRefresh();
           }}
@@ -229,9 +231,9 @@ export default function SupplierInventoryScreen() {
                   <Text className="mt-3 text-sm leading-7 text-tato-muted">{completionCopy.inventoryDetail}</Text>
                 </PhonePanel>
               ) : null}
-              <PhonePanel gradientTone="accent" padded="lg">
+              <PhonePanel gradientTone="accent" padded="lg" testID="supplier-inventory-management-panel">
                 <PhoneEyebrow>Inventory Management</PhoneEyebrow>
-                <Text className="mt-3 text-[30px] font-sans-bold leading-[34px] text-tato-text">
+                <Text className="mt-3 text-[28px] font-sans-bold leading-[32px] text-tato-text">
                   {filteredItems.length} Items
                 </Text>
 
@@ -249,11 +251,17 @@ export default function SupplierInventoryScreen() {
                 </View>
 
                 <View className="mt-5 flex-row gap-3">
-                  <PhoneActionButton className="flex-1" label="Refresh Queue" onPress={handleRefresh} />
                   <PhoneActionButton
-                    className="flex-1"
+                    containerClassName="flex-1"
+                    label="Refresh Queue"
+                    onPress={handleRefresh}
+                    testID="supplier-refresh-queue-button"
+                  />
+                  <PhoneActionButton
+                    containerClassName="flex-1"
                     label="Open Intake"
                     onPress={() => router.push('/(app)/(supplier)/intake' as never)}
+                    testID="supplier-open-intake-button"
                     variant="secondary"
                   />
                 </View>

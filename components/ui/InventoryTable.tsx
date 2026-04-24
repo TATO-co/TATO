@@ -1,7 +1,7 @@
 import { memo, useMemo, type ReactNode } from 'react';
 import { PlatformIcon } from '@/components/ui/PlatformIcon';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { Image } from 'expo-image';
+import { Image } from '@/components/ui/TatoImage';
 
 import { useViewportInfo } from '@/lib/constants';
 import { formatMoney, type SupplierItem, type SupplierItemStatus } from '@/lib/models';

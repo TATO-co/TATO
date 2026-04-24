@@ -33,6 +33,13 @@ jobs:
           supabase functions deploy \
             --no-verify-jwt \
             create-claim \
+            cancel-claim-checkout \
+            resume-claim-checkout \
+            update-claim-workflow \
+            create-buyer-checkout-session \
+            save-broker-external-listing \
+            send-claim-message \
+            get-buyer-payment \
             start-ingestion \
             check-live-intake-availability \
             create-supplier-hub \

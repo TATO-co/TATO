@@ -1,5 +1,13 @@
-const INPUT_SAMPLE_RATE = 16000;
-const OUTPUT_SAMPLE_RATE = 24000;
+import {
+  base64ToBytes,
+  bytesToBase64,
+  parsePcmMimeSampleRate,
+  PCM_INPUT_SAMPLE_RATE,
+  PCM_OUTPUT_SAMPLE_RATE,
+} from '@/lib/liveIntake/pcm';
+
+const INPUT_SAMPLE_RATE = PCM_INPUT_SAMPLE_RATE;
+const OUTPUT_SAMPLE_RATE = PCM_OUTPUT_SAMPLE_RATE;
 
 type AudioContextConstructor = typeof AudioContext;
 
@@ -13,29 +21,6 @@ function getAudioContextConstructor(): AudioContextConstructor {
   }
 
   return resolved;
-}
-
-function bytesToBase64(bytes: Uint8Array) {
-  let binary = '';
-  const chunkSize = 0x8000;
-
-  for (let index = 0; index < bytes.length; index += chunkSize) {
-    const chunk = bytes.subarray(index, index + chunkSize);
-    binary += String.fromCharCode(...chunk);
-  }
-
-  return btoa(binary);
-}
-
-function base64ToBytes(base64: string) {
-  const binary = atob(base64);
-  const bytes = new Uint8Array(binary.length);
-
-  for (let index = 0; index < binary.length; index += 1) {
-    bytes[index] = binary.charCodeAt(index);
-  }
-
-  return bytes;
 }
 
 function floatToInt16(float32Array: Float32Array) {
@@ -86,16 +71,6 @@ function downsampleBuffer(input: Float32Array, inputSampleRate: number, outputSa
   }
 
   return result;
-}
-
-export function parsePcmMimeSampleRate(mimeType: string | null | undefined, fallback: number) {
-  const match = mimeType?.match(/rate=(\d+)/i);
-  if (!match) {
-    return fallback;
-  }
-
-  const parsed = Number(match[1]);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
 export async function blobToBase64(blob: Blob) {

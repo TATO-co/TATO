@@ -1,6 +1,8 @@
 import { useRouter } from 'expo-router';
-import { Pressable, Text, View } from 'react-native';
+import { Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+
+import { TatoButton } from '@/components/ui/TatoButton';
 
 const actions = [
   'Launch AI Auto-Scan',
@@ -28,13 +30,7 @@ export default function ModalScreen() {
           ))}
         </View>
 
-        <Pressable
-          className="mt-5 rounded-full bg-tato-accent py-4 hover:bg-tato-accentStrong focus:bg-tato-accentStrong"
-          onPress={() => router.back()}>
-          <Text className="text-center text-sm font-semibold uppercase tracking-[1px] text-white" style={{ fontFamily: 'SpaceMono' }}>
-            Close
-          </Text>
-        </Pressable>
+        <TatoButton className="mt-5" label="Close" onPress={() => router.back()} />
       </View>
     </SafeAreaView>
   );

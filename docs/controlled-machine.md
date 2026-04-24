@@ -23,6 +23,7 @@ Production-grade for TATO is not "AI writes code and we upload it." It is "AI he
 ### 3. Knowledge Base
 
 - Architecture: [`docs/architecture.md`](./architecture.md)
+- UI identity: [`docs/ui-identity.md`](./ui-identity.md)
 - Live intake bootstrap: [`docs/live-agent-service.md`](./live-agent-service.md)
 - Operations: [`docs/operations.md`](./operations.md)
 - Incidents: [`docs/incident-runbook.md`](./incident-runbook.md)

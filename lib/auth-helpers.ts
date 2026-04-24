@@ -18,8 +18,14 @@ export type ProfileSnapshot = {
   is_admin: boolean;
   country_code: string | null;
   payouts_enabled: boolean;
+  stripe_charges_enabled?: boolean | null;
   stripe_connect_onboarding_complete: boolean;
+  stripe_connect_restricted_soon?: boolean | null;
   payout_currency_code: string | null;
+  stripe_customer_id?: string | null;
+  stripe_default_payment_method_id?: string | null;
+  stripe_default_payment_method_brand?: string | null;
+  stripe_default_payment_method_last4?: string | null;
 };
 
 export function modeRoute(mode: AppMode) {
@@ -30,12 +36,25 @@ export function toPublicPath(route: string) {
   return route.replace(/\/\([^/]+\)/g, '') || '/';
 }
 
+function isAnonymousPublicPath(pathname: string) {
+  return pathname === '/'
+    || pathname === '/sign-in'
+    || pathname === '/support'
+    || pathname === '/terms'
+    || pathname === '/privacy'
+    || pathname.startsWith('/pay/');
+}
+
 export function resolvePayoutReadiness(profile: ProfileSnapshot | null): PayoutReadiness {
   if (!profile) {
     return 'not_ready';
   }
 
-  if (profile.payouts_enabled) {
+  if (
+    profile.payouts_enabled
+    && profile.stripe_charges_enabled !== false
+    && profile.stripe_connect_restricted_soon !== true
+  ) {
     return 'enabled';
   }
 
@@ -68,6 +87,14 @@ export function resolveRoleLabel(profile: ProfileSnapshot | null) {
 
 function hasPersonaAccess(profile: Pick<ProfileSnapshot, 'can_supply' | 'can_broker'> | null) {
   return Boolean(profile?.can_supply || profile?.can_broker);
+}
+
+export function shouldBlockProtectedShell(input: {
+  loading: boolean;
+  isAuthenticated: boolean;
+  profile: Pick<ProfileSnapshot, 'id'> | null;
+}) {
+  return input.loading && !(input.isAuthenticated && input.profile);
 }
 
 export function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
@@ -197,7 +224,7 @@ export function resolveRootRedirectTarget(input: RootRedirectInput): string | nu
   const isRootRoute = resolvedPathname === '/';
   const currentPath = segments.length ? `/${segments.join('/')}` : resolvedPathname;
   const currentPublicPath = toPublicPath(currentPath);
-  const onPublicEntry = resolvedPathname === '/' || resolvedPathname === '/sign-in';
+  const onPublicEntry = isAnonymousPublicPath(resolvedPathname);
   const preferredPublicPath = toPublicPath(preferredRoute);
 
   if (!configured) {
@@ -221,7 +248,7 @@ export function resolveRootRedirectTarget(input: RootRedirectInput): string | nu
   const browserDeepLinkStillResolving = Boolean(
     browserPathname
     && browserPathname !== '/'
-    && browserPathname !== '/sign-in'
+    && !isAnonymousPublicPath(browserPathname)
     && !['/persona-setup', '/account-suspended', '/session-error', '/configuration-required'].includes(browserPathname)
     && currentPublicPath !== browserPathname
     && resolvedPathname !== browserPathname,

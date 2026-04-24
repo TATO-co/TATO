@@ -1,22 +1,36 @@
 import { PhoneTabButton, getFloatingDockStyle } from '@/components/layout/PhoneTabBar';
+import { QueryErrorBoundary } from '@/components/errors/QueryErrorBoundary';
 import { useAuth } from '@/components/providers/AuthProvider';
 import { TABLET_BREAKPOINT } from '@/lib/constants';
-import { resolveModeAccessRoute } from '@/lib/auth-helpers';
+import { useWorkspaceNavigationWarmup } from '@/lib/hooks/useWorkspaceNavigationWarmup';
+import { resolveModeAccessRoute, shouldBlockProtectedShell } from '@/lib/auth-helpers';
 import { Tabs, Redirect } from 'expo-router';
-import { ActivityIndicator, View, useWindowDimensions } from 'react-native';
+import { ActivityIndicator, Platform, View, useWindowDimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const activeColor = '#1e6dff';
 const inactiveColor = '#7a8fb3';
+const sceneBackgroundColor = '#050d1b';
 
 export default function SupplierTabLayout() {
   const { width } = useWindowDimensions();
   const insets = useSafeAreaInsets();
-  const { isAuthenticated, loading, profile, profileError } = useAuth();
+  const { isAuthenticated, loading, profile, profileError, user } = useAuth();
   const showBottomTabs = width < TABLET_BREAKPOINT;
   const redirectTarget = resolveModeAccessRoute('supplier', profile, isAuthenticated);
+  const blockShell = shouldBlockProtectedShell({
+    loading,
+    isAuthenticated,
+    profile,
+  });
 
-  if (loading) {
+  useWorkspaceNavigationWarmup({
+    enabled: isAuthenticated && Boolean(profile?.id),
+    mode: 'supplier',
+    userId: user?.id,
+  });
+
+  if (blockShell) {
     return (
       <View className="flex-1 items-center justify-center bg-tato-base">
         <ActivityIndicator color="#1e6dff" />
@@ -33,18 +47,24 @@ export default function SupplierTabLayout() {
   }
 
   return (
-    <Tabs
-      screenOptions={{
-        headerShown: false,
-        tabBarShowLabel: false,
-        tabBarActiveTintColor: activeColor,
-        tabBarInactiveTintColor: inactiveColor,
-        tabBarStyle: showBottomTabs
-          ? getFloatingDockStyle(insets.bottom)
-          : {
-              display: 'none',
-            },
-      }}>
+    <QueryErrorBoundary screenName="supplier-tabs" userId={user?.id}>
+      <Tabs
+        detachInactiveScreens={Platform.OS !== 'web'}
+        screenOptions={{
+          headerShown: false,
+          lazy: Platform.OS !== 'web',
+          sceneStyle: {
+            backgroundColor: sceneBackgroundColor,
+          },
+          tabBarShowLabel: false,
+          tabBarActiveTintColor: activeColor,
+          tabBarInactiveTintColor: inactiveColor,
+          tabBarStyle: showBottomTabs
+            ? getFloatingDockStyle(insets.bottom)
+            : {
+                display: 'none',
+              },
+        }}>
       <Tabs.Screen
         name="index"
         options={{
@@ -63,7 +83,24 @@ export default function SupplierTabLayout() {
               label="Home"
               onLongPress={props.onLongPress}
               onPress={props.onPress}
-              testID={props.testID}
+              testID="tab-home"
+            />
+          ),
+        }}
+      />
+      <Tabs.Screen
+        name="inventory"
+        options={{
+          title: 'Stock',
+          tabBarButton: (props) => (
+            <PhoneTabButton
+              accessibilityLabel="Open supplier inventory"
+              accessibilityState={props.accessibilityState}
+              icon={{ ios: 'shippingbox', android: 'inventory-2', web: 'inventory-2' }}
+              label="Stock"
+              onLongPress={props.onLongPress}
+              onPress={props.onPress}
+              testID="tab-stock"
             />
           ),
         }}
@@ -86,27 +123,10 @@ export default function SupplierTabLayout() {
                 onLongPress={props.onLongPress}
                 onPress={props.onPress}
                 spotlight
-                testID={props.testID}
+                testID="tab-intake"
               />
             );
           },
-        }}
-      />
-      <Tabs.Screen
-        name="inventory"
-        options={{
-          title: 'Stock',
-          tabBarButton: (props) => (
-            <PhoneTabButton
-              accessibilityLabel="Open supplier inventory"
-              accessibilityState={props.accessibilityState}
-              icon={{ ios: 'shippingbox', android: 'inventory_2', web: 'inventory_2' }}
-              label="Stock"
-              onLongPress={props.onLongPress}
-              onPress={props.onPress}
-              testID={props.testID}
-            />
-          ),
         }}
       />
       <Tabs.Screen
@@ -117,11 +137,11 @@ export default function SupplierTabLayout() {
             <PhoneTabButton
               accessibilityLabel="Open supplier analytics"
               accessibilityState={props.accessibilityState}
-              icon={{ ios: 'chart.bar', android: 'bar_chart', web: 'bar_chart' }}
+              icon={{ ios: 'chart.bar', android: 'bar-chart', web: 'bar-chart' }}
               label="Stats"
               onLongPress={props.onLongPress}
               onPress={props.onPress}
-              testID={props.testID}
+              testID="tab-stats"
             />
           ),
         }}
@@ -138,7 +158,7 @@ export default function SupplierTabLayout() {
               label="Me"
               onLongPress={props.onLongPress}
               onPress={props.onPress}
-              testID={props.testID}
+              testID="tab-me"
             />
           ),
         }}
@@ -149,6 +169,7 @@ export default function SupplierTabLayout() {
           href: null,
         }}
       />
-    </Tabs>
+      </Tabs>
+    </QueryErrorBoundary>
   );
 }

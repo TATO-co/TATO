@@ -1,9 +1,11 @@
 import { useRouter } from 'expo-router';
 import { useMemo, useState } from 'react';
-import { ActivityIndicator, KeyboardAvoidingView, Platform, Pressable, ScrollView, Text, View } from 'react-native';
+import { KeyboardAvoidingView, Platform, Pressable, ScrollView, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { useAuth } from '@/components/providers/AuthProvider';
+import { PlatformIcon, type PlatformIconName } from '@/components/ui/PlatformIcon';
+import { TatoButton } from '@/components/ui/TatoButton';
 import { hapticSelection, hapticSuccess } from '@/lib/haptics';
 import { modeRoute } from '@/lib/auth-helpers';
 import type { AppMode } from '@/lib/models';
@@ -13,22 +15,25 @@ type PersonaSelection = 'broker' | 'supplier' | 'both' | null;
 function ChoiceCard(args: {
   title: string;
   description: string;
-  emoji: string;
+  icon: PlatformIconName;
   selected: boolean;
   tone?: 'accent' | 'profit' | 'mixed';
   onPress: () => void;
 }) {
-  const accentColor = args.tone === 'profit' ? 'text-tato-profit' : args.tone === 'mixed' ? 'text-[#c9a0ff]' : 'text-tato-accent';
+  const accentColor = args.tone === 'profit' ? 'text-tato-profit' : args.tone === 'mixed' ? 'text-tato-textSoft' : 'text-tato-accent';
+  const iconColor = args.tone === 'profit' ? '#1ec995' : args.tone === 'mixed' ? '#9cb7e1' : '#1e6dff';
   const borderColor = args.selected
-    ? args.tone === 'profit' ? 'border-tato-profit bg-tato-profit/8' : args.tone === 'mixed' ? 'border-[#c9a0ff] bg-[#c9a0ff]/8' : 'border-tato-accent bg-tato-accent/8'
-    : 'border-tato-line bg-tato-panelSoft';
+    ? args.tone === 'profit' ? 'border-tato-profit bg-tato-profit/8' : 'border-tato-accent bg-tato-accent/8'
+    : 'border-tato-line bg-tato-panelSoft hover:bg-tato-hover focus:bg-tato-hover';
 
   return (
     <Pressable
-      className={`flex-row items-center gap-4 rounded-[24px] border p-4 ${borderColor}`}
+      accessibilityRole="button"
+      accessibilityState={{ selected: args.selected }}
+      className={`flex-row items-center gap-4 rounded-[22px] border p-4 ${borderColor}`}
       onPress={args.onPress}>
       <View className="h-12 w-12 items-center justify-center rounded-2xl bg-tato-panel border border-tato-line">
-        <Text className="text-2xl">{args.emoji}</Text>
+        <PlatformIcon color={iconColor} name={args.icon} size={22} />
       </View>
       <View className="flex-1">
         <Text className={`font-mono text-[11px] uppercase tracking-[1px] ${accentColor}`}>{args.title}</Text>
@@ -96,7 +101,7 @@ export default function PersonaSetupScreen() {
             <View className="mt-5 gap-3">
               <ChoiceCard
                 title="Broker"
-                emoji="🔍"
+                icon={{ ios: 'magnifyingglass', android: 'search', web: 'search' }}
                 tone="accent"
                 description="Browse inventory, open claims, and manage payouts."
                 selected={selection === 'broker'}
@@ -109,7 +114,7 @@ export default function PersonaSetupScreen() {
               />
               <ChoiceCard
                 title="Supplier"
-                emoji="📋"
+                icon={{ ios: 'shippingbox', android: 'inventory-2', web: 'inventory-2' }}
                 tone="profit"
                 description="Run intake, manage inventory, and coordinate payouts."
                 selected={selection === 'supplier'}
@@ -122,7 +127,7 @@ export default function PersonaSetupScreen() {
               />
               <ChoiceCard
                 title="Both"
-                emoji="✨"
+                icon={{ ios: 'rectangle.connected.to.line.below', android: 'hub', web: 'hub' }}
                 tone="mixed"
                 description="Shared account for both workflows."
                 selected={selection === 'both'}
@@ -144,7 +149,11 @@ export default function PersonaSetupScreen() {
                     const active = defaultMode === mode;
                     return (
                       <Pressable
-                        className={`flex-1 rounded-full border px-4 py-3 ${active ? 'border-tato-accent bg-tato-accent/10' : 'border-tato-line bg-tato-panel'}`}
+                        accessibilityRole="tab"
+                        accessibilityState={{ selected: active }}
+                        className={`min-h-[44px] flex-1 rounded-full border px-4 py-3 ${
+                          active ? 'border-tato-accent bg-tato-accent/10' : 'border-tato-line bg-tato-panel hover:bg-tato-hover focus:bg-tato-hover'
+                        }`}
                         key={mode}
                         onPress={() => {
                           setDefaultMode(mode);
@@ -167,9 +176,10 @@ export default function PersonaSetupScreen() {
             ) : null}
 
             <View className="mt-5 gap-3">
-              <Pressable
-                className="rounded-full bg-tato-accent px-5 py-3.5"
+              <TatoButton
                 disabled={!canContinue || busy}
+                label="Continue Into TATO"
+                loading={busy}
                 onPress={async () => {
                   if (!selection) {
                     return;
@@ -195,27 +205,18 @@ export default function PersonaSetupScreen() {
                   } finally {
                     setBusy(false);
                   }
-                }}>
-                {busy ? (
-                  <ActivityIndicator color="#fff" />
-                ) : (
-                  <Text className="text-center font-mono text-xs font-semibold uppercase tracking-[1px] text-white">
-                    Continue Into TATO
-                  </Text>
-                )}
-              </Pressable>
+                }}
+              />
 
-              <Pressable
-                    className="rounded-full border border-tato-line bg-tato-panelSoft px-5 py-3.5"
-                    disabled={busy}
-                    onPress={async () => {
-                      await signOut();
-                      router.replace('/sign-in');
-                    }}>
-                <Text className="text-center font-mono text-xs font-semibold uppercase tracking-[1px] text-tato-text">
-                  Sign Out
-                </Text>
-              </Pressable>
+              <TatoButton
+                disabled={busy}
+                label="Sign Out"
+                onPress={async () => {
+                  await signOut();
+                  router.replace('/sign-in');
+                }}
+                tone="secondary"
+              />
             </View>
           </View>
         </View>

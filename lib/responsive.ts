@@ -1,3 +1,5 @@
+import { GRID } from '@/lib/token-values';
+
 export type ViewportTier = 'phone' | 'tablet' | 'desktop' | 'wideDesktop';
 export type NavigationMode = 'tabs' | 'sectionRail' | 'sidebar';
 
@@ -57,18 +59,18 @@ export function getPageGutter(width: number) {
   const tier = getViewportTier(width);
 
   if (tier === 'wideDesktop') {
-    return 40;
+    return GRID.wideDesktop.margin;
   }
 
   if (tier === 'desktop') {
-    return 28;
+    return GRID.desktop.margin;
   }
 
   if (tier === 'tablet') {
-    return 24;
+    return GRID.tablet.margin;
   }
 
-  return 16;
+  return GRID.phone.margin;
 }
 
 export function getViewportColumns(

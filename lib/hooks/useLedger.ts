@@ -3,7 +3,8 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { useAuth } from '@/components/providers/AuthProvider';
 import { tatoQueryKeys } from '@/lib/query/keys';
-import { fetchLedger, type LedgerEntry } from '@/lib/repositories/tato';
+import { ledgerQueryOptions } from '@/lib/query/workspace';
+import type { LedgerEntry } from '@/lib/repositories/tato';
 import { supabase } from '@/lib/supabase';
 
 export function useLedger() {
@@ -11,10 +12,8 @@ export function useLedger() {
   const queryClient = useQueryClient();
   const queryKey = tatoQueryKeys.ledger(user?.id);
   const ledgerQuery = useQuery({
-    queryKey,
-    queryFn: () => fetchLedger(user?.id ?? null),
+    ...ledgerQueryOptions(user?.id),
     enabled: Boolean(user?.id),
-    staleTime: 20 * 1000,
   });
 
   useEffect(() => {
@@ -75,7 +74,7 @@ export function useLedger() {
 
   return {
     entries,
-    loading: Boolean(user?.id) && ledgerQuery.isPending,
+    loading: Boolean(user?.id) && !ledgerQuery.data && ledgerQuery.isPending,
     refreshing: ledgerQuery.isRefetching,
     error: ledgerQuery.error instanceof Error ? ledgerQuery.error.message : null,
     summary,

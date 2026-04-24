@@ -2,11 +2,15 @@ import { useRouter } from 'expo-router';
 import { startTransition, useCallback, useMemo, useState } from 'react';
 import { ActivityIndicator, ScrollView, Text, View } from 'react-native';
 import { FlashList } from '@shopify/flash-list';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { getDockContentPadding } from '@/components/layout/PhoneTabBar';
+import { ListRow, ListSection } from '@/components/primitives';
 import { ResponsiveKpiGrid, ResponsiveSplitPane } from '@/components/layout/ResponsivePrimitives';
 import { FeedState } from '@/components/ui/FeedState';
 import { InventoryTable } from '@/components/ui/InventoryTable';
 import { KpiCard } from '@/components/ui/KpiCard';
+import { NotificationFeed } from '@/components/ui/NotificationFeed';
 import { PhoneActionButton, PhoneEyebrow, PhoneMetricChip, PhonePanel } from '@/components/ui/PhoneChrome';
 import { PressableScale } from '@/components/ui/PressableScale';
 import { SkeletonCard, SkeletonRow } from '@/components/ui/SkeletonCard';
@@ -23,6 +27,17 @@ type SupplierQueuePanelProps = {
   isDesktop?: boolean;
 };
 
+function MobileMetricValue({ value, delta }: { value: string; delta: string }) {
+  return (
+    <View className="items-end">
+      <Text className="text-sm font-sans-bold leading-[14px] text-tato-text">{value}</Text>
+      <Text className="mt-1 max-w-[156px] text-right text-xs leading-[16px] text-tato-muted">
+        {delta}
+      </Text>
+    </View>
+  );
+}
+
 function filterMatches(filter: StatusFilter, status: SupplierItemStatus): boolean {
   if (filter === 'all') return true;
   if (filter === 'available') return status === 'available';
@@ -33,6 +48,7 @@ function filterMatches(filter: StatusFilter, status: SupplierItemStatus): boolea
 
 export function SupplierQueuePanel({ isDesktop }: SupplierQueuePanelProps) {
   const viewport = useViewportInfo();
+  const insets = useSafeAreaInsets();
   const resolvedDesktop = isDesktop ?? viewport.isDesktop;
   const useTabletLayout = !resolvedDesktop && viewport.isTablet;
   const tier = resolvedDesktop ? viewport.tier : useTabletLayout ? 'tablet' : 'phone';
@@ -182,6 +198,15 @@ export function SupplierQueuePanel({ isDesktop }: SupplierQueuePanelProps) {
     if (resolvedDesktop || useTabletLayout) {
       return (
         <View className="gap-4 pb-10">
+          <View aria-live="polite" className="rounded-[20px] border border-tato-line bg-tato-panel p-4">
+            <Text aria-level={2} className="font-mono text-[11px] uppercase tracking-[1px] text-tato-accent" role="heading">
+              Supplier Queue
+            </Text>
+            <Text className="mt-2 text-lg font-sans-bold text-tato-text">Syncing live inventory.</Text>
+            <Text className="mt-2 text-sm leading-6 text-tato-muted">
+              Pulling active SKUs, queue status, and dashboard totals before inventory renders.
+            </Text>
+          </View>
           <ResponsiveKpiGrid tier={tier}>
             <SkeletonCard height={120} borderRadius={20} />
             <SkeletonCard height={120} borderRadius={20} />
@@ -204,6 +229,15 @@ export function SupplierQueuePanel({ isDesktop }: SupplierQueuePanelProps) {
 
     return (
       <View className="gap-4 pb-10">
+        <View aria-live="polite" className="rounded-[24px] border border-tato-line bg-tato-panel p-4">
+          <Text aria-level={2} className="font-mono text-[11px] uppercase tracking-[1px] text-tato-accent" role="heading">
+            Supplier Queue
+          </Text>
+          <Text className="mt-2 text-lg font-sans-bold text-tato-text">Loading your stock.</Text>
+          <Text className="mt-2 text-sm leading-6 text-tato-muted">
+            Pulling item status, broker activity, and pickup state for this queue.
+          </Text>
+        </View>
         <SkeletonRow />
         <SkeletonRow />
         <SkeletonRow />
@@ -287,21 +321,32 @@ export function SupplierQueuePanel({ isDesktop }: SupplierQueuePanelProps) {
 
               <View className="rounded-[20px] border border-tato-line bg-tato-panel p-4">
                 <Text className="font-sans-bold text-base text-tato-text">
-                  Launch Batch Ingestion
+                  {items.length > 0 ? 'Catalog Readiness' : 'Start Intake'}
                 </Text>
-                <Text className="mt-1 text-sm text-tato-muted">AI scan</Text>
-                <Text className="mt-2 font-sans-bold text-2xl text-tato-text">82%</Text>
-                <View className="mt-2 h-2 overflow-hidden rounded-full bg-tato-surface">
-                  <View className="h-full w-[82%] rounded-full bg-tato-accent" />
-                </View>
-                <Text className="mt-2 text-sm text-tato-muted">
-                  Camera ingestion is processing supplier batch.
+                <Text className="mt-1 text-sm text-tato-muted">
+                  {items.length > 0 ? 'AI-processed inventory' : 'No items cataloged yet'}
                 </Text>
+                {items.length > 0 ? (
+                  <>
+                    <Text className="mt-2 font-sans-bold text-2xl text-tato-text">
+                      {Math.round((filteredItems.filter((i) => i.status === 'available').length / items.length) * 100)}%
+                    </Text>
+                    <View className="mt-2 h-2 overflow-hidden rounded-full bg-tato-surface">
+                      <View
+                        className="h-full rounded-full bg-tato-accent"
+                        style={{ width: `${Math.round((filteredItems.filter((i) => i.status === 'available').length / items.length) * 100)}%` }}
+                      />
+                    </View>
+                    <Text className="mt-2 text-sm text-tato-muted">
+                      {filteredItems.filter((i) => i.status === 'available').length} of {items.length} items available for broker claims.
+                    </Text>
+                  </>
+                ) : null}
                 <PressableScale
                   className="mt-3 rounded-full bg-tato-accent py-3"
                   onPress={() => router.push('/(app)/live-intake' as never)}>
                   <Text className="text-center font-mono text-[11px] font-semibold uppercase tracking-[1px] text-white">
-                    Run Auto-Scan
+                    {items.length > 0 ? 'Run Auto-Scan' : 'Start First Intake'}
                   </Text>
                 </PressableScale>
               </View>
@@ -321,6 +366,8 @@ export function SupplierQueuePanel({ isDesktop }: SupplierQueuePanelProps) {
                   ))}
                 </View>
               </View>
+
+              <NotificationFeed />
             </View>
           }
           secondaryWidth={{ desktop: 320, wideDesktop: 340 }}
@@ -431,6 +478,7 @@ export function SupplierQueuePanel({ isDesktop }: SupplierQueuePanelProps) {
               ))}
             </View>
           </View>
+          <NotificationFeed />
         </ResponsiveKpiGrid>
       </ScrollView>
     );
@@ -443,7 +491,7 @@ export function SupplierQueuePanel({ isDesktop }: SupplierQueuePanelProps) {
       ItemSeparatorComponent={() => <View style={{ height: 16 }} />}
       keyExtractor={keyExtractor}
       renderItem={renderMobileItem}
-      contentContainerStyle={{ paddingBottom: 144 }}
+      contentContainerStyle={{ paddingBottom: getDockContentPadding(insets.bottom) }}
       onRefresh={() => {
         handleRefresh();
       }}
@@ -461,9 +509,9 @@ export function SupplierQueuePanel({ isDesktop }: SupplierQueuePanelProps) {
       }
       ListHeaderComponent={
         <View className="gap-4 px-1 pb-1">
-          <PhonePanel gradientTone="accent" padded="lg">
+          <PhonePanel gradientTone="accent" padded="lg" testID="supplier-queue-snapshot-panel">
             <PhoneEyebrow>Queue Snapshot</PhoneEyebrow>
-            <Text className="mt-3 text-[30px] font-sans-bold leading-[34px] text-tato-text">
+            <Text className="mt-3 text-[28px] font-sans-bold leading-[32px] text-tato-text">
               {availableCount} claim-ready items on deck.
             </Text>
 
@@ -486,39 +534,38 @@ export function SupplierQueuePanel({ isDesktop }: SupplierQueuePanelProps) {
 
             <View className="mt-5 flex-row gap-3">
               <PhoneActionButton
-                className="flex-1"
+                containerClassName="flex-1"
                 label="Live Intake"
                 onPress={() => router.push('/(app)/live-intake' as never)}
+                testID="supplier-live-intake-button"
               />
               <PhoneActionButton
-                className="flex-1"
+                containerClassName="flex-1"
                 label="Open Inventory"
                 onPress={() => router.push('/(app)/(supplier)/inventory' as never)}
+                testID="supplier-open-inventory-button"
                 variant="secondary"
               />
             </View>
           </PhonePanel>
 
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerClassName="gap-3 pr-1">
-            {metrics.map((metric) => (
-              <View
-                className="min-w-[154px] rounded-[24px] border border-[#17355f] bg-[#091a31] px-4 py-3"
-                key={metric.label}>
-                <PhoneEyebrow>{metric.label}</PhoneEyebrow>
-                <Text className="mt-2 text-[24px] font-sans-bold text-tato-text">{metric.value}</Text>
-                <Text className="mt-1 text-sm leading-6 text-tato-muted">{metric.delta}</Text>
-              </View>
-            ))}
-            <View className="min-w-[154px] rounded-[24px] border border-[#17355f] bg-[#091a31] px-4 py-3">
-              <PhoneEyebrow>Claimed flow</PhoneEyebrow>
-              <Text className="mt-2 text-[24px] font-sans-bold text-tato-text">{claimedCount}</Text>
-              <Text className="mt-1 text-sm leading-6 text-tato-muted">
-                Claimed
-              </Text>
-            </View>
-          </ScrollView>
+          <NotificationFeed />
 
-          <View className="gap-3">
+          <ListSection first title="Performance">
+            {metrics.map((metric) => (
+              <ListRow
+                key={metric.label}
+                label={metric.label}
+                value={<MobileMetricValue delta={metric.delta} value={metric.value} />}
+              />
+            ))}
+            <ListRow
+              label="Claimed flow"
+              value={<MobileMetricValue delta="Claimed" value={`${claimedCount}`} />}
+            />
+          </ListSection>
+
+          <View className="gap-5">
             <View className="flex-row items-end justify-between gap-3">
               <View className="flex-1">
                 <PhoneEyebrow>Live Inventory</PhoneEyebrow>

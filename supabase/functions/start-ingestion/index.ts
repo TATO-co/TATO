@@ -4,6 +4,7 @@ import { claimMutationRequest, completeMutationRequest, failMutationRequest, wri
 import { corsHeaders } from '../_shared/cors.ts';
 import { normalizeCurrency } from '../_shared/domain.ts';
 import { createCorrelationId, failure, success } from '../_shared/responses.ts';
+import { assertConnectedAccountReady, ConnectAccountNotReadyError, createStripeClient } from '../_shared/stripe.ts';
 import { createSupabaseClients, requireAuthedUser } from '../_shared/supabase.ts';
 
 type Payload = {
@@ -38,14 +39,36 @@ serve(async (req) => {
       return failure(correlationId, 'invalid_request', 'requestKey is required.', 400);
     }
 
+    const stripeSecretKey = Deno.env.get('STRIPE_SECRET_KEY');
+    if (!stripeSecretKey) {
+      return failure(correlationId, 'server_misconfigured', 'Missing Stripe configuration.', 500);
+    }
+
     const { data: actor } = await admin
       .from('profiles')
-      .select('id,status,can_supply')
+      .select('id,status,can_supply,stripe_connected_account_id')
       .eq('id', authedUser.user.id)
-      .maybeSingle<{ id: string; status: string; can_supply: boolean }>();
+      .maybeSingle<{ id: string; status: string; can_supply: boolean; stripe_connected_account_id: string | null }>();
 
     if (!actor || actor.status !== 'active' || !actor.can_supply) {
       return failure(correlationId, 'forbidden', 'Supplier access is not enabled for this account.', 403);
+    }
+
+    const stripe = createStripeClient(stripeSecretKey);
+    try {
+      await assertConnectedAccountReady({
+        admin,
+        stripe,
+        profileId: actor.id,
+        accountId: actor.stripe_connected_account_id,
+        purpose: 'supplier_upload',
+      });
+    } catch (error) {
+      if (error instanceof ConnectAccountNotReadyError) {
+        return failure(correlationId, error.code, error.message, error.status, error.details);
+      }
+
+      throw error;
     }
 
     const requestRecord = await claimMutationRequest(admin, {

@@ -31,8 +31,10 @@ describe('models helpers', () => {
       description: 'Noise-canceling headphones with case and cable included.',
     });
 
-    expect(descriptions).toHaveLength(3);
+    expect(descriptions).toHaveLength(5);
     expect(descriptions[0]?.description).toContain('Sony WH-1000XM5');
+    expect(descriptions.map((entry) => entry.platform)).toContain('OfferUp');
+    expect(descriptions.map((entry) => entry.platform)).toContain('Nextdoor');
   });
 
   it('normalizes claim statuses and lifecycle safely', () => {
@@ -40,6 +42,7 @@ describe('models helpers', () => {
     expect(normalizeClaimStatus('totally_unknown')).toBe('active');
     expect(lifecycleFromClaimStatus('active')).toBe('claimed');
     expect(lifecycleFromClaimStatus('listed_externally')).toBe('listed');
+    expect(lifecycleFromClaimStatus('deposit_expired')).toBe('inventoried');
     expect(lifecycleFromClaimStatus('cancelled')).toBe('inventoried');
   });
 

@@ -20,7 +20,12 @@ export default function Root({ children }: { children: React.ReactNode }) {
         <style dangerouslySetInnerHTML={{ __html: responsiveBackground }} />
         {/* Add any additional <head> elements that you want globally available on web... */}
       </head>
-      <body>{children}</body>
+      <body>
+        <a className="skip-link" href="#main-content">
+          Skip to main content
+        </a>
+        {children}
+      </body>
     </html>
   );
 }
@@ -43,6 +48,30 @@ body {
   overflow-y: auto;
   min-height: 100vh;
   min-height: 100dvh;
+}
+
+.skip-link {
+  position: fixed;
+  left: 16px;
+  top: 16px;
+  z-index: 1000;
+  padding: 12px 16px;
+  border-radius: 999px;
+  border: 1px solid #2b5db0;
+  background: #09172d;
+  color: #edf4ff;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-decoration: none;
+  text-transform: uppercase;
+  transform: translateY(-140%);
+  transition: transform 160ms ease;
+}
+
+.skip-link:focus {
+  transform: translateY(0);
 }
 
 #root {

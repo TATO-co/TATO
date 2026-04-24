@@ -9,6 +9,7 @@ import {
   resolvePreferredRoute,
   resolveRootRedirectTarget,
   resolveRoleLabel,
+  shouldBlockProtectedShell,
   toPublicPath,
   withTimeout,
 } from '@/lib/auth-helpers';
@@ -54,6 +55,30 @@ describe('resolvePayoutReadiness', () => {
 
   it('returns enabled when payouts_enabled is true', () => {
     expect(resolvePayoutReadiness(makeProfile({ payouts_enabled: true }))).toBe('enabled');
+  });
+
+  it('returns pending when payouts are enabled but charges are restricted', () => {
+    expect(
+      resolvePayoutReadiness(
+        makeProfile({
+          payouts_enabled: true,
+          stripe_charges_enabled: false,
+          stripe_connect_onboarding_complete: true,
+        }),
+      ),
+    ).toBe('pending');
+  });
+
+  it('returns pending when Stripe warns the account will be restricted soon', () => {
+    expect(
+      resolvePayoutReadiness(
+        makeProfile({
+          payouts_enabled: true,
+          stripe_connect_onboarding_complete: true,
+          stripe_connect_restricted_soon: true,
+        }),
+      ),
+    ).toBe('pending');
   });
 
   it('returns pending when onboarding is complete but payouts not enabled', () => {
@@ -102,6 +127,30 @@ describe('resolveRoleLabel', () => {
 
   it('returns pending_access when neither role is enabled', () => {
     expect(resolveRoleLabel(makeProfile({ can_supply: false, can_broker: false }))).toBe('pending_access');
+  });
+});
+
+/* ---------- shouldBlockProtectedShell ------------------------------------- */
+
+describe('shouldBlockProtectedShell', () => {
+  it('blocks protected shells while auth is still unresolved', () => {
+    expect(
+      shouldBlockProtectedShell({
+        loading: true,
+        isAuthenticated: false,
+        profile: null,
+      }),
+    ).toBe(true);
+  });
+
+  it('keeps the protected shell mounted while a known authenticated profile settles', () => {
+    expect(
+      shouldBlockProtectedShell({
+        loading: true,
+        isAuthenticated: true,
+        profile: { id: 'known-user' },
+      }),
+    ).toBe(false);
   });
 });
 
@@ -319,6 +368,30 @@ describe('resolveRootRedirectTarget', () => {
         pathname: '/sign-in',
         preferredRoute: '/sign-in',
         segments: ['sign-in'],
+      }),
+    ).toBeNull();
+  });
+
+  it('does not redirect signed-out support routes', () => {
+    expect(
+      resolveRootRedirectTarget({
+        configured: true,
+        isAuthenticated: false,
+        pathname: '/support',
+        preferredRoute: '/sign-in',
+        segments: ['support'],
+      }),
+    ).toBeNull();
+  });
+
+  it('does not redirect signed-out public buyer payment routes', () => {
+    expect(
+      resolveRootRedirectTarget({
+        configured: true,
+        isAuthenticated: false,
+        pathname: '/pay/test-token',
+        preferredRoute: '/sign-in',
+        segments: ['pay', '[token]'],
       }),
     ).toBeNull();
   });

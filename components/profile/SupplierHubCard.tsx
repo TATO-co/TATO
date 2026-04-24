@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Pressable, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Text, TextInput, View } from 'react-native';
 
 import { useAuth } from '@/components/providers/AuthProvider';
+import { TatoButton } from '@/components/ui/TatoButton';
 import {
   createBlankSupplierHubDraft,
   createTestingSupplierHubDraft,
@@ -10,21 +11,6 @@ import {
 } from '@/lib/hubs';
 import { isLocalDevelopmentRuntime } from '@/lib/config';
 import { createSupplierHub, listSupplierHubs } from '@/lib/repositories/hubs';
-
-function HubDetailRow({
-  label,
-  value,
-}: {
-  label: string;
-  value: string;
-}) {
-  return (
-    <View className="rounded-[18px] border border-tato-line bg-tato-panelSoft px-4 py-3">
-      <Text className="font-mono text-[10px] uppercase tracking-[1px] text-tato-dim">{label}</Text>
-      <Text className="mt-1 text-sm leading-6 text-tato-text">{value}</Text>
-    </View>
-  );
-}
 
 function HubTextField({
   label,
@@ -176,15 +162,18 @@ export function SupplierHubCard() {
               <Text className="mt-2 text-sm leading-6 text-tato-muted">{activeHub.pickupInstructions}</Text>
             ) : null}
           </View>
-          <View className="gap-3">
-            <HubDetailRow
-              label="Hub Coverage"
-              value={hubs.length === 1 ? '1 supplier hub on file' : `${hubs.length} supplier hubs on file`}
-            />
-            <HubDetailRow
-              label="Country"
-              value={activeHub.countryCode}
-            />
+          <View className="border-y border-tato-line/70">
+            <View className="flex-row items-center justify-between gap-4 py-3">
+              <Text className="font-mono text-[10px] uppercase tracking-[1px] text-tato-dim">Hub Coverage</Text>
+              <Text className="max-w-[60%] text-right text-sm font-medium text-tato-text">
+                {hubs.length === 1 ? '1 supplier hub on file' : `${hubs.length} supplier hubs on file`}
+              </Text>
+            </View>
+            <View className="border-t border-tato-line/70" />
+            <View className="flex-row items-center justify-between gap-4 py-3">
+              <Text className="font-mono text-[10px] uppercase tracking-[1px] text-tato-dim">Country</Text>
+              <Text className="text-right text-sm font-medium text-tato-text">{activeHub.countryCode}</Text>
+            </View>
           </View>
           {message ? (
             <View className="rounded-[18px] border border-tato-profit/30 bg-tato-profit/10 p-3">
@@ -288,34 +277,26 @@ export function SupplierHubCard() {
                 </View>
               ) : null}
 
-              <Pressable
-                className={`rounded-full px-5 py-3.5 ${saving ? 'bg-[#29436d]' : 'bg-tato-accent'}`}
+              <TatoButton
                 disabled={saving}
+                label="Create Supplier Hub"
+                loading={saving}
                 onPress={() => {
                   void submitHub(draft);
-                }}>
-                {saving ? (
-                  <ActivityIndicator color="#fff" />
-                ) : (
-                  <Text className="text-center font-mono text-xs font-semibold uppercase tracking-[1px] text-white">
-                    Create Supplier Hub
-                  </Text>
-                )}
-              </Pressable>
+                }}
+              />
 
               {developmentRuntime ? (
-                <Pressable
-                  className="rounded-full border border-tato-line bg-tato-panelSoft px-5 py-3.5"
+                <TatoButton
                   disabled={saving}
+                  label="Use Testing Hub"
                   onPress={() => {
                     void submitHub(createTestingSupplierHubDraft({
                       countryCode: profile?.country_code,
                     }));
-                  }}>
-                  <Text className="text-center font-mono text-xs font-semibold uppercase tracking-[1px] text-tato-text">
-                    Use Testing Hub
-                  </Text>
-                </Pressable>
+                  }}
+                  tone="secondary"
+                />
               ) : null}
             </View>
           ) : null}

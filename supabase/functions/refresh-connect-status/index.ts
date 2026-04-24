@@ -1,9 +1,13 @@
 import { serve } from 'https://deno.land/std@0.224.0/http/server.ts';
-import Stripe from 'npm:stripe@15.12.0';
 
 import { writeAuditEvent } from '../_shared/audit.ts';
 import { corsHeaders } from '../_shared/cors.ts';
 import { createCorrelationId, failure, success } from '../_shared/responses.ts';
+import {
+  createStripeClient,
+  isRecoverableConnectAccountLookupError,
+  syncConnectAccountStatus,
+} from '../_shared/stripe.ts';
 import { createSupabaseClients, requireAuthedUser } from '../_shared/supabase.ts';
 
 serve(async (req) => {
@@ -48,18 +52,32 @@ serve(async (req) => {
       return failure(correlationId, 'missing_account', 'No connected Stripe account exists yet.', 409);
     }
 
-    const stripe = new Stripe(stripeSecretKey, {
-      apiVersion: '2024-04-10',
-    });
-    const account = await stripe.accounts.retrieve(profile.stripe_connected_account_id);
+    const stripe = createStripeClient(stripeSecretKey);
+    let account: Awaited<ReturnType<typeof stripe.accounts.retrieve>>;
+    try {
+      account = await stripe.accounts.retrieve(profile.stripe_connected_account_id);
+    } catch (error) {
+      if (!isRecoverableConnectAccountLookupError(error)) {
+        throw error;
+      }
 
-    await admin
-      .from('profiles')
-      .update({
-        stripe_connect_onboarding_complete: account.details_submitted,
-        payouts_enabled: account.payouts_enabled,
-      })
-      .eq('id', profile.id);
+      await admin
+        .from('profiles')
+        .update({
+          stripe_connect_onboarding_complete: false,
+          payouts_enabled: false,
+        })
+        .eq('id', profile.id);
+
+      return failure(
+        correlationId,
+        'connect_account_not_ready',
+        'Reconnect Stripe Connect in Payments & Payouts before continuing.',
+        409,
+      );
+    }
+
+    const snapshot = await syncConnectAccountStatus(admin, profile.id, account);
 
     await writeAuditEvent(admin, {
       correlationId,
@@ -67,15 +85,25 @@ serve(async (req) => {
       actorProfileId: profile.id,
       metadata: {
         accountId: profile.stripe_connected_account_id,
-        detailsSubmitted: account.details_submitted,
-        payoutsEnabled: account.payouts_enabled,
+        detailsSubmitted: snapshot.detailsSubmitted,
+        chargesEnabled: snapshot.chargesEnabled,
+        payoutsEnabled: snapshot.payoutsEnabled,
+        restrictedSoon: snapshot.restrictedSoon,
       },
     });
 
     return success(correlationId, {
       accountId: profile.stripe_connected_account_id,
-      payoutsEnabled: account.payouts_enabled,
-      onboardingComplete: account.details_submitted,
+      payoutsEnabled: snapshot.payoutsEnabled,
+      chargesEnabled: snapshot.chargesEnabled,
+      onboardingComplete: snapshot.detailsSubmitted,
+      requirements: {
+        currentlyDue: snapshot.currentlyDue,
+        pastDue: snapshot.pastDue,
+        pendingVerification: snapshot.pendingVerification,
+        disabledReason: snapshot.disabledReason,
+        restrictedSoon: snapshot.restrictedSoon,
+      },
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';

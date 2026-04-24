@@ -1,70 +1,37 @@
 import { useRouter } from 'expo-router';
-import { LinearGradient } from 'expo-linear-gradient';
-import { useState } from 'react';
-import { ActivityIndicator, Pressable, ScrollView, Text, View } from 'react-native';
-import Animated, { FadeInUp } from 'react-native-reanimated';
+import { useMemo, useState } from 'react';
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { getDockContentPadding } from '@/components/layout/PhoneTabBar';
 import { ModeShell } from '@/components/layout/ModeShell';
+import { ListRow, ListSection } from '@/components/primitives';
 import { useAuth } from '@/components/providers/AuthProvider';
 import { PersonaAccessCard } from '@/components/profile/PersonaAccessCard';
-import { SupplierHubCard } from '@/components/profile/SupplierHubCard';
+import { ProfileIdentityHeader, currencyProfileStat } from '@/components/profile/ProfileIdentityHeader';
 import { PlatformIcon } from '@/components/ui/PlatformIcon';
-import { ResponsiveKpiGrid } from '@/components/layout/ResponsivePrimitives';
 import { useViewportInfo } from '@/lib/constants';
+import { useLedger } from '@/lib/hooks/useLedger';
+import { useSupplierDashboard } from '@/lib/hooks/useSupplierDashboard';
 import { supplierDesktopNav } from '@/lib/navigation';
-import { TIMING } from '@/lib/ui';
 
 async function pause(ms: number) {
   await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function ProfileAction({
-  icon,
-  label,
-  sublabel,
-  onPress,
-  disabled,
-  destructive,
-  loading: isLoading,
-}: {
-  icon: { ios: string; android: string; web: string };
-  label: string;
-  sublabel?: string;
-  onPress?: () => void;
-  disabled?: boolean;
-  destructive?: boolean;
-  loading?: boolean;
-}) {
-  return (
-    <Pressable
-      className="flex-row items-center gap-4 rounded-[18px] border border-tato-line bg-tato-panelSoft px-4 py-3.5 active:opacity-80"
-      disabled={disabled || isLoading}
-      onPress={onPress}>
-      <View className={`h-10 w-10 items-center justify-center rounded-full ${destructive ? 'bg-[#331a1a]' : 'bg-[#0e203c]'}`}>
-        {isLoading ? (
-          <ActivityIndicator color="#edf4ff" size="small" />
-        ) : (
-          <PlatformIcon name={icon} size={18} color={destructive ? '#ff8f8f' : '#8ea4c8'} />
-        )}
-      </View>
-      <View className="flex-1">
-        <Text className={`text-sm font-semibold ${destructive ? 'text-[#ff8f8f]' : 'text-tato-text'}`}>{label}</Text>
-        {sublabel ? <Text className="mt-0.5 text-xs text-tato-muted">{sublabel}</Text> : null}
-      </View>
-      <PlatformIcon name={{ ios: 'chevron.right', android: 'chevron_right', web: 'chevron_right' }} size={16} color="#4a6a9b" />
-    </Pressable>
-  );
-}
-
 export default function SupplierProfileScreen() {
   const router = useRouter();
-  const { tier } = useViewportInfo();
+  const insets = useSafeAreaInsets();
+  const { isPhone } = useViewportInfo();
   const { isAdmin, payoutReadiness, profile, signOut, switchMode, user } = useAuth();
+  const { items } = useSupplierDashboard();
+  const { entries } = useLedger();
   const canBroker = profile?.can_broker ?? false;
   const canSupply = profile?.can_supply ?? false;
   const [switchingMode, setSwitchingMode] = useState<'broker' | null>(null);
   const [switchError, setSwitchError] = useState<string | null>(null);
   const [signingOut, setSigningOut] = useState(false);
+  const [qrReminders, setQrReminders] = useState(true);
 
   const hardSwapToBroker = async () => {
     setSwitchError(null);
@@ -81,10 +48,24 @@ export default function SupplierProfileScreen() {
     setSwitchingMode(null);
   };
 
-  const payoutStatusTone =
-    payoutReadiness === 'enabled' ? 'profit' : payoutReadiness === 'pending' ? 'accent' : 'dim';
   const payoutStatusLabel =
     payoutReadiness === 'enabled' ? 'Active' : payoutReadiness === 'pending' ? 'Pending' : 'Setup Required';
+  const payoutStatusStyle =
+    payoutReadiness === 'enabled'
+      ? styles.statusProfit
+      : payoutReadiness === 'pending'
+        ? styles.statusAccent
+        : styles.statusWarning;
+  const scrollPaddingBottom = isPhone ? getDockContentPadding(insets.bottom) : 40;
+  const personas = useMemo(() => [
+    ...(canSupply ? ['supplier' as const] : []),
+    ...(canBroker ? ['broker' as const] : []),
+  ], [canBroker, canSupply]);
+  const totalPayoutsCents = entries
+    .filter((entry) => entry.direction === 'in')
+    .reduce((sum, entry) => sum + entry.amountCents, 0);
+  const currencyCode = entries[0]?.currencyCode ?? profile?.payout_currency_code ?? 'USD';
+  const activeClaims = items.filter((item) => item.status === 'claimed' || item.status === 'pending_pickup').length;
 
   return (
     <ModeShell
@@ -100,133 +81,110 @@ export default function SupplierProfileScreen() {
       desktopNavItems={supplierDesktopNav}
       modeLabel="Supplier Mode"
       title="TATO Supplier">
-      <ScrollView className="mt-2 flex-1" contentContainerClassName="gap-4 pb-36">
+      <ScrollView
+        className="mt-2 flex-1"
+        contentContainerClassName="gap-4"
+        contentContainerStyle={{ paddingBottom: scrollPaddingBottom }}>
+        <ProfileIdentityHeader
+          accent="supplier"
+          displayName={profile?.display_name ?? user?.email?.split('@')[0] ?? 'TATO Supplier'}
+          email={user?.email}
+          personas={personas}
+          stats={[
+            { label: 'Items Listed', value: String(items.length) },
+            { label: 'Active Claims', value: String(activeClaims) },
+            { label: 'Total Payouts', value: currencyProfileStat(totalPayoutsCents, currencyCode) },
+          ]}
+        />
 
-        {/* ── Identity Hero ── */}
-        <Animated.View
-          className="rounded-[24px] border border-tato-line bg-tato-panel p-5"
-          entering={FadeInUp.duration(TIMING.quick)}>
-          <LinearGradient
-            className="absolute inset-0 rounded-[24px]"
-            colors={['rgba(30, 201, 149, 0.06)', 'transparent']}
-            locations={[0, 0.5]}
+        <PersonaAccessCard />
+
+        <ListSection first title="Status">
+          <ListRow label="Account" value={(profile?.status ?? 'active').replace(/_/g, ' ')} />
+          <ListRow
+            label="Payout"
+            value={<Text style={[styles.statusValue, payoutStatusStyle]}>{payoutStatusLabel}</Text>}
           />
-          <View className="flex-row items-center gap-4">
-            <View className="h-14 w-14 items-center justify-center rounded-full bg-tato-profit/15 border border-tato-profit/20">
-              <Text className="text-2xl">👔</Text>
-            </View>
-            <View className="flex-1">
-              <Text className="text-2xl font-bold text-tato-text">
-                {profile?.display_name ?? user?.email?.split('@')[0] ?? 'TATO Supplier'}
-              </Text>
-              <Text className="mt-1 font-mono text-[11px] uppercase tracking-[1px] text-tato-profit">
-                {canSupply && canBroker ? 'Supplier + Broker' : 'Supplier'}
-              </Text>
-            </View>
-          </View>
-        </Animated.View>
+          <ListRow
+            label="QR Reminders"
+            toggle={{ value: qrReminders, onChange: setQrReminders }}
+          />
+        </ListSection>
 
-        {/* ── Status Row ── */}
-        <ResponsiveKpiGrid tier={tier} columns={{ phone: 1, tablet: 3, desktop: 3, wideDesktop: 3 }}>
-          <Animated.View className="rounded-[20px] border border-tato-line bg-tato-panel p-4" entering={FadeInUp.duration(TIMING.base)}>
-            <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-dim">Account</Text>
-            <Text className="mt-2 text-lg font-semibold capitalize text-tato-text">
-              {(profile?.status ?? 'active').replace(/_/g, ' ')}
-            </Text>
-          </Animated.View>
-          <Animated.View className="rounded-[20px] border border-tato-line bg-tato-panel p-4" entering={FadeInUp.duration(TIMING.base).delay(80)}>
-            <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-dim">Payout</Text>
-            <Text className={`mt-2 text-lg font-semibold ${payoutStatusTone === 'profit' ? 'text-tato-profit' : payoutStatusTone === 'accent' ? 'text-tato-accent' : 'text-[#f5b942]'}`}>
-              {payoutStatusLabel}
-            </Text>
-          </Animated.View>
-          <Animated.View className="rounded-[20px] border border-tato-line bg-tato-panel p-4" entering={FadeInUp.duration(TIMING.base).delay(160)}>
-            <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-dim">QR Reminders</Text>
-            <Text className="mt-2 text-lg font-semibold text-tato-text">On</Text>
-          </Animated.View>
-        </ResponsiveKpiGrid>
-
-        {/* ── Mode Switch ── */}
-        {canBroker ? (
-          <Animated.View
-            className="rounded-[24px] border border-tato-line bg-tato-panel p-5"
-            entering={FadeInUp.duration(TIMING.base)}>
-            <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-dim">Switch Workspace</Text>
-            <Pressable
-              className="mt-3 flex-row items-center gap-4 rounded-[18px] bg-tato-accent/10 border border-tato-accent/20 px-4 py-3.5 active:opacity-80"
+        <ListSection title="Workspace">
+          <ListRow label="Active Hub" onPress={() => router.push('/(app)/(supplier)/settings' as never)} value="Manage Hub" />
+          {canBroker ? (
+            <ListRow
               disabled={Boolean(switchingMode)}
-              onPress={hardSwapToBroker}>
-              <View className="h-10 w-10 items-center justify-center rounded-full bg-tato-accent/20">
-                <PlatformIcon name={{ ios: 'arrow.triangle.2.circlepath', android: 'swap_horiz', web: 'swap_horiz' }} size={18} color="#1e6dff" />
-              </View>
-              <View className="flex-1">
-                <Text className="text-sm font-semibold text-tato-text">Switch to Broker</Text>
-                <Text className="mt-0.5 text-xs text-tato-muted">Open broker workspace</Text>
-              </View>
-              {switchingMode ? (
-                <ActivityIndicator color="#1e6dff" size="small" />
-              ) : (
-                <PlatformIcon name={{ ios: 'chevron.right', android: 'chevron_right', web: 'chevron_right' }} size={16} color="#4a6a9b" />
-              )}
-            </Pressable>
-            {switchError ? (
-              <Text className="mt-2 text-sm text-[#ff8f8f]">{switchError}</Text>
-            ) : null}
-          </Animated.View>
-        ) : (
-          <Animated.View
-            className="rounded-[20px] border border-tato-line bg-tato-panelSoft p-4"
-            entering={FadeInUp.duration(TIMING.base)}>
-            <Text className="text-sm text-tato-muted">Broker access is off. Enable it below.</Text>
-          </Animated.View>
-        )}
+              label="Switch to Broker"
+              onPress={hardSwapToBroker}
+              value={switchingMode ? 'Switching...' : undefined}
+            />
+          ) : null}
+        </ListSection>
+        {switchError ? <Text className="text-sm text-tato-error">{switchError}</Text> : null}
 
-        {/* ── Persona Access ── */}
-        <Animated.View
-          className="rounded-[24px] border border-tato-line bg-tato-panel p-5"
-          entering={FadeInUp.duration(TIMING.base).delay(120)}>
-          <SupplierHubCard />
-        </Animated.View>
-
-        <Animated.View
-          className="rounded-[24px] border border-tato-line bg-tato-panel p-5"
-          entering={FadeInUp.duration(TIMING.slow)}>
-          <PersonaAccessCard />
-        </Animated.View>
-
-        {/* ── Actions ── */}
-        <View className="gap-2">
+        <ListSection first>
+          <ListRow
+            icon={<PlatformIcon color="#8ea4c8" name={{ ios: 'person.crop.circle', android: 'account-circle', web: 'account-circle' }} size={20} />}
+            label="Edit Profile"
+            onPress={() => router.push('/(app)/(supplier)/settings' as never)}
+          />
+          <ListRow
+            icon={<PlatformIcon color="#8ea4c8" name={{ ios: 'slider.horizontal.3', android: 'tune', web: 'tune' }} size={20} />}
+            label="Preferences"
+            onPress={() => router.push('/(app)/(supplier)/settings' as never)}
+          />
           {isAdmin ? (
-            <ProfileAction
-              icon={{ ios: 'shield.checkered', android: 'admin_panel_settings', web: 'admin_panel_settings' }}
+            <ListRow
+              icon={<PlatformIcon color="#8ea4c8" name={{ ios: 'shield.checkered', android: 'admin-panel-settings', web: 'admin-panel-settings' }} size={20} />}
               label="Admin Console"
-              sublabel="User management & system settings"
               onPress={() => router.push('/(app)/admin/users' as never)}
             />
           ) : null}
+        </ListSection>
 
-          <ProfileAction
-            icon={{ ios: 'rectangle.portrait.and.arrow.right', android: 'logout', web: 'logout' }}
-            label="Sign Out"
-            destructive
-            disabled={Boolean(switchingMode)}
-            loading={signingOut}
-            onPress={async () => {
-              setSigningOut(true);
-              await signOut();
-              setSigningOut(false);
-            }}
-          />
-        </View>
+        <Pressable
+          accessibilityRole="button"
+          className="mt-4 flex-row items-center gap-3 px-1 py-3"
+          disabled={Boolean(switchingMode) || signingOut}
+          onPress={async () => {
+            setSigningOut(true);
+            await signOut();
+            setSigningOut(false);
+          }}>
+          {signingOut ? (
+            <ActivityIndicator color="#ff8f8f" size="small" />
+          ) : (
+            <PlatformIcon color="#ff8f8f" name={{ ios: 'rectangle.portrait.and.arrow.right', android: 'logout', web: 'logout' }} size={20} />
+          )}
+          <Text className="text-sm font-semibold text-tato-error">Sign Out</Text>
+        </Pressable>
       </ScrollView>
 
       {switchingMode ? (
         <View className="absolute inset-0 items-center justify-center bg-tato-base/95">
           <ActivityIndicator color="#1e6dff" size="large" />
           <Text className="mt-4 text-lg font-semibold text-tato-text">Switching to Broker Workspace...</Text>
-          <Text className="mt-1 text-sm text-tato-muted">Loading dedicated broker app shell</Text>
         </View>
       ) : null}
     </ModeShell>
   );
 }
+
+const styles = StyleSheet.create({
+  statusAccent: {
+    color: '#1e6dff',
+  },
+  statusProfit: {
+    color: '#1ec995',
+  },
+  statusValue: {
+    fontSize: 14,
+    fontWeight: '600',
+    lineHeight: 14,
+  },
+  statusWarning: {
+    color: '#f5b942',
+  },
+});

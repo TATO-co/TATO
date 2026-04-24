@@ -13,9 +13,6 @@ export default function ConfigurationRequiredScreen() {
         className="flex-1"
         colors={['#030813', '#07162b', '#081b34', '#030a16']}
         locations={[0, 0.34, 0.68, 1]}>
-        <View className="absolute -left-12 top-24 h-48 w-48 rounded-full bg-[#1e6dff]/18" />
-        <View className="absolute right-0 top-4 h-56 w-56 rounded-full bg-white/6" />
-
         <ScrollView className="flex-1" contentContainerStyle={{ flexGrow: 1 }}>
           <View className="flex-1 items-center justify-center px-8 py-8">
             <View className="w-full max-w-[560px] rounded-[32px] border border-tato-line bg-[#071121]/94 p-6">

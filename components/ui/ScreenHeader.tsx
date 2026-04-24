@@ -3,6 +3,7 @@ import { Pressable, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { PlatformIcon } from '@/components/ui/PlatformIcon';
+import { HIT_SLOP, PRESS_FEEDBACK, SPACE } from '@/lib/ui';
 
 type ScreenHeaderProps = {
   /** Screen title */
@@ -32,22 +33,24 @@ export function ScreenHeader({
   return (
     <View
       className="flex-row items-center justify-between px-4 pb-2"
-      style={safeArea ? { paddingTop: Math.max(insets.top, 12) } : { paddingTop: 12 }}>
+      style={safeArea ? { paddingTop: Math.max(insets.top, SPACE[12]) } : { paddingTop: SPACE[12] }}>
       <Pressable
         accessibilityLabel="Go back"
         accessibilityRole="button"
+        android_ripple={PRESS_FEEDBACK.ripple.subtle}
         className="h-11 w-11 items-center justify-center rounded-full bg-tato-panelSoft"
-        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-        onPress={onBack ?? (() => router.back())}>
+        hitSlop={HIT_SLOP.comfortable}
+        onPress={onBack ?? (() => router.back())}
+        testID="screen-header-back">
         <PlatformIcon
-          name={{ ios: 'chevron.left', android: 'arrow_back', web: 'arrow_back' }}
+          name={{ ios: 'chevron.left', android: 'arrow-back', web: 'arrow-back' }}
           size={18}
           color="#edf4ff"
         />
       </Pressable>
 
       {title ? (
-        <Text className="flex-1 text-center font-mono text-[11px] uppercase tracking-[1.5px] text-tato-dim" numberOfLines={1}>
+        <Text className="flex-1 text-center font-mono text-[11px] uppercase tracking-[1.5px] text-tato-dim" numberOfLines={1} testID="screen-header-title">
           {title}
         </Text>
       ) : (

@@ -1,9 +1,13 @@
 import { serve } from 'https://deno.land/std@0.224.0/http/server.ts';
-import Stripe from 'npm:stripe@15.12.0';
 
 import { writeAuditEvent } from '../_shared/audit.ts';
 import { corsHeaders } from '../_shared/cors.ts';
 import { createCorrelationId, failure, success } from '../_shared/responses.ts';
+import {
+  createStripeClient,
+  isRecoverableConnectAccountLookupError,
+  syncConnectAccountStatus,
+} from '../_shared/stripe.ts';
 import { createSupabaseClients, requireAuthedUser } from '../_shared/supabase.ts';
 
 serve(async (req) => {
@@ -37,9 +41,7 @@ serve(async (req) => {
       );
     }
 
-    const stripe = new Stripe(stripeSecretKey, {
-      apiVersion: '2024-04-10',
-    });
+    const stripe = createStripeClient(stripeSecretKey);
 
     const { data: profile } = await admin
       .from('profiles')
@@ -58,42 +60,77 @@ serve(async (req) => {
     }
 
     let accountId = profile.stripe_connected_account_id;
+    let retrievedAccount: Awaited<ReturnType<typeof stripe.accounts.retrieve>> | null = null;
+    let replacingUnavailableAccount = false;
+
+    if (accountId) {
+      try {
+        retrievedAccount = await stripe.accounts.retrieve(accountId);
+      } catch (error) {
+        if (!isRecoverableConnectAccountLookupError(error)) {
+          throw error;
+        }
+
+        accountId = null;
+        replacingUnavailableAccount = true;
+        await admin
+          .from('profiles')
+          .update({
+            stripe_connected_account_id: null,
+            stripe_connect_onboarding_complete: false,
+            payouts_enabled: false,
+          })
+          .eq('id', profile.id);
+      }
+    }
+
     if (!accountId) {
-      const account = await stripe.accounts.create({
-        type: 'express',
-        country: (profile.country_code ?? 'US').toUpperCase(),
-        email: profile.email ?? authedUser.user.email ?? undefined,
-        metadata: {
-          profile_id: profile.id,
+      const accountIdempotencyKey = replacingUnavailableAccount
+        ? `connect_account_replacement:${profile.id}:${Math.floor(Date.now() / 3600000)}`
+        : `connect_account:${profile.id}`;
+      const account = await stripe.accounts.create(
+        {
+          type: 'express',
+          country: (profile.country_code ?? 'US').toUpperCase(),
+          email: profile.email ?? authedUser.user.email ?? undefined,
+          capabilities: {
+            card_payments: { requested: true },
+            transfers: { requested: true },
+          },
+          metadata: {
+            profile_id: profile.id,
+          },
         },
-      });
+        {
+          idempotencyKey: accountIdempotencyKey,
+        },
+      );
       accountId = account.id;
+      retrievedAccount = account;
 
       await admin
         .from('profiles')
         .update({
           stripe_connected_account_id: accountId,
-          stripe_connect_onboarding_complete: account.details_submitted,
-          payouts_enabled: account.payouts_enabled,
         })
         .eq('id', profile.id);
+      await syncConnectAccountStatus(admin, profile.id, account);
     }
 
-    const account = await stripe.accounts.retrieve(accountId);
-    await admin
-      .from('profiles')
-      .update({
-        stripe_connect_onboarding_complete: account.details_submitted,
-        payouts_enabled: account.payouts_enabled,
-      })
-      .eq('id', profile.id);
+    const account = retrievedAccount ?? await stripe.accounts.retrieve(accountId);
+    const snapshot = await syncConnectAccountStatus(admin, profile.id, account);
 
-    const accountLink = await stripe.accountLinks.create({
-      account: accountId,
-      refresh_url: refreshUrl,
-      return_url: returnUrl,
-      type: 'account_onboarding',
-    });
+    const accountLink = await stripe.accountLinks.create(
+      {
+        account: accountId,
+        refresh_url: refreshUrl,
+        return_url: returnUrl,
+        type: 'account_onboarding',
+      },
+      {
+        idempotencyKey: `connect_link:${profile.id}:${Math.floor(Date.now() / 60000)}`,
+      },
+    );
 
     await writeAuditEvent(admin, {
       correlationId,
@@ -101,16 +138,26 @@ serve(async (req) => {
       actorProfileId: profile.id,
       metadata: {
         accountId,
-        detailsSubmitted: account.details_submitted,
-        payoutsEnabled: account.payouts_enabled,
+        detailsSubmitted: snapshot.detailsSubmitted,
+        chargesEnabled: snapshot.chargesEnabled,
+        payoutsEnabled: snapshot.payoutsEnabled,
+        restrictedSoon: snapshot.restrictedSoon,
       },
     });
 
     return success(correlationId, {
       accountId,
       url: accountLink.url,
-      payoutsEnabled: account.payouts_enabled,
-      onboardingComplete: account.details_submitted,
+      payoutsEnabled: snapshot.payoutsEnabled,
+      chargesEnabled: snapshot.chargesEnabled,
+      onboardingComplete: snapshot.detailsSubmitted,
+      requirements: {
+        currentlyDue: snapshot.currentlyDue,
+        pastDue: snapshot.pastDue,
+        pendingVerification: snapshot.pendingVerification,
+        disabledReason: snapshot.disabledReason,
+        restrictedSoon: snapshot.restrictedSoon,
+      },
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';

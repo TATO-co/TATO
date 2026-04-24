@@ -12,12 +12,13 @@ import {
   Text,
   View,
 } from 'react-native';
-import { Image } from 'expo-image';
+import { Image } from '@/components/ui/TatoImage';
 import Animated, { FadeInUp } from 'react-native-reanimated';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ResponsiveSplitPane } from '@/components/layout/ResponsivePrimitives';
 import { useAuth } from '@/components/providers/AuthProvider';
+import { TatoButton } from '@/components/ui/TatoButton';
 import { trackEvent } from '@/lib/analytics';
 import { useViewportInfo } from '@/lib/constants';
 import { runIngestionPipeline } from '@/lib/repositories/tato';
@@ -231,7 +232,7 @@ function DraftPanel({
         : 'Analysis unlocks after the first photo set is added.';
 
   return (
-    <View className={`rounded-t-[32px] border border-tato-line bg-tato-panel p-5 ${compact ? '' : 'shadow-xl shadow-black/50'}`}>
+    <View className={`rounded-t-[28px] border border-tato-line bg-tato-panel p-5 ${compact ? 'rounded-[24px]' : 'shadow-xl shadow-black/40'}`}>
       <View className="mb-3 items-center">
         <View className="h-1.5 w-16 rounded-full bg-[#324a73]" />
       </View>
@@ -239,7 +240,7 @@ function DraftPanel({
       <View className="mb-4 flex-row items-center justify-between gap-3">
         <View>
           <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-dim">Still-Photo Intake</Text>
-          <Text className="mt-2 text-4xl font-bold text-tato-text">Photo Draft</Text>
+          <Text className="mt-2 text-[30px] font-bold leading-[34px] text-tato-text">Photo Draft</Text>
         </View>
         <View className="rounded-full border border-tato-accent/35 bg-[#102443] px-3 py-1.5">
           <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-accent">
@@ -287,30 +288,21 @@ function DraftPanel({
 
       <View className="mt-5 gap-3">
         {hasDraftProgress ? (
-          <Pressable
+          <TatoButton
             accessibilityLabel="Analyze photos and open the created draft"
-            accessibilityRole="button"
-            className={`rounded-full py-4 ${submitState.disabled ? 'bg-[#21406d]' : 'bg-tato-accent hover:bg-tato-accentStrong focus:bg-tato-accentStrong'}`}
             disabled={submitState.disabled}
-            onPress={onAnalyze}>
-            {running ? (
-              <ActivityIndicator color="#fff" />
-            ) : (
-              <Text className={`text-center text-xl font-bold ${submitState.disabled ? 'text-tato-dim' : 'text-white'}`}>
-                {submitState.label}
-              </Text>
-            )}
-          </Pressable>
+            label={submitState.label}
+            loading={running}
+            onPress={onAnalyze}
+            size="lg"
+          />
         ) : !compact ? (
-          <Pressable
+          <TatoButton
             accessibilityLabel="Open photo gallery"
-            accessibilityRole="button"
-            className="rounded-full bg-tato-accent px-4 py-4"
-            onPress={onGallery}>
-            <Text className="text-center text-xl font-bold text-white">
-              {entryMode === 'upload' ? 'Upload Photos' : 'Add Photos'}
-            </Text>
-          </Pressable>
+            label={entryMode === 'upload' ? 'Upload Photos' : 'Add Photos'}
+            onPress={onGallery}
+            size="lg"
+          />
         ) : (
           <View className="rounded-[20px] border border-tato-line bg-[#132342] px-4 py-4">
             <Text className="text-sm leading-6 text-tato-muted">
@@ -320,43 +312,35 @@ function DraftPanel({
         )}
 
         <View className="gap-3">
-          <Pressable
+          <TatoButton
             accessibilityLabel="Open photo gallery"
-            accessibilityRole="button"
-            className="flex-row items-center justify-center gap-2 rounded-full border border-tato-line bg-tato-panelSoft px-4 py-3"
-            onPress={onGallery}>
-            <PlatformIcon
-              name={{ ios: 'photo', android: 'photo_library', web: 'photo_library' }}
-              size={16}
-              color="#8ea4c8"
-            />
-            <Text className="text-sm font-semibold text-tato-muted">
-              {hasDraftProgress ? (entryMode === 'upload' ? 'Upload More' : 'Add More Photos') : compact ? 'Open Library' : 'Choose From Library'}
-            </Text>
-          </Pressable>
+            icon={{ ios: 'photo', android: 'photo-library', web: 'photo-library' }}
+            label={hasDraftProgress ? (entryMode === 'upload' ? 'Upload More' : 'Add More Photos') : compact ? 'Open Library' : 'Choose From Library'}
+            onPress={onGallery}
+            size="md"
+            tone="secondary"
+          />
 
-          <Pressable
+          <TatoButton
             accessibilityLabel="Switch to hands-free live intake"
-            accessibilityRole="button"
-            className="flex-row items-center justify-center gap-2 rounded-full border border-tato-line bg-tato-panelSoft px-4 py-3"
-            onPress={onLiveIntake}>
-            <PlatformIcon name={{ ios: 'waveform.and.mic', android: 'mic', web: 'mic' }} size={16} color="#8ea4c8" />
-            <Text className="text-sm font-semibold text-tato-muted">Live Agent</Text>
-          </Pressable>
+            icon={{ ios: 'waveform.and.mic', android: 'mic', web: 'mic' }}
+            label="Live Agent"
+            onPress={onLiveIntake}
+            size="md"
+            tone="secondary"
+          />
 
           {hasDraftProgress ? (
-            <Pressable
+            <TatoButton
               accessibilityLabel="Remove the selected photo"
-              accessibilityRole="button"
-              className={`rounded-full border px-4 py-3 ${photoCount > 0 && !running && !completedItemId ? 'border-tato-line bg-tato-panelSoft' : 'border-[#21406d] bg-[#132342]'}`}
               disabled={photoCount <= 0 || running || Boolean(completedItemId)}
-              onPress={onRemoveSelected}>
-              <Text className={`text-center font-mono text-xs font-semibold uppercase tracking-[1px] ${photoCount > 0 && !running && !completedItemId ? 'text-tato-text' : 'text-tato-dim'}`}>
-                Remove Selected Photo
-              </Text>
-            </Pressable>
+              label="Remove Selected Photo"
+              onPress={onRemoveSelected}
+              size="md"
+              tone="secondary"
+            />
           ) : (
-            <View className="rounded-[20px] border border-tato-accent/25 bg-[#102443] px-4 py-4">
+            <View className="border-y border-tato-accent/25 py-4">
               <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-accent" style={{ fontFamily: 'SpaceMono' }}>
                 Draft Scope
               </Text>
@@ -596,9 +580,6 @@ export default function IngestionScreen() {
   const previewPanel = (
     <View className="flex-1 overflow-hidden rounded-[28px] border border-tato-line bg-[#020813]">
       <View className="absolute inset-0 bg-[#050d1b]" />
-      <View className="absolute -left-16 top-10 h-48 w-48 rounded-full bg-[#173a73]/25" />
-      <View className="absolute right-[-40px] top-1/3 h-56 w-56 rounded-full bg-[#0e2242]/35" />
-      <View className="absolute bottom-[-70px] left-1/3 h-56 w-56 rounded-full bg-[#0d1830]/50" />
 
       <View className="absolute inset-x-0 top-0 z-20 flex-row items-center justify-between px-6 pt-5">
         <Pressable
@@ -624,7 +605,7 @@ export default function IngestionScreen() {
             className="h-12 w-12 items-center justify-center rounded-full bg-black/45"
             onPress={() => setFlashMode((current) => (current === 'off' ? 'on' : 'off'))}>
             <PlatformIcon
-              name={{ ios: 'flashlight.on.fill', android: 'flash_on', web: 'flash_on' }}
+              name={{ ios: 'flashlight.on.fill', android: 'flash-on', web: 'flash-on' }}
               size={20}
               color={flashMode === 'on' ? '#1e6dff' : '#f2f7ff'}
             />
@@ -667,33 +648,37 @@ export default function IngestionScreen() {
           </View>
         </>
       ) : (
-        <View className="h-full items-center justify-center px-6 py-20">
-          <View className="w-full max-w-[760px] rounded-[34px] border border-white/10 bg-[#06101d]/92 px-6 py-8">
+        <View className={`h-full items-center justify-center px-6 ${isPhone ? 'pb-7 pt-24' : 'py-20'}`}>
+          <View className={`w-full max-w-[760px] border border-white/10 bg-[#06101d]/92 ${isPhone ? 'rounded-[24px] px-4 py-5' : 'rounded-[34px] px-6 py-8'}`}>
             <View className="items-center">
-              <View className="h-16 w-16 items-center justify-center rounded-[22px] border border-tato-accent/35 bg-[#102443]">
-                <PlatformIcon
-                  name={{ ios: 'photo', android: 'photo_library', web: 'photo_library' }}
-                  size={30}
-                  color="#1e6dff"
-                />
-              </View>
+              {!isPhone ? (
+                <View className="h-16 w-16 items-center justify-center rounded-[22px] border border-tato-accent/35 bg-[#102443]">
+                  <PlatformIcon
+                    name={{ ios: 'photo', android: 'photo-library', web: 'photo-library' }}
+                    size={30}
+                    color="#1e6dff"
+                  />
+                </View>
+              ) : null}
               <Text
-                className="mt-5 font-mono text-[12px] uppercase tracking-[1.6px] text-tato-accent"
+                className={`${isPhone ? 'text-[10px] tracking-[1.3px]' : 'mt-5 text-[12px] tracking-[1.6px]'} font-mono uppercase text-tato-accent`}
                 style={{ fontFamily: 'SpaceMono' }}>
                 One Item • Up To {MAX_STILL_PHOTO_SET_SIZE} Views
               </Text>
-              <Text className="mt-4 text-center text-[34px] font-bold leading-[40px] text-white">
+              <Text className={`${isPhone ? 'mt-3 text-[28px] leading-[33px]' : 'mt-4 text-[34px] leading-[40px]'} text-center font-bold text-white`}>
                 Build one draft from a photo set
               </Text>
-              <Text className="mt-4 max-w-[560px] text-center text-base leading-7 text-[#d8e4f8]">
+              <Text className={`${isPhone ? 'mt-3 text-[14px] leading-6' : 'mt-4 text-base leading-7'} max-w-[560px] text-center text-[#d8e4f8]`}>
                 {emptyStateLead}
               </Text>
-              <Text className="mt-2 max-w-[600px] text-center text-sm leading-6 text-[#9fb2d2]">
-                Best results usually come from a front view, back view, close detail, maker mark, and any flaw or wear.
-              </Text>
+              {!isPhone ? (
+                <Text className="mt-2 max-w-[600px] text-center text-sm leading-6 text-[#9fb2d2]">
+                  Best results usually come from a front view, back view, close detail, maker mark, and any flaw or wear.
+                </Text>
+              ) : null}
             </View>
 
-            <View className="mt-7 flex-row flex-wrap items-center justify-center gap-3">
+            <View className={`${isPhone ? 'mt-5 gap-2' : 'mt-7 gap-3'} flex-row flex-wrap items-center justify-center`}>
               <GuidanceChip label="Front View" />
               <GuidanceChip label="Back View" />
               <GuidanceChip label="Close Detail" />
@@ -701,34 +686,36 @@ export default function IngestionScreen() {
               <GuidanceChip label="Flaw Or Wear" />
             </View>
 
-            <View className="mt-8 flex-row flex-wrap items-center justify-center gap-3">
-              <Pressable
-                accessibilityLabel="Choose images from gallery"
-                accessibilityRole="button"
-                className="rounded-full bg-tato-accent px-6 py-4"
-                disabled={!canAddMorePhotos}
-                onPress={pickFromGallery}>
-                <Text className="text-lg font-bold text-white">
-                  {entryMode === 'upload' ? 'Upload Photos' : 'Add Photos'}
-                </Text>
-              </Pressable>
-
-              {canRetryCamera ? (
+            {!isPhone ? (
+              <View className="mt-8 flex-row flex-wrap items-center justify-center gap-3">
                 <Pressable
-                  accessibilityLabel="Enable camera access"
+                  accessibilityLabel="Choose images from gallery"
                   accessibilityRole="button"
-                  className="rounded-full border border-white/12 bg-[#0e1830] px-5 py-4"
-                  onPress={requestCameraAccess}>
-                  {requestingPermission ? (
-                    <ActivityIndicator color="#8ea4c8" />
-                  ) : (
-                    <Text className="text-base font-semibold text-[#d8e4f8]">Enable Camera</Text>
-                  )}
+                  className="rounded-full bg-tato-accent px-6 py-4"
+                  disabled={!canAddMorePhotos}
+                  onPress={pickFromGallery}>
+                  <Text className="text-lg font-bold text-white">
+                    {entryMode === 'upload' ? 'Upload Photos' : 'Add Photos'}
+                  </Text>
                 </Pressable>
-              ) : null}
-            </View>
 
-            {canRetryCamera ? (
+                {canRetryCamera ? (
+                  <Pressable
+                    accessibilityLabel="Enable camera access"
+                    accessibilityRole="button"
+                    className="rounded-full border border-white/12 bg-[#0e1830] px-5 py-4"
+                    onPress={requestCameraAccess}>
+                    {requestingPermission ? (
+                      <ActivityIndicator color="#8ea4c8" />
+                    ) : (
+                      <Text className="text-base font-semibold text-[#d8e4f8]">Enable Camera</Text>
+                    )}
+                  </Pressable>
+                ) : null}
+              </View>
+            ) : null}
+
+            {canRetryCamera && !isPhone ? (
               <Text className="mt-4 text-center text-sm leading-6 text-[#8ea4c8]">
                 Camera access is optional here. You can always upload the set from your library.
               </Text>
@@ -851,9 +838,9 @@ export default function IngestionScreen() {
 
   return (
     <SafeAreaView className="flex-1 bg-tato-base">
-      <View className="h-[58%]">{previewPanel}</View>
+      <View className="h-[52%] min-h-[430px]">{previewPanel}</View>
 
-      <ScrollView className="flex-1">
+      <ScrollView className="flex-1" contentContainerClassName="pb-6">
         <DraftPanel
           entryMode={entryMode}
           photoCount={photos.length}

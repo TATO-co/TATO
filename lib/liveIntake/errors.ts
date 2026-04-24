@@ -1,6 +1,12 @@
 import { LIVE_INTAKE_FALLBACK_ROUTE, type LiveIntakeFallbackRoute } from '@/lib/liveIntake/types';
 import { readTrimmedString } from '@/lib/liveIntake/normalize';
 import { readFunctionErrorPayload } from '@/lib/function-errors';
+import {
+  isConnectSetupCode,
+  isStripeActionFailureLike,
+  isStripeServerConfigCode,
+  toStripeActionErrorMessage,
+} from '@/lib/stripe-actions';
 
 type MutationErrorPayload = {
   ok?: boolean;
@@ -62,7 +68,6 @@ function isTransportFailure(code: string, message: string, status: number | null
     || message.includes('load failed')
     || message.includes('internal error')
     || code === 'internal_error'
-    || code === 'server_misconfigured'
   );
 }
 
@@ -124,7 +129,57 @@ export async function classifyLiveWorkflowError(
       };
     }
 
-    if (isTransportFailure(code, message, status) || (status != null && status >= 500)) {
+    if (isConnectSetupCode(normalizedCode)) {
+      return {
+        code: normalizedCode ?? 'connect_account_not_ready',
+        message: toStripeActionErrorMessage({
+          code: normalizedCode,
+          context: 'claim',
+          fallback: 'Complete Stripe Connect onboarding before claiming inventory.',
+          message: normalizedMessage,
+          status,
+        }),
+        retryable: false,
+        unavailable: false,
+        status,
+      };
+    }
+
+    if (isStripeServerConfigCode(normalizedCode)) {
+      return {
+        code: normalizedCode ?? 'server_misconfigured',
+        message: toStripeActionErrorMessage({
+          code: normalizedCode,
+          context: 'claim',
+          fallback: 'Stripe payments are not configured for this environment.',
+          message: normalizedMessage,
+          status,
+        }),
+        retryable: false,
+        unavailable: true,
+        status,
+      };
+    }
+
+    if (isStripeActionFailureLike({ code: normalizedCode, message: normalizedMessage })) {
+      const stripeMessage = toStripeActionErrorMessage({
+        code: normalizedCode,
+        context: 'claim',
+        fallback: 'Stripe payment could not start. Open Payments & Payouts to confirm setup, then retry.',
+        message: normalizedMessage,
+        status,
+      });
+
+      return {
+        code: normalizedCode ?? 'claim_checkout_failed',
+        message: stripeMessage,
+        retryable: false,
+        unavailable: stripeMessage.includes('not configured for this environment'),
+        status,
+      };
+    }
+
+    if (isTransportFailure(code, message, status) || (status != null && status >= 500 && !code)) {
       return {
         code: normalizedCode ?? 'claim_service_unavailable',
         message: 'Claiming is temporarily unavailable right now. Retry in a moment.',
@@ -154,6 +209,40 @@ export async function classifyLiveWorkflowError(
     };
   }
 
+  if (isConnectSetupCode(normalizedCode)) {
+    return {
+      code: normalizedCode ?? 'connect_account_not_ready',
+      message: toStripeActionErrorMessage({
+        code: normalizedCode,
+        context: 'supplier_ingestion',
+        fallback: 'Complete Stripe Connect onboarding before posting supplier inventory.',
+        message: normalizedMessage,
+        status,
+      }),
+      retryable: false,
+      unavailable: true,
+      fallbackRoute: LIVE_INTAKE_FALLBACK_ROUTE,
+      status,
+    };
+  }
+
+  if (isStripeServerConfigCode(normalizedCode)) {
+    return {
+      code: normalizedCode ?? 'server_misconfigured',
+      message: toStripeActionErrorMessage({
+        code: normalizedCode,
+        context: 'supplier_ingestion',
+        fallback: 'Stripe payments are not configured for this environment.',
+        message: normalizedMessage,
+        status,
+      }),
+      retryable: false,
+      unavailable: true,
+      fallbackRoute: LIVE_INTAKE_FALLBACK_ROUTE,
+      status,
+    };
+  }
+
   if (code === 'forbidden') {
     return {
       code: normalizedCode ?? 'forbidden',
@@ -176,7 +265,7 @@ export async function classifyLiveWorkflowError(
     };
   }
 
-  if (isTransportFailure(code, message, status) || (status != null && status >= 500)) {
+  if (isTransportFailure(code, message, status) || (status != null && status >= 500 && !code)) {
     return {
       code: normalizedCode ?? 'live_posting_unavailable',
       message: 'Live posting is temporarily unavailable right now. Use photo capture instead.',

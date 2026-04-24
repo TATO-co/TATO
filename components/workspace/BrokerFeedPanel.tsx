@@ -1,17 +1,23 @@
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
-import { startTransition, useCallback, useDeferredValue, useMemo } from 'react';
+import { startTransition, type ReactNode, useCallback, useDeferredValue, useEffect, useMemo, useState } from 'react';
 import { Pressable, ScrollView, Text, View } from 'react-native';
 import { FlashList } from '@shopify/flash-list';
 import Animated, { FadeInUp } from 'react-native-reanimated';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import {
   BrokerDesktopControlsDrawer,
   brokerDesktopFocusOrder,
   type BrokerDesktopControlEntry,
 } from '@/components/workspace/BrokerDesktopControlsDrawer';
+import { ActionConfirmation } from '@/components/ui/NextStep';
+import { ZeroRedirectPaymentLauncher } from '@/components/payments/ZeroRedirectPaymentLauncher';
+import { getDockContentPadding } from '@/components/layout/PhoneTabBar';
+import { BrokerPhoneControlsSheet } from '@/components/workspace/BrokerPhoneControlsSheet';
 import { BrokerProductGridCard } from '@/components/workspace/BrokerProductGridCard';
 import { FeedState } from '@/components/ui/FeedState';
+import { CurrencyDisplay } from '@/components/ui/CurrencyDisplay';
 import { RecentFlipsTicker } from '@/components/ui/RecentFlipsTicker';
 import { SkeletonCard } from '@/components/ui/SkeletonCard';
 import { SwipeClaimCard } from '@/components/workspace/SwipeClaimCard';
@@ -29,6 +35,8 @@ type BrokerFeedPanelProps = {
   desktopControlsEntry?: BrokerDesktopControlEntry;
   onOpenDesktopControls?: (entry: BrokerDesktopControlEntry) => void;
   onCloseDesktopControls?: () => void;
+  /** Callback refs for phone controls — exposed so the workspace can wire ModeShell action buttons. */
+  phoneControlsRef?: React.MutableRefObject<{ open: (mode: 'search' | 'filters') => void } | null>;
 };
 
 function matchesCategory(category: BrokerCategory, item: BrokerFeedStateItem) {
@@ -68,24 +76,53 @@ function matchesDesktopPresetFilter(filter: BrokerWorkspaceFocus, item: BrokerFe
   return item.shippable;
 }
 
+function formatPendingTimestamp(value: string) {
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return 'just now';
+  }
+
+  return new Intl.DateTimeFormat('en-US', {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  }).format(parsed);
+}
+
+function isPayoutSetupClaimError(message: string | undefined) {
+  if (!message) {
+    return false;
+  }
+
+  const normalized = message.toLowerCase();
+  return normalized.includes('stripe connect')
+    || normalized.includes('payments & payouts')
+    || normalized.includes('payout setup');
+}
+
 function SnapshotMetric({
   label,
   value,
   tone = 'neutral',
 }: {
   label: string;
-  value: string;
+  value: ReactNode;
   tone?: 'neutral' | 'accent' | 'profit';
 }) {
   return (
-    <View className="min-w-[180px] flex-1 rounded-[18px] border border-tato-line bg-[#0b1b33] p-4">
+    <View className="min-w-[180px] flex-1 border-l border-white/10 py-1 pl-4">
       <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-dim">{label}</Text>
-      <Text
-        className={`mt-2 text-2xl font-sans-bold ${
-          tone === 'profit' ? 'text-tato-profit' : tone === 'accent' ? 'text-tato-accent' : 'text-tato-text'
-        }`}>
-        {value}
-      </Text>
+      {typeof value === 'string' ? (
+        <Text
+          className={`mt-2 text-2xl font-sans-bold ${
+            tone === 'profit' ? 'text-tato-profit' : tone === 'accent' ? 'text-tato-accent' : 'text-tato-text'
+          }`}>
+          {value}
+        </Text>
+      ) : (
+        <View className="mt-2">{value}</View>
+      )}
     </View>
   );
 }
@@ -104,12 +141,33 @@ export function BrokerFeedPanel({
   desktopControlsEntry = 'filters',
   onOpenDesktopControls,
   onCloseDesktopControls,
+  phoneControlsRef,
 }: BrokerFeedPanelProps) {
   const { width, isDesktop: isDesktopHook, isPhone, isTablet, isWideDesktop } = useViewportInfo();
+  const insets = useSafeAreaInsets();
   const resolvedDesktop = isDesktop ?? isDesktopHook;
   const useAdvancedFeedMode = resolvedDesktop || isTablet;
   const router = useRouter();
   const reducedMotion = useReducedMotionPreference();
+  const [phoneControlsOpen, setPhoneControlsOpen] = useState(false);
+  const [phoneControlsMode, setPhoneControlsMode] = useState<'search' | 'filters'>('search');
+
+  // Expose phone controls to parent via ref.
+  useEffect(() => {
+    if (phoneControlsRef) {
+      phoneControlsRef.current = {
+        open: (mode) => {
+          setPhoneControlsMode(mode);
+          setPhoneControlsOpen(true);
+        },
+      };
+    }
+    return () => {
+      if (phoneControlsRef) {
+        phoneControlsRef.current = null;
+      }
+    };
+  }, [phoneControlsRef]);
   const activeCategory = useWorkspaceUiStore((state) => state.broker.activeCategory) as BrokerCategory;
   const searchQuery = useWorkspaceUiStore((state) => state.broker.searchQuery);
   const selectedCities = useWorkspaceUiStore((state) => state.broker.selectedCities);
@@ -127,7 +185,23 @@ export function BrokerFeedPanel({
   const setBrokerMinAiConfidence = useWorkspaceUiStore((state) => state.setBrokerMinAiConfidence);
   const setBrokerSort = useWorkspaceUiStore((state) => state.setBrokerSort);
   const resetBrokerDesktopControls = useWorkspaceUiStore((state) => state.resetBrokerDesktopControls);
-  const { items, loading, refreshing, error, claimStateById, claimErrorById, claimedCount, refresh, claimItem } = useBrokerFeed();
+  const {
+    items,
+    pendingCheckoutItems,
+    loading,
+    refreshing,
+    error,
+    claimStateById,
+    claimErrorById,
+    claimedCount,
+    lastClaimConfirmation,
+    clearLastClaimConfirmation,
+    pendingStripePayment,
+    handleStripePaymentResult,
+    refresh,
+    claimItem,
+    releasePendingCheckout,
+  } = useBrokerFeed();
   const { flips } = useRecentFlips();
   const deferredSearchQuery = useDeferredValue(searchQuery);
   const deferredSelectedCities = useDeferredValue(selectedCities);
@@ -249,6 +323,9 @@ export function BrokerFeedPanel({
   const handleOpenItem = useCallback((itemId: string) => {
     router.push(`/(app)/item/${itemId}` as never);
   }, [router]);
+  const handleOpenPayoutSetup = useCallback(() => {
+    router.push('/(app)/payments' as never);
+  }, [router]);
   const handleRefresh = useCallback(() => {
     void refresh();
   }, [refresh]);
@@ -286,11 +363,171 @@ export function BrokerFeedPanel({
   ]);
 
   const gridCardWidth = desktopGridColumns === 1 ? '100%' : desktopGridColumns === 2 ? '47.5%' : '31.5%';
+  const claimConfirmationPanel = lastClaimConfirmation ? (
+    <ActionConfirmation
+      acknowledgment="Item claimed."
+      crossPersonaNote="The supplier can now see that this item is in broker work."
+      nextSteps={[
+        {
+          label: 'Create Listing',
+          href: `/(app)/(broker)/claims?claimId=${lastClaimConfirmation.claimId}`,
+        },
+        {
+          label: 'Keep Browsing',
+          onPress: clearLastClaimConfirmation,
+          tone: 'secondary',
+        },
+      ]}
+      systemContext={`${lastClaimConfirmation.itemTitle} moved into your claim desk. Create the resale listing before buyer outreach.`}
+      testID="broker-claim-confirmation"
+    />
+  ) : null;
+
+  const stripePaymentLauncher = (
+    <ZeroRedirectPaymentLauncher
+      onResult={handleStripePaymentResult}
+      payment={pendingStripePayment}
+    />
+  );
+
+  const pendingCheckoutPanel = pendingCheckoutItems.length ? (
+    <View className="rounded-[24px] border border-[#355b93] bg-[#0b1b34] p-5">
+      <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-accent">Pending Claim Payments</Text>
+      <Text className="mt-2 text-[22px] font-sans-bold leading-8 text-tato-text">
+        Finish the deposit before these items slip back into the feed.
+      </Text>
+      <Text className="mt-2 text-sm leading-6 text-tato-muted">
+        Stripe didn&apos;t fully complete for these reserved items yet. Resume payment to keep moving, or release the item back to the marketplace.
+      </Text>
+
+      <View className="mt-4 gap-3">
+        {pendingCheckoutItems.map((item) => (
+          <View className="rounded-[20px] border border-[#21406d] bg-[#09172d] p-4" key={item.pendingClaimCheckout?.transactionId ?? item.id}>
+            <View className={resolvedDesktop || isTablet ? 'flex-row items-start justify-between gap-4' : 'gap-4'}>
+              <View className="flex-1 gap-2">
+                <Text className="text-lg font-sans-bold text-tato-text">{item.title}</Text>
+                <Text className="text-sm leading-6 text-tato-muted">{item.subtitle}</Text>
+                <View className="flex-row flex-wrap gap-2">
+                  <SummaryPill label={`Deposit ${formatMoney(item.claimDepositCents, item.currencyCode, 2)}`} />
+                  <SummaryPill label={`Payout ${formatMoney(item.estimatedBrokerPayoutCents, item.currencyCode, 0)}`} />
+                  <SummaryPill label={`Started ${formatPendingTimestamp(item.pendingClaimCheckout?.startedAt ?? '')}`} />
+                </View>
+              </View>
+
+              <View className={`${resolvedDesktop || isTablet ? 'w-[220px]' : 'gap-2'} gap-2`}>
+                <Pressable
+                  className="rounded-full bg-tato-accent px-4 py-3 hover:bg-tato-accentStrong focus:bg-tato-accentStrong"
+                  onPress={() => {
+                    void handleClaimItem(item);
+                  }}>
+                  <Text className="text-center font-mono text-[11px] font-semibold uppercase tracking-[1px] text-white">
+                    Resume Payment
+                  </Text>
+                </Pressable>
+                <Pressable
+                  className="rounded-full border border-tato-line bg-[#102443] px-4 py-3 hover:bg-[#17355f] focus:bg-[#17355f]"
+                  onPress={() => {
+                    void releasePendingCheckout(item);
+                  }}>
+                  <Text className="text-center font-mono text-[11px] font-semibold uppercase tracking-[1px] text-tato-text">
+                    Release Item
+                  </Text>
+                </Pressable>
+              </View>
+            </View>
+
+            {claimErrorById[item.id] ? (
+              <Text className="mt-3 text-xs text-tato-error">{claimErrorById[item.id]}</Text>
+            ) : (
+              <Text className="mt-3 text-xs text-tato-muted">
+                Reserved at {item.hubName}. We&apos;ll turn this into a real claim as soon as Stripe confirms the deposit.
+              </Text>
+            )}
+          </View>
+        ))}
+      </View>
+    </View>
+  ) : null;
+
+  // Hooks must be above all conditional early returns to satisfy Rules of Hooks.
+  const renderItem = useCallback(
+    ({ item, index }: { item: BrokerFeedStateItem; index: number }) => {
+      const claimState = claimStateById[item.id] ?? 'idle';
+      const claimError = claimErrorById[item.id];
+      const needsPayoutSetup = claimState === 'error' && isPayoutSetupClaimError(claimError);
+      return (
+        <SwipeClaimCard
+          claimed={claimState === 'claimed'}
+          claimError={claimError}
+          claimErrorActionLabel={needsPayoutSetup ? 'Payout Setup' : undefined}
+          claimState={claimState}
+          index={index}
+          item={item}
+          onClaim={handleClaimItem}
+          onClaimErrorAction={needsPayoutSetup ? handleOpenPayoutSetup : undefined}
+          onOpenItem={handleOpenItem}
+        />
+      );
+    },
+    [claimErrorById, claimStateById, handleClaimItem, handleOpenItem, handleOpenPayoutSetup],
+  );
+  const getPhoneItemType = useCallback(
+    (item: BrokerFeedStateItem) => (item.shippable ? 'shippable-claim-card' : 'local-claim-card'),
+    [],
+  );
+  const phoneListExtraData = useMemo(
+    () => ({ claimErrorById, claimStateById }),
+    [claimErrorById, claimStateById],
+  );
+
+  const listHeader = useMemo(
+    () => (
+      <View className="mb-4 gap-4">
+        {claimConfirmationPanel}
+        {pendingCheckoutPanel}
+        <View className="border-b border-tato-line pb-2">
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerClassName="gap-6 px-1">
+            {brokerCategories.map((category) => {
+              const selected = category === activeCategory;
+              return (
+                <Pressable
+                  className="rounded-md px-1 hover:bg-tato-panelSoft focus:bg-tato-panelSoft"
+                  key={category}
+                  onPress={() => handleSelectCategory(category)}>
+                  <View className={`pb-3 ${selected ? 'border-b-2 border-tato-accent' : ''}`}>
+                    <Text className={`font-mono text-base font-semibold ${selected ? 'text-tato-text' : 'text-tato-muted'}`}>
+                      {category}
+                    </Text>
+                  </View>
+                </Pressable>
+              );
+            })}
+          </ScrollView>
+        </View>
+      </View>
+    ),
+    [activeCategory, claimConfirmationPanel, handleSelectCategory, pendingCheckoutPanel],
+  );
 
   if (loading) {
     if (useAdvancedFeedMode) {
       return (
         <View className="gap-5 pb-12">
+          <View aria-live="polite" className="rounded-[22px] border border-tato-line bg-[#09172d] p-4">
+            <Text aria-level={2} className="font-mono text-[11px] uppercase tracking-[1px] text-tato-accent" role="heading">
+              Broker Feed
+            </Text>
+            <Text className="mt-2 text-lg font-sans-bold text-tato-text">Loading live inventory.</Text>
+            <Text className="mt-2 text-sm leading-6 text-tato-muted">
+              Pulling claim-ready items, desk filters, and payout signals for the next pass.
+            </Text>
+            <View className="mt-4 flex-row flex-wrap gap-2">
+              {activeDesktopTokens.slice(0, compactDesktop ? 5 : 6).map((token) => (
+                <SummaryPill key={token} label={token} />
+              ))}
+              {!activeDesktopTokens.length ? <SummaryPill label="Nearby default" /> : null}
+            </View>
+          </View>
           <SkeletonCard borderRadius={18} height={54} />
           <SkeletonCard borderRadius={28} height={isTablet ? 300 : stackHero ? 360 : 250} />
           <SkeletonCard borderRadius={22} height={88} />
@@ -315,6 +552,15 @@ export function BrokerFeedPanel({
 
     return (
       <View className="gap-4 pb-32">
+        <View aria-live="polite" className="rounded-[24px] border border-tato-line bg-[#09172d] p-4">
+          <Text aria-level={2} className="font-mono text-[11px] uppercase tracking-[1px] text-tato-accent" role="heading">
+            Broker Feed
+          </Text>
+          <Text className="mt-2 text-lg font-sans-bold text-tato-text">Loading the hunt.</Text>
+          <Text className="mt-2 text-sm leading-6 text-tato-muted">
+            Pulling live inventory and claim status before the next cards appear.
+          </Text>
+        </View>
         <SkeletonCard borderRadius={34} height={500} />
         <SkeletonCard borderRadius={34} height={500} />
       </View>
@@ -329,17 +575,17 @@ export function BrokerFeedPanel({
       <View className="flex-1 rounded-[24px] border border-tato-line bg-[#09172d] p-5">
         <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-dim">Feed Snapshot</Text>
         <View className="mt-4 gap-3">
-          <View className="flex-row items-center justify-between rounded-2xl bg-[#0b1a30] px-4 py-3">
+          <View className="flex-row items-center justify-between border-b border-tato-line/60 py-3">
             <Text className="text-sm text-tato-muted">Shippable Inventory</Text>
             <Text className="text-sm font-bold text-tato-text">{shippableCount}</Text>
           </View>
-          <View className="flex-row items-center justify-between rounded-2xl bg-[#0b1a30] px-4 py-3">
+          <View className="flex-row items-center justify-between border-b border-tato-line/60 py-3">
             <Text className="text-sm text-tato-muted">Strongest AI Match</Text>
             <Text className="text-sm font-bold text-tato-text">
               {featuredItem ? `${(featuredItem.aiIngestionConfidence * 100).toFixed(0)}%` : '--'}
             </Text>
           </View>
-          <View className="flex-row items-center justify-between rounded-2xl bg-[#0b1a30] px-4 py-3">
+          <View className="flex-row items-center justify-between py-3">
             <Text className="text-sm text-tato-muted">Active Filters</Text>
             <Text className="text-sm font-bold text-tato-text">{activeDesktopTokens.length}</Text>
           </View>
@@ -373,8 +619,11 @@ export function BrokerFeedPanel({
   if (resolvedDesktop) {
     return (
       <View className="flex-1">
+        {stripePaymentLauncher}
         <ScrollView className="flex-1" contentContainerClassName="gap-6 pb-12">
           {flips.length ? <RecentFlipsTicker flips={flips} /> : null}
+          {claimConfirmationPanel}
+          {pendingCheckoutPanel}
 
           <LinearGradient
             colors={['#0f2446', '#0b1830', '#081325']}
@@ -389,9 +638,16 @@ export function BrokerFeedPanel({
                 </Text>
 
                 <View className="mt-6 flex-row flex-wrap gap-4">
-                  <SnapshotMetric label="Projected Broker Payout" tone="profit" value={formatMoney(totalPotentialPayout, reportingCurrency, 0)} />
+                  <SnapshotMetric
+                    label="Projected Broker Payout"
+                    tone="profit"
+                    value={<CurrencyDisplay amount={totalPotentialPayout} className="text-2xl" currencyCode={reportingCurrency} fractionDigits={0} />}
+                  />
                   <SnapshotMetric label="Open Claims" tone="accent" value={`${claimedCount}`} />
-                  <SnapshotMetric label="Avg. Claim Deposit" value={formatMoney(averageClaimFee, reportingCurrency, 2)} />
+                  <SnapshotMetric
+                    label="Avg. Claim Deposit"
+                    value={<CurrencyDisplay amount={averageClaimFee} className="text-2xl" currencyCode={reportingCurrency} fractionDigits={2} tone="neutral" />}
+                  />
                 </View>
               </View>
 
@@ -403,15 +659,15 @@ export function BrokerFeedPanel({
                     <Text className="mt-1 text-sm leading-6 text-tato-muted">{featuredItem.subtitle}</Text>
 
                     <View className="mt-4 gap-2">
-                      <View className="flex-row items-center justify-between rounded-2xl bg-white/5 px-4 py-3">
+                      <View className="flex-row items-center justify-between border-b border-white/10 py-3">
                         <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-dim">Broker Payout</Text>
-                        <Text className="text-sm font-bold text-tato-profit">{formatMoney(featuredItem.estimatedBrokerPayoutCents, featuredItem.currencyCode, 0)}</Text>
+                        <CurrencyDisplay amount={featuredItem.estimatedBrokerPayoutCents} className="text-sm" currencyCode={featuredItem.currencyCode} fractionDigits={0} />
                       </View>
-                      <View className="flex-row items-center justify-between rounded-2xl bg-white/5 px-4 py-3">
+                      <View className="flex-row items-center justify-between border-b border-white/10 py-3">
                         <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-dim">Claim Deposit</Text>
-                        <Text className="text-sm font-bold text-tato-accent">{formatMoney(featuredItem.claimDepositCents, featuredItem.currencyCode, 2)}</Text>
+                        <CurrencyDisplay amount={featuredItem.claimDepositCents} className="text-sm" currencyCode={featuredItem.currencyCode} fractionDigits={2} tone="neutral" />
                       </View>
-                      <View className="flex-row items-center justify-between rounded-2xl bg-white/5 px-4 py-3">
+                      <View className="flex-row items-center justify-between py-3">
                         <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-dim">AI Confidence</Text>
                         <Text className="text-sm font-bold text-tato-text">{(featuredItem.aiIngestionConfidence * 100).toFixed(0)}%</Text>
                       </View>
@@ -451,16 +707,16 @@ export function BrokerFeedPanel({
               ))}
               {!activeDesktopTokens.length ? <SummaryPill label="Nearby default" /> : null}
               <Pressable
-                className="rounded-full border border-tato-line bg-[#0b1b33] px-4 py-2.5 hover:bg-tato-panelSoft focus:bg-tato-panelSoft"
+                className="rounded-full border border-tato-accent bg-transparent px-4 py-2.5 hover:bg-tato-accent/10 focus:bg-tato-accent/10"
                 onPress={() => onOpenDesktopControls?.('filters')}>
-                <Text className="font-mono text-[11px] font-semibold uppercase tracking-[1px] text-tato-text">
+                <Text className="font-mono text-[11px] font-semibold uppercase tracking-[1px] text-tato-accent">
                   Search + filters
                 </Text>
               </Pressable>
               <Pressable
-                className="rounded-full border border-tato-line bg-[#0b1b33] px-4 py-2.5 hover:bg-tato-panelSoft focus:bg-tato-panelSoft"
+                className="px-2 py-2.5"
                 onPress={handleRefresh}>
-                <Text className="font-mono text-[11px] font-semibold uppercase tracking-[1px] text-tato-text">
+                <Text className="font-mono text-[11px] font-medium uppercase tracking-[1px] text-tato-muted">
                   Refresh feed
                 </Text>
               </Pressable>
@@ -476,16 +732,20 @@ export function BrokerFeedPanel({
                   <View className="flex-row flex-wrap gap-5">
                     {activeItems.map((item) => {
                       const claimState = claimStateById[item.id] ?? 'idle';
+                      const claimError = claimErrorById[item.id];
+                      const needsPayoutSetup = claimState === 'error' && isPayoutSetupClaimError(claimError);
                       return (
                         <Animated.View
                           entering={reducedMotion ? undefined : FadeInUp.duration(TIMING.quick)}
                           key={item.id}
                           style={{ width: gridCardWidth }}>
                           <BrokerProductGridCard
-                            claimError={claimErrorById[item.id]}
+                            claimError={claimError}
+                            claimErrorActionLabel={needsPayoutSetup ? 'Payout Setup' : undefined}
                             claimState={claimState}
                             item={item}
                             onClaim={handleClaimItem}
+                            onClaimErrorAction={needsPayoutSetup ? handleOpenPayoutSetup : undefined}
                             onOpenItem={handleOpenItem}
                           />
                         </Animated.View>
@@ -507,17 +767,21 @@ export function BrokerFeedPanel({
                 <View className="flex-row flex-wrap gap-5">
                   {activeItems.map((item) => {
                     const claimState = claimStateById[item.id] ?? 'idle';
+                    const claimError = claimErrorById[item.id];
+                    const needsPayoutSetup = claimState === 'error' && isPayoutSetupClaimError(claimError);
                     return (
                       <Animated.View
                         entering={reducedMotion ? undefined : FadeInUp.duration(TIMING.quick)}
                         key={item.id}
                         style={{ width: gridCardWidth }}>
                         <BrokerProductGridCard
-                          claimError={claimErrorById[item.id]}
+                          claimError={claimError}
+                          claimErrorActionLabel={needsPayoutSetup ? 'Payout Setup' : undefined}
                           claimState={claimState}
                           compactDesktop={compactDesktop}
                           item={item}
                           onClaim={handleClaimItem}
+                          onClaimErrorAction={needsPayoutSetup ? handleOpenPayoutSetup : undefined}
                           onOpenItem={handleOpenItem}
                         />
                       </Animated.View>
@@ -559,8 +823,11 @@ export function BrokerFeedPanel({
   if (isTablet) {
     return (
       <View className="flex-1">
+        {stripePaymentLauncher}
         <ScrollView className="flex-1" contentContainerClassName="gap-5 pb-12">
           {flips.length ? <RecentFlipsTicker flips={flips} /> : null}
+          {claimConfirmationPanel}
+          {pendingCheckoutPanel}
 
           <LinearGradient
             colors={['#0f2446', '#0b1830', '#081325']}
@@ -576,9 +843,16 @@ export function BrokerFeedPanel({
               </View>
 
               <View className="flex-row flex-wrap gap-4">
-                <SnapshotMetric label="Projected Broker Payout" tone="profit" value={formatMoney(totalPotentialPayout, reportingCurrency, 0)} />
+                <SnapshotMetric
+                  label="Projected Broker Payout"
+                  tone="profit"
+                  value={<CurrencyDisplay amount={totalPotentialPayout} className="text-2xl" currencyCode={reportingCurrency} fractionDigits={0} />}
+                />
                 <SnapshotMetric label="Open Claims" tone="accent" value={`${claimedCount}`} />
-                <SnapshotMetric label="Avg. Claim Deposit" value={formatMoney(averageClaimFee, reportingCurrency, 2)} />
+                <SnapshotMetric
+                  label="Avg. Claim Deposit"
+                  value={<CurrencyDisplay amount={averageClaimFee} className="text-2xl" currencyCode={reportingCurrency} fractionDigits={2} tone="neutral" />}
+                />
               </View>
 
               <View className="rounded-[24px] border border-white/10 bg-[#08162b]/80 p-5">
@@ -588,13 +862,11 @@ export function BrokerFeedPanel({
                     <Text className="mt-3 text-2xl font-sans-bold text-tato-text">{featuredItem.title}</Text>
                     <Text className="mt-1 text-sm leading-6 text-tato-muted">{featuredItem.subtitle}</Text>
                     <View className="mt-4 flex-row gap-3">
-                      <View className="flex-1 rounded-2xl bg-white/5 px-4 py-3">
+                      <View className="flex-1 border-r border-white/10 pr-4 py-3">
                         <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-dim">Broker Payout</Text>
-                        <Text className="mt-1 text-sm font-bold text-tato-profit">
-                          {formatMoney(featuredItem.estimatedBrokerPayoutCents, featuredItem.currencyCode, 0)}
-                        </Text>
+                        <CurrencyDisplay amount={featuredItem.estimatedBrokerPayoutCents} className="mt-1 text-sm" currencyCode={featuredItem.currencyCode} fractionDigits={0} />
                       </View>
-                      <View className="flex-1 rounded-2xl bg-white/5 px-4 py-3">
+                      <View className="flex-1 py-3 pl-4">
                         <Text className="font-mono text-[11px] uppercase tracking-[1px] text-tato-dim">AI Confidence</Text>
                         <Text className="mt-1 text-sm font-bold text-tato-text">
                           {(featuredItem.aiIngestionConfidence * 100).toFixed(0)}%
@@ -636,16 +908,16 @@ export function BrokerFeedPanel({
                 ))}
                 {!activeDesktopTokens.length ? <SummaryPill label="Nearby default" /> : null}
                 <Pressable
-                  className="rounded-full border border-tato-line bg-[#0b1b33] px-4 py-2.5 hover:bg-tato-panelSoft focus:bg-tato-panelSoft"
+                  className="rounded-full border border-tato-accent bg-transparent px-4 py-2.5 hover:bg-tato-accent/10 focus:bg-tato-accent/10"
                   onPress={() => onOpenDesktopControls?.('filters')}>
-                  <Text className="font-mono text-[11px] font-semibold uppercase tracking-[1px] text-tato-text">
+                  <Text className="font-mono text-[11px] font-semibold uppercase tracking-[1px] text-tato-accent">
                     Search + filters
                   </Text>
                 </Pressable>
                 <Pressable
-                className="rounded-full border border-tato-line bg-[#0b1b33] px-4 py-2.5 hover:bg-tato-panelSoft focus:bg-tato-panelSoft"
+                  className="px-2 py-2.5"
                   onPress={handleRefresh}>
-                  <Text className="font-mono text-[11px] font-semibold uppercase tracking-[1px] text-tato-text">
+                  <Text className="font-mono text-[11px] font-medium uppercase tracking-[1px] text-tato-muted">
                     Refresh feed
                   </Text>
                 </Pressable>
@@ -662,17 +934,21 @@ export function BrokerFeedPanel({
               <View className="flex-row flex-wrap gap-5">
                 {activeItems.map((item) => {
                   const claimState = claimStateById[item.id] ?? 'idle';
+                  const claimError = claimErrorById[item.id];
+                  const needsPayoutSetup = claimState === 'error' && isPayoutSetupClaimError(claimError);
                   return (
                     <Animated.View
                       entering={reducedMotion ? undefined : FadeInUp.duration(TIMING.quick)}
                       key={item.id}
                       style={{ width: gridCardWidth }}>
                       <BrokerProductGridCard
-                        claimError={claimErrorById[item.id]}
+                        claimError={claimError}
+                        claimErrorActionLabel={needsPayoutSetup ? 'Payout Setup' : undefined}
                         claimState={claimState}
                         compactDesktop
                         item={item}
                         onClaim={handleClaimItem}
+                        onClaimErrorAction={needsPayoutSetup ? handleOpenPayoutSetup : undefined}
                         onOpenItem={handleOpenItem}
                       />
                     </Animated.View>
@@ -710,60 +986,21 @@ export function BrokerFeedPanel({
     );
   }
 
-  const renderItem = useCallback(
-    ({ item, index }: { item: BrokerFeedStateItem; index: number }) => {
-      const claimState = claimStateById[item.id] ?? 'idle';
-      return (
-        <SwipeClaimCard
-          claimed={claimState === 'claimed'}
-          claimError={claimErrorById[item.id]}
-          claimState={claimState}
-          index={index}
-          item={item}
-          onClaim={handleClaimItem}
-          onOpenItem={handleOpenItem}
-        />
-      );
-    },
-    [claimErrorById, claimStateById, handleClaimItem, handleOpenItem],
-  );
-
-  const listHeader = useMemo(
-    () => (
-      <View className="mb-4 border-b border-tato-line pb-2">
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerClassName="gap-6 px-1">
-          {brokerCategories.map((category) => {
-            const selected = category === activeCategory;
-            return (
-              <Pressable
-                className="rounded-md px-1 hover:bg-tato-panelSoft focus:bg-tato-panelSoft"
-                key={category}
-                onPress={() => handleSelectCategory(category)}>
-                <View className={`pb-3 ${selected ? 'border-b-2 border-tato-accent' : ''}`}>
-                  <Text className={`font-mono text-base font-semibold ${selected ? 'text-tato-text' : 'text-tato-muted'}`}>
-                    {category}
-                  </Text>
-                </View>
-              </Pressable>
-            );
-          })}
-        </ScrollView>
-      </View>
-    ),
-    [activeCategory, handleSelectCategory],
-  );
 
   return (
     <View className="flex-1">
+      {stripePaymentLauncher}
       {hasError || isEmpty ? (
         <FeedState error={error} empty={isEmpty} emptyLabel="No items match this filter yet." onRetry={refresh} />
       ) : (
         <FlashList
           data={activeItems}
+          extraData={phoneListExtraData}
+          getItemType={getPhoneItemType}
           ItemSeparatorComponent={() => <View style={{ height: 16 }} />}
           keyExtractor={(item) => item.id}
           ListHeaderComponent={listHeader}
-          contentContainerStyle={{ paddingBottom: 144 }}
+          contentContainerStyle={{ paddingBottom: getDockContentPadding(insets.bottom) }}
           onRefresh={() => {
             handleRefresh();
           }}
@@ -772,6 +1009,29 @@ export function BrokerFeedPanel({
           showsVerticalScrollIndicator={false}
         />
       )}
+
+      <BrokerPhoneControlsSheet
+        open={phoneControlsOpen}
+        mode={phoneControlsMode}
+        searchQuery={searchQuery}
+        cityOptions={cityOptions}
+        selectedCities={selectedCities}
+        focusFilters={desktopFocusFilters}
+        shippingMode={shippingMode}
+        minBrokerPayoutCents={minBrokerPayoutCents}
+        minAiConfidence={minAiConfidence}
+        sort={desktopSort}
+        resultCount={activeItems.length}
+        onChangeSearchQuery={setBrokerSearchQuery}
+        onToggleCity={toggleBrokerCity}
+        onToggleFocusFilter={toggleBrokerFocusFilter}
+        onSetShippingMode={setBrokerShippingMode}
+        onSetMinBrokerPayoutCents={setBrokerMinBrokerPayoutCents}
+        onSetMinAiConfidence={setBrokerMinAiConfidence}
+        onSetSort={setBrokerSort}
+        onClear={resetBrokerDesktopControls}
+        onClose={() => setPhoneControlsOpen(false)}
+      />
     </View>
   );
 }

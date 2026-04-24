@@ -42,6 +42,7 @@ create type public.claim_status as enum (
   'awaiting_pickup',
   'completed',
   'expired',
+  'deposit_expired',
   'cancelled'
 );
 
@@ -89,6 +90,12 @@ create table public.profiles (
   can_supply boolean not null default false,
   can_broker boolean not null default false,
   stripe_connected_account_id text,
+  stripe_charges_enabled boolean not null default false,
+  stripe_connect_requirements_currently_due text[] not null default '{}',
+  stripe_connect_requirements_past_due text[] not null default '{}',
+  stripe_connect_requirements_pending_verification text[] not null default '{}',
+  stripe_connect_disabled_reason text,
+  stripe_connect_restricted_soon boolean not null default false,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -254,6 +261,8 @@ create table public.transactions (
   stripe_payment_intent_id text,
   stripe_charge_id text,
   stripe_transfer_group text,
+  stripe_transfer_id text,
+  stripe_refund_id text,
 
   metadata jsonb not null default '{}'::jsonb,
   occurred_at timestamptz not null default now(),
@@ -267,9 +276,17 @@ create table public.transactions (
 create index transactions_claim_idx on public.transactions (claim_id, occurred_at desc);
 create index transactions_item_idx on public.transactions (item_id, occurred_at desc);
 create index transactions_type_status_idx on public.transactions (transaction_type, status, occurred_at desc);
+create unique index if not exists transactions_one_pending_buyer_checkout_idx
+  on public.transactions (claim_id)
+  where transaction_type = 'sale_payment'
+    and status = 'pending'
+    and metadata ->> 'checkout_kind' = 'buyer_payment';
 create unique index transactions_stripe_payment_intent_idx
   on public.transactions (stripe_payment_intent_id)
   where stripe_payment_intent_id is not null;
+create index if not exists transactions_stripe_transfer_idx
+  on public.transactions (stripe_transfer_id)
+  where stripe_transfer_id is not null;
 
 create trigger transactions_set_updated_at
 before update on public.transactions
@@ -313,10 +330,10 @@ begin
           sold_at = coalesce(sold_at, now())
       where id = new.item_id;
 
-  elsif new.status in ('expired', 'cancelled') then
+  elsif new.status in ('expired', 'deposit_expired', 'cancelled') then
     update public.items
       set digital_status = case
-        when new.status = 'expired' then 'claim_expired'::public.item_digital_status
+        when new.status in ('expired', 'deposit_expired') then 'claim_expired'::public.item_digital_status
         else 'ready_for_claim'::public.item_digital_status
       end,
       physical_status = 'at_supplier_hub'
@@ -487,6 +504,12 @@ alter table public.profiles
   add column if not exists suspended_at timestamptz,
   add column if not exists suspended_by uuid references public.profiles(id) on delete set null,
   add column if not exists stripe_connect_onboarding_complete boolean not null default false,
+  add column if not exists stripe_charges_enabled boolean not null default false,
+  add column if not exists stripe_connect_requirements_currently_due text[] not null default '{}',
+  add column if not exists stripe_connect_requirements_past_due text[] not null default '{}',
+  add column if not exists stripe_connect_requirements_pending_verification text[] not null default '{}',
+  add column if not exists stripe_connect_disabled_reason text,
+  add column if not exists stripe_connect_restricted_soon boolean not null default false,
   add column if not exists payouts_enabled boolean not null default false,
   add column if not exists payout_currency_code text not null default 'USD';
 
@@ -499,6 +522,12 @@ where country_code is null
 
 alter table public.profiles
   alter column country_code set default 'US';
+
+alter table public.profiles
+  add column if not exists stripe_customer_id text,
+  add column if not exists stripe_default_payment_method_id text,
+  add column if not exists stripe_default_payment_method_brand text,
+  add column if not exists stripe_default_payment_method_last4 text;
 
 do $$
 begin
@@ -517,7 +546,13 @@ alter table public.items
   add column if not exists currency_code text not null default 'USD';
 
 alter table public.claims
-  add column if not exists currency_code text not null default 'USD';
+  add column if not exists currency_code text not null default 'USD',
+  add column if not exists buyer_payment_amount_cents integer check (buyer_payment_amount_cents >= 0),
+  add column if not exists buyer_payment_token text,
+  add column if not exists buyer_payment_status text not null default 'not_started',
+  add column if not exists buyer_payment_checkout_session_id text,
+  add column if not exists buyer_payment_link_created_at timestamptz,
+  add column if not exists buyer_payment_paid_at timestamptz;
 
 update public.items
 set currency_code = coalesce(nullif(upper(currency_code), ''), 'USD')
@@ -526,6 +561,17 @@ where currency_code is null or currency_code <> upper(currency_code);
 update public.claims
 set currency_code = coalesce(nullif(upper(currency_code), ''), 'USD')
 where currency_code is null or currency_code <> upper(currency_code);
+
+update public.claims
+set buyer_payment_amount_cents = coalesce(buyer_payment_amount_cents, locked_suggested_list_price_cents),
+    buyer_payment_status = case
+      when buyer_payment_paid_at is not null or status = 'completed' then 'paid'
+      when status in ('buyer_committed', 'awaiting_pickup') then 'link_ready'
+      else 'not_started'
+    end
+where buyer_payment_amount_cents is null
+   or buyer_payment_status is null
+   or buyer_payment_status = 'not_started';
 
 do $$
 begin
@@ -548,7 +594,28 @@ begin
       add constraint claims_currency_code_check
       check (currency_code in ('USD', 'CAD', 'GBP', 'EUR'));
   end if;
+
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'claims_buyer_payment_status_check'
+  ) then
+    alter table public.claims
+      add constraint claims_buyer_payment_status_check
+      check (buyer_payment_status in ('not_started', 'link_ready', 'checkout_open', 'paid', 'expired'));
+  end if;
 end $$;
+
+create unique index if not exists claims_buyer_payment_token_idx
+  on public.claims (buyer_payment_token)
+  where buyer_payment_token is not null;
+
+create index if not exists claims_buyer_payment_status_idx
+  on public.claims (buyer_payment_status, created_at desc);
+
+create index if not exists profiles_stripe_connected_account_idx
+  on public.profiles (stripe_connected_account_id)
+  where stripe_connected_account_id is not null;
 
 create or replace function public.current_profile_is_active()
 returns boolean
@@ -682,18 +749,87 @@ create index if not exists audit_events_correlation_idx
 create index if not exists audit_events_type_idx
   on public.audit_events (event_type, created_at desc);
 
+create table if not exists public.user_notifications (
+  id uuid primary key default gen_random_uuid(),
+  recipient_profile_id uuid not null references public.profiles(id) on delete cascade,
+  actor_profile_id uuid references public.profiles(id) on delete set null,
+  item_id uuid references public.items(id) on delete set null,
+  claim_id uuid references public.claims(id) on delete set null,
+  event_type text not null,
+  title text not null,
+  body text not null,
+  action_href text,
+  metadata jsonb not null default '{}'::jsonb,
+  read_at timestamptz,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists user_notifications_recipient_idx
+  on public.user_notifications (recipient_profile_id, created_at desc);
+create index if not exists user_notifications_item_idx
+  on public.user_notifications (item_id, created_at desc)
+  where item_id is not null;
+create index if not exists user_notifications_claim_idx
+  on public.user_notifications (claim_id, created_at desc)
+  where claim_id is not null;
+
+create table if not exists public.claim_messages (
+  id uuid primary key default gen_random_uuid(),
+  claim_id uuid not null references public.claims(id) on delete cascade,
+  item_id uuid not null references public.items(id) on delete cascade,
+  sender_profile_id uuid not null references public.profiles(id) on delete cascade,
+  recipient_profile_id uuid not null references public.profiles(id) on delete cascade,
+  body text not null check (char_length(trim(body)) between 1 and 2000),
+  read_at timestamptz,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists claim_messages_claim_created_idx
+  on public.claim_messages (claim_id, created_at asc);
+create index if not exists claim_messages_recipient_idx
+  on public.claim_messages (recipient_profile_id, read_at, created_at desc);
+
 create table if not exists public.webhook_events (
   id uuid primary key default gen_random_uuid(),
   provider text not null,
   external_event_id text not null,
   event_type text not null,
   correlation_id text not null,
+  stripe_mode text not null default 'test',
   status text not null default 'received',
   payload jsonb not null default '{}'::jsonb,
   processed_at timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+alter table public.transactions
+  add column if not exists stripe_mode text not null default 'test',
+  add column if not exists stripe_transfer_id text,
+  add column if not exists stripe_refund_id text;
+
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'transactions_stripe_mode_check'
+  ) then
+    alter table public.transactions
+      add constraint transactions_stripe_mode_check
+      check (stripe_mode in ('test', 'live'));
+  end if;
+
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'webhook_events_stripe_mode_check'
+  ) then
+    alter table public.webhook_events
+      add constraint webhook_events_stripe_mode_check
+      check (stripe_mode in ('test', 'live'));
+  end if;
+end $$;
 
 create unique index if not exists webhook_events_provider_external_idx
   on public.webhook_events (provider, external_event_id);
@@ -722,6 +858,8 @@ before update on public.mutation_requests
 for each row execute function public.set_updated_at();
 
 alter table public.audit_events enable row level security;
+alter table public.user_notifications enable row level security;
+alter table public.claim_messages enable row level security;
 alter table public.webhook_events enable row level security;
 alter table public.mutation_requests enable row level security;
 
@@ -738,6 +876,37 @@ drop policy if exists "audit_events_service_only" on public.audit_events;
 create policy "audit_events_service_only"
 on public.audit_events for all
 using (auth.role() = 'service_role')
+with check (auth.role() = 'service_role');
+
+drop policy if exists "user_notifications_select_recipient_or_admin" on public.user_notifications;
+create policy "user_notifications_select_recipient_or_admin"
+on public.user_notifications for select
+using (
+  public.current_profile_is_admin()
+  or recipient_profile_id = auth.uid()
+);
+
+drop policy if exists "user_notifications_update_read_by_recipient" on public.user_notifications;
+
+drop policy if exists "user_notifications_service_insert" on public.user_notifications;
+create policy "user_notifications_service_insert"
+on public.user_notifications for insert
+with check (auth.role() = 'service_role');
+
+drop policy if exists "claim_messages_select_participants" on public.claim_messages;
+create policy "claim_messages_select_participants"
+on public.claim_messages for select
+using (
+  public.current_profile_is_admin()
+  or sender_profile_id = auth.uid()
+  or recipient_profile_id = auth.uid()
+);
+
+drop policy if exists "claim_messages_update_read_by_recipient" on public.claim_messages;
+
+drop policy if exists "claim_messages_insert_service_only" on public.claim_messages;
+create policy "claim_messages_insert_service_only"
+on public.claim_messages for insert
 with check (auth.role() = 'service_role');
 
 drop policy if exists "webhook_events_service_only" on public.webhook_events;
@@ -765,7 +934,11 @@ drop policy if exists "items_select_market_or_owner" on public.items;
 drop policy if exists "items_manage_by_supplier" on public.items;
 drop policy if exists "claims_select_participants" on public.claims;
 drop policy if exists "claims_create_by_broker" on public.claims;
+drop policy if exists "claims_create_by_active_broker" on public.claims;
+drop policy if exists "claims_insert_service_only" on public.claims;
 drop policy if exists "claims_update_by_broker_or_supplier" on public.claims;
+drop policy if exists "claims_update_by_participants" on public.claims;
+drop policy if exists "claims_update_service_only" on public.claims;
 drop policy if exists "transactions_select_participants" on public.transactions;
 drop policy if exists "transactions_insert_service_only" on public.transactions;
 drop policy if exists "transactions_update_service_only" on public.transactions;
@@ -872,31 +1045,14 @@ using (
   or public.current_user_is_supplier_for_item(claims.item_id)
 );
 
-create policy "claims_create_by_active_broker"
+create policy "claims_insert_service_only"
 on public.claims for insert
-with check (
-  auth.uid() = broker_id
-  and exists (
-    select 1
-    from public.profiles p
-    where p.id = auth.uid()
-      and p.status = 'active'
-      and p.can_broker
-  )
-);
+with check (auth.role() = 'service_role');
 
-create policy "claims_update_by_participants"
+create policy "claims_update_service_only"
 on public.claims for update
-using (
-  public.current_profile_is_admin()
-  or auth.uid() = broker_id
-  or public.current_user_is_supplier_for_item(claims.item_id)
-)
-with check (
-  public.current_profile_is_admin()
-  or auth.uid() = broker_id
-  or public.current_user_is_supplier_for_item(claims.item_id)
-);
+using (auth.role() = 'service_role')
+with check (auth.role() = 'service_role');
 
 create policy "transactions_select_participants"
 on public.transactions for select
